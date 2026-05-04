@@ -1,0 +1,1 @@
+tStep iterations Max Increment newdt StrainIncrementCutOff StrainIncrementCounter MaxShearRatio MAXShearRate

@@ -1,13 +1,14 @@
 @echo off
 setlocal enabledelayedexpansion
 title OPview - PySide6 VTK Viewer
+cd /d "%~dp0"
 
 echo ================================================
 echo   OPview - PySide6 VTK Viewer
 echo ================================================
 echo.
 
-:: ── Locate Python ────────────────────────────────
+rem --- Locate Python ---
 set PYTHON=
 for %%P in (python python3) do (
     if not defined PYTHON (
@@ -28,7 +29,7 @@ if not defined PYTHON (
     exit /b 1
 )
 
-:: ── Check Python version (VTK requires < 3.14) ───
+rem --- Check Python version (VTK requires < 3.14) ---
 for /f "tokens=2 delims= " %%V in ('"%PYTHON%" --version 2^>^&1') do set PY_VER=%%V
 echo [OK] Python %PY_VER% found
 
@@ -46,7 +47,7 @@ if %PY_MINOR% GTR 13 (
     pause & exit /b 1
 )
 
-:: ── Create venv if missing ───────────────────────
+rem --- Create venv if missing ---
 set VENV_DIR=%~dp0venv
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo [..] Creating virtual environment...
@@ -63,26 +64,27 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
 set VENV_PYTHON=%VENV_DIR%\Scripts\python.exe
 set VENV_PIP=%VENV_DIR%\Scripts\pip.exe
 
-:: ── Upgrade pip ──────────────────────────────────
+rem --- Upgrade pip ---
 echo [..] Upgrading pip...
 "%VENV_PYTHON%" -m pip install --upgrade pip --quiet
 echo [OK] pip up to date.
 
-:: ── Install dependencies ─────────────────────────
-echo [..] Installing dependencies (PySide6, VTK, NumPy) — first run may take a few minutes...
+rem --- Install dependencies ---
+echo [..] Installing dependencies (PySide6, VTK, NumPy, Matplotlib, PyVista, SciPy)...
+echo     First run may take several minutes.
 "%VENV_PIP%" install -r "%~dp0requirements.txt" --quiet
 if errorlevel 1 (
     echo [ERROR] Dependency installation failed.
-    echo  Try running this file again, or check your internet connection.
+    echo  Try running again or check your internet connection.
     pause & exit /b 1
 )
 echo [OK] Dependencies installed.
 
-:: ── Launch app ───────────────────────────────────
+rem --- Launch app ---
 echo.
 echo [>>] Launching OPview...
 echo.
-"%VENV_PYTHON%" "%~dp0main_simple.py"
+"%VENV_PYTHON%" "%~dp0main.py"
 
 if errorlevel 1 (
     echo.
