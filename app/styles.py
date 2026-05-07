@@ -10,8 +10,6 @@ def build_app_stylesheet() -> str:
     debug_print("build_app_stylesheet called")
     _assets = Path(__file__).parent.parent / "assets"
     _arrow = str(_assets / "arrow-down.svg").replace("\\", "/")
-    _remove = str(_assets / "remove.png").replace("\\", "/")
-    _remove_hover = str(_assets / "remove_hover.png").replace("\\", "/")
     return f"""
 QMainWindow, QWidget#appShell {{
     background: #e7ecf4;
@@ -237,43 +235,69 @@ QCheckBox::indicator:checked {{
     background: #c50623;
     border-color: #c50623;
 }}
+
+QTabWidget#panelTabs {{
+    background: transparent;
+}}
 QTabWidget#panelTabs::pane {{
     border: none;
     background: transparent;
 }}
+QTabWidget#panelTabs QTabBar {{
+    background: transparent;
+}}
+
 QTabWidget#panelTabs QTabBar::tab {{
-    background: #e3ebf6;
-    border: 1px solid #cdd8e9;
-    border-radius: 8px;
-    padding: 6px 34px 6px 16px;
-    margin-right: 8px;
-    font-weight: 600;
-    color: #34547d;
+    background: #bccbdd;
+    border: 4px solid #bccbdd;
+    border-bottom: none;
+    border-top: none;
+    padding: 2px 0px 2px 0px;
+    margin-right: 4px;
+    color: #000000;
+    font-weight: 700;
 }}
 QTabWidget#panelTabs QTabBar::tab:selected {{
-    background: #123764;
-    border-color: #123764;
+    background: #0d2b55;
+    border: 4px solid #0d2b55;
+    border-bottom: none;
+    border-top: none;
+    margin-right: 4px;
+    padding: 2px 0px 2px 0px;
+    color: #ffffff;
+    font-weight: 700;
+}}
+QWidget#panelTabHeader {{
+    background: transparent;
+}}
+QLabel#panelTabLabel {{
+    background: transparent;
+    font-weight: 700;
+}}
+QLabel#panelTabLabel[selected="true"] {{
     color: #ffffff;
 }}
-QTabWidget#panelTabs QTabBar::tab:hover {{
-    background: #d9e4f1;
-    color: #163961;
+QLabel#panelTabLabel[selected="false"] {{
+    color: #102a52;
 }}
-QTabWidget#panelTabs QTabBar::close-button {{
-    subcontrol-origin: padding;
-    subcontrol-position: right;
-    right: 12px;
-    width: 10px;
-    height: 10px;
+QPushButton#panelTabCloseButton {{
+    background: transparent;
+    color: #c50623;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 0px;
+    margin: 0px;
+    font-size: 12px;
+    font-weight: 800;
+    min-width: 16px;
+    min-height: 16px;
 }}
-QTabWidget#panelTabs QTabBar::close-button:hover {{
-    right: 12px;
+QPushButton#panelTabCloseButton:hover {{
+    background: rgba(197, 6, 35, 0.12);
+    border-color: rgba(197, 6, 35, 0.22);
+    color: #8f0016;
 }}
-QTabBar::close-button {{
-    image: url({_remove});
-    subcontrol-position: right;
-}}
-QTabBar::close-button:hover {{
-    image: url({_remove_hover});
+QPushButton#panelTabCloseButton:pressed {{
+    background: rgba(197, 6, 35, 0.18);
 }}
 """

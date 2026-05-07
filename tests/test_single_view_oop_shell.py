@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget
 
 from app.application_bootstrap import ApplicationBootstrap
 from app.main_window import MainWindow
@@ -93,6 +93,30 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertEqual(tab.panel_count(), 1)
         self.assertIsInstance(panel, PanelWidget)
+
+    def test_single_view_tab_uses_custom_tab_header_with_close_button(self):
+        tab = SingleViewTab()
+        tab.add_panel(
+            {
+                "id": "demo-temperature",
+                "label": "Temperature",
+                "files": [],
+                "tab_id": "single_view",
+            }
+        )
+
+        tab_bar = tab._panel_tabs.tabBar()
+        tab_header = tab_bar.tabButton(0, tab_bar.ButtonPosition.LeftSide)
+
+        self.assertFalse(tab._panel_tabs.tabsClosable())
+        self.assertIsNotNone(tab_header)
+        self.assertIsInstance(tab_header, QWidget)
+        label = tab_header.findChild(QLabel, "panelTabLabel")
+        close_button = tab_header.findChild(QPushButton, "panelTabCloseButton")
+        self.assertIsNotNone(label)
+        self.assertEqual(label.text(), "Temperature")
+        self.assertIsNotNone(close_button)
+        self.assertFalse(close_button.icon().isNull())
 
     def test_panel_widget_uses_controller_to_update_canvas_message(self):
         panel = PanelWidget(
