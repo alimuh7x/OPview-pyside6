@@ -18,7 +18,8 @@ from app.debug import debug_print
 from viewer.colorscale import cmap_to_plotly_scale
 
 _CANVAS_HEIGHT = 420
-_COLORBAR_WIDTH = 118
+_CANVAS_WIDTH  = 360
+_COLORBAR_WIDTH = 90
 _COLORBAR_GAP = 0.03
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
@@ -87,7 +88,8 @@ class HeatmapCanvas(QWidget):
         self._image = None
         self._last_z_grid = None
         self._last_extent = None
-        self._plot_width = _CANVAS_HEIGHT
+        self._plot_width = _CANVAS_WIDTH
+        self._colorbar_width = _COLORBAR_WIDTH
         self._colorbar_label = ""
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
@@ -104,7 +106,7 @@ class HeatmapCanvas(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self._web_view)
-        self.set_canvas_width(_CANVAS_HEIGHT)
+        self.set_canvas_width(_CANVAS_WIDTH)
         self.setFixedHeight(_CANVAS_HEIGHT)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         debug_print("HeatmapCanvas.__init__ complete")
@@ -114,12 +116,58 @@ class HeatmapCanvas(QWidget):
         debug_print("HeatmapCanvas.set_canvas_width called")
         debug_print(f"HeatmapCanvas plot width={width}")
         self._plot_width = width
-        widget_width = width + _COLORBAR_WIDTH
+        widget_width = width + self._colorbar_width
         self._web_view.setFixedSize(widget_width, _CANVAS_HEIGHT)
         self.setFixedSize(widget_width, _CANVAS_HEIGHT)
         self.geometry_changed.emit()
         debug_print(f"HeatmapCanvas widget width={widget_width}")
         debug_print("HeatmapCanvas geometry_changed emitted")
+
+    def _fmt_tick(self, v: float) -> str:
+        """Format a colorbar tick value — scientific notation for large/small numbers."""
+        import math
+        if v == 0:
+            return "0"
+        try:
+            mag = math.floor(math.log10(abs(v)))
+        except ValueError:
+            return "0"
+        if -3 <= mag <= 4:
+            decimals = max(0, 3 - int(mag))
+            return f"{v:.{decimals}f}"
+        return f"{v:.2e}"
+
+    def _compute_colorbar_width(self, vmin: float, vmax: float) -> int:
+        """Estimate pixel width needed for the colorbar based on the widest tick label."""
+        import math
+
+        def _fmt(v: float) -> str:
+            if v == 0:
+                return "0"
+            try:
+                mag = math.floor(math.log10(abs(v)))
+            except ValueError:
+                return "0"
+            if -3 <= mag <= 4:
+                decimals = max(0, 3 - int(mag))
+                return f"{v:.{decimals}f}"
+            return f"{v:.2e}"
+
+        n_chars = max(len(_fmt(vmin)), len(_fmt(vmax)), len(_fmt(0)))
+        # tickfont size=22 in Roboto Condensed → ~11px per character
+        # bar thickness (18px) + gap (8px) + label text + right padding (14px)
+        return max(_COLORBAR_WIDTH, 18 + 8 + n_chars * 11 + 14)
+
+    def _update_colorbar_width(self, vmin: float, vmax: float) -> None:
+        """Resize the canvas if the required colorbar width has changed."""
+        needed = self._compute_colorbar_width(vmin, vmax)
+        if needed != self._colorbar_width:
+            self._colorbar_width = needed
+            widget_width = self._plot_width + self._colorbar_width
+            self._web_view.setFixedSize(widget_width, _CANVAS_HEIGHT)
+            self.setFixedSize(widget_width, _CANVAS_HEIGHT)
+            self.geometry_changed.emit()
+            debug_print(f"HeatmapCanvas colorbar_width updated to {needed}")
 
     def canvas_width(self) -> int:
         debug_print("HeatmapCanvas.canvas_width called")
@@ -143,8 +191,10 @@ class HeatmapCanvas(QWidget):
         overlay_grid=None,
         title: str = "",
         colorbar_label: str = "",
+        plot_type: str = "heatmap",
     ) -> None:
         debug_print("HeatmapCanvas.render_heatmap called")
+        self._update_colorbar_width(vmin, vmax)
         extent = (
             float(np.nanmin(x_grid)),
             float(np.nanmax(x_grid)),
@@ -171,6 +221,7 @@ class HeatmapCanvas(QWidget):
             overlay_grid=overlay_grid,
             title=title,
             colorbar_label=colorbar_label,
+            plot_type=plot_type,
         )
         html = self._build_html(figure)
         debug_print(f"HeatmapCanvas html size={len(html)}")
@@ -245,6 +296,7 @@ class HeatmapCanvas(QWidget):
         overlay_grid,
         title: str,
         colorbar_label: str,
+        plot_type: str = "heatmap",
     ) -> go.Figure:
         debug_print("HeatmapCanvas._build_figure called")
         rows, cols = np.asarray(z_grid).shape[:2]
@@ -252,31 +304,42 @@ class HeatmapCanvas(QWidget):
         y_values = np.linspace(float(np.nanmin(y_grid)), float(np.nanmax(y_grid)), rows)
         colorscale = cmap_to_plotly_scale(cmap)
         colorbar_x = 1.0 + _COLORBAR_GAP
-        figure = go.Figure()
-        figure.add_trace(
-            go.Heatmap(
-                x=x_values,
-                y=y_values,
-                z=np.asarray(z_grid),
-                zmin=vmin,
-                zmax=vmax,
-                colorscale=colorscale,
-                colorbar=dict(
-                    x=colorbar_x,
-                    xanchor="left",
-                    y=0.5,
-                    yanchor="middle",
-                    len=1.0,
-                    lenmode="fraction",
-                    thickness=34,
-                    thicknessmode="pixels",
-                    outlinewidth=1,
-                    title=dict(text=colorbar_label, side="right", font=dict(size=20)),
-                    tickfont=dict(size=18),
-                ),
-                hovertemplate="x=%{x:.4f}<br>y=%{y:.4f}<br>value=%{z:.4f}<extra></extra>",
-            )
+        colorbar_cfg = dict(
+            x             = colorbar_x,
+            xanchor       = "left",
+            y             = 0.35,
+            yanchor       = "middle",
+            len           = 0.7,
+            lenmode       = "fraction",
+            thickness     = 18,
+            thicknessmode = "pixels",
+            outlinewidth  = 0,
+            title         = dict(text=colorbar_label, side="right", font=dict(size=24)),
+            tickfont      = dict(size=22),
+            tickmode      = "array",
+            tickvals      = [
+                vmin,
+                vmin + (vmax - vmin) * 0.25,
+                vmin + (vmax - vmin) * 0.5,
+                vmin + (vmax - vmin) * 0.75,
+                vmax,
+            ],
+            ticktext      = [
+                self._fmt_tick(vmin),
+                self._fmt_tick(vmin + (vmax - vmin) * 0.25),
+                self._fmt_tick(vmin + (vmax - vmin) * 0.5),
+                self._fmt_tick(vmin + (vmax - vmin) * 0.75),
+                self._fmt_tick(vmax),
+            ],
         )
+        from viewer.plot_types import PLOT_TYPE_MAP
+        figure = go.Figure()
+        renderer = PLOT_TYPE_MAP.get(plot_type, PLOT_TYPE_MAP["heatmap"])
+        hovertemplate = "x=%{x:.4f}<br>y=%{y:.4f}<br>value=%{z:.4f}<extra></extra>"
+        for trace in renderer.build_traces(
+            x_values, y_values, z_grid, vmin, vmax, colorscale, colorbar_cfg, hovertemplate
+        ):
+            figure.add_trace(trace)
         if overlay_grid is not None:
             debug_print("HeatmapCanvas adding smooth contour overlay")
             figure.add_trace(
@@ -314,7 +377,7 @@ class HeatmapCanvas(QWidget):
             title=dict(text=title),
             width=self.width(),
             height=_CANVAS_HEIGHT,
-            margin=dict(l=0, r=_COLORBAR_WIDTH, t=0, b=0),
+            margin=dict(l=0, r=self._colorbar_width, t=60, b=15),
             paper_bgcolor="white",
             plot_bgcolor="white",
             dragmode="pan",
@@ -324,6 +387,7 @@ class HeatmapCanvas(QWidget):
             range=[self._last_extent[0], self._last_extent[1]],
             constrain="domain",
             fixedrange=False,
+            automargin=False,
         )
         figure.update_yaxes(
             visible=False,
@@ -332,6 +396,7 @@ class HeatmapCanvas(QWidget):
             scaleratio=1.0,
             constrain="domain",
             fixedrange=False,
+            automargin=False,
         )
         debug_print("HeatmapCanvas figure ready")
         return figure
@@ -355,6 +420,9 @@ class HeatmapCanvas(QWidget):
         }}
         .modebar {{
             right: 0 !important;
+        }}
+        .nsewdrag, .ewdrag, .nsdrag, .drag {{
+            cursor: default !important;
         }}
     </style>
     <script src="plotly.min.js"></script>

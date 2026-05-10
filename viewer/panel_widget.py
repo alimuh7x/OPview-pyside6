@@ -2,15 +2,16 @@
 
 from pathlib import Path
 
-from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon, QPixmap, QResizeEvent
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSlider,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -21,6 +22,7 @@ from viewer.heatmap_controller import HeatmapController
 from viewer.histogram_canvas import HistogramCanvas
 from viewer.line_scan_canvas import LineScanCanvas
 from viewer.panel_controls_widget import PanelControlsWidget
+from viewer.toggle_switch_widget import ToggleSwitchWidget
 
 
 class HeatmapAlignmentRow(QWidget):
@@ -91,6 +93,8 @@ class HeatmapAlignmentRow(QWidget):
 class PanelWidget(QWidget):
     """Compose controls, canvas, and controller into one panel."""
 
+    file_loaded = Signal(str)  # emitted with file_path whenever a VTK file is loaded
+
     _ASSETS = Path(__file__).parent.parent / "assets"
 
     def __init__(self, dataset_info: dict, projects: dict | None = None) -> None:
@@ -102,11 +106,8 @@ class PanelWidget(QWidget):
         self.heatmap_canvas = HeatmapCanvas()
         self.line_scan_canvas = LineScanCanvas()
         self.histogram_canvas = HistogramCanvas()
-        self.line_scan_info_label = QLabel("Switch to 'Line Scan' mode to set position by clicking")
-        self.line_scan_info_label.setObjectName("mutedInfo")
-        self.line_mode_check = QCheckBox("Line Scan")
-        self.show_line_check = QCheckBox("Show Line")
-        self.show_line_check.setChecked(True)
+        self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
+        self.show_line_check = ToggleSwitchWidget("Show Line", checked=True)
         self.direction_combo = QComboBox()
         self.direction_combo.setObjectName("viewerCombo")
         self.direction_combo.addItem(
@@ -122,7 +123,18 @@ class PanelWidget(QWidget):
         self.histogram_bins_slider.setOrientation(self.controls_widget.slice_slider.orientation())
         self.histogram_bins_slider.setRange(10, 200)
         self.histogram_bins_slider.setValue(30)
-        self.interfaces_check = QCheckBox("Interfaces Overlay")
+
+        self.interfaces_check = ToggleSwitchWidget("Interfaces Overlay", checked=False)
+        self.colorbar_label_edit = QLineEdit()
+        self.colorbar_label_edit.setPlaceholderText("Colorbar label…")
+        self.colorbar_label_edit.setObjectName("viewerLineEdit")
+        self.colorbar_label_edit.setFixedWidth(140)
+        self.unit_scale_combo = QComboBox()
+        self.unit_scale_combo.setObjectName("viewerCombo")
+        self.unit_scale_combo.addItem("Raw",     (1.0,   ""))
+        self.unit_scale_combo.addItem("% ×100",  (100.0, ""))
+        self.unit_scale_combo.addItem("M ÷1e6",  (1e-6,  ""))
+        self.unit_scale_combo.addItem("G ÷1e9",  (1e-9,  ""))
         self.export_button = QPushButton(
             QIcon(str(self._ASSETS / "download.png")), "Export"
         )
@@ -139,7 +151,6 @@ class PanelWidget(QWidget):
             heatmap_canvas=self.heatmap_canvas,
             line_scan_canvas=self.line_scan_canvas,
             histogram_canvas=self.histogram_canvas,
-            line_scan_info_label=self.line_scan_info_label,
             line_mode_check=self.line_mode_check,
             show_line_check=self.show_line_check,
             direction_combo=self.direction_combo,
@@ -147,20 +158,18 @@ class PanelWidget(QWidget):
             histogram_bins_slider=self.histogram_bins_slider,
             interfaces_check=self.interfaces_check,
             export_button=self.export_button,
-            map_title_label=self.map_title_label,
+            colorbar_label_edit=self.colorbar_label_edit,
+            unit_scale_combo=self.unit_scale_combo,
             dataset_info=dataset_info,
         )
+        self.controller._file_loaded_callback = self.file_loaded.emit
         self.controller.connect_signals()
         self.controller.refresh_view()
         debug_print("PanelWidget.__init__ complete")
 
     def _build_ui(self) -> None:
         debug_print("PanelWidget._build_ui called")
-        outer_layout = QHBoxLayout(self)
-        outer_layout.setContentsMargins(8, 8, 8, 8)
-        outer_layout.setSpacing(12)
-
-        left_col = QWidget()
+        left_col    = QWidget()
         left_layout = QVBoxLayout(left_col)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
@@ -170,9 +179,29 @@ class PanelWidget(QWidget):
 
         self.analysis_card = self._build_analysis_card()
 
-        outer_layout.addWidget(left_col, 11)
-        outer_layout.addWidget(self.analysis_card, 12)
+        left_col.setMinimumWidth(420)
+        self.analysis_card.setMinimumWidth(520)
+        self.analysis_card.setMaximumWidth(720)
+
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.addWidget(left_col)
+        self._splitter.addWidget(self.analysis_card)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(0)
+        main_layout.addWidget(self._splitter)
         debug_print("PanelWidget layout ready")
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        orientation = (
+            Qt.Orientation.Vertical
+            if event.size().width() < 980
+            else Qt.Orientation.Horizontal
+        )
+        self._splitter.setOrientation(orientation)
 
     def _build_heatmap_card(self) -> QWidget:
         debug_print("PanelWidget._build_heatmap_card called")
@@ -191,9 +220,11 @@ class PanelWidget(QWidget):
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(12, 0, 12, 0)
         toolbar_layout.setSpacing(12)
-        self.map_title_label = QLabel(f"Auto Dataset: {self.dataset_info.get('label', 'Viewer')}")
-        self.map_title_label.setObjectName("sectionTitle")
-        toolbar_layout.addWidget(self.map_title_label)
+        cb_label = QLabel("Label:")
+        cb_label.setObjectName("mutedInfo")
+        toolbar_layout.addWidget(cb_label)
+        toolbar_layout.addWidget(self.colorbar_label_edit)
+        toolbar_layout.addWidget(self.unit_scale_combo)
         toolbar_layout.addStretch(1)
         toolbar_layout.addWidget(self.interfaces_check)
         toolbar_layout.addWidget(self.export_button)
@@ -270,8 +301,7 @@ class PanelWidget(QWidget):
         line_toolbar_layout.addWidget(self.direction_combo)
         line_toolbar_layout.addStretch(1)
         line_layout.addWidget(line_toolbar)
-        line_layout.addWidget(self.line_scan_canvas, 1)
-        line_layout.addWidget(self.line_scan_info_label)
+        line_layout.addWidget(self.line_scan_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(line_card, 1)
 
         histogram_controls = QWidget()
@@ -291,7 +321,7 @@ class PanelWidget(QWidget):
         histogram_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         histogram_layout = QVBoxLayout(histogram_card)
         histogram_layout.setContentsMargins(12, 12, 12, 12)
-        histogram_layout.addWidget(self.histogram_canvas, 1)
+        histogram_layout.addWidget(self.histogram_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(histogram_card, 1)
 
         return card

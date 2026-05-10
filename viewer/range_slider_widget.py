@@ -82,10 +82,10 @@ class RangeSliderWidget(QWidget):
         lower_x = self._value_to_pos(self._lower_value)
         upper_x = self._value_to_pos(self._upper_value)
         selection_rect = QRectF(lower_x, center_y - 4, max(2.0, upper_x - lower_x), 8)
-        painter.setBrush(QColor("#83d8dd"))
+        painter.setBrush(QColor("#8FAE00"))
         painter.drawRoundedRect(selection_rect, 4, 4)
 
-        painter.setPen(QPen(QColor("#17375e"), 2))
+        painter.setPen(QPen(QColor("#8FAE00"), 2))
         painter.setBrush(QColor("#ffffff"))
         painter.drawEllipse(QPoint(int(lower_x), int(center_y)), self._handle_radius, self._handle_radius)
         painter.drawEllipse(QPoint(int(upper_x), int(center_y)), self._handle_radius, self._handle_radius)

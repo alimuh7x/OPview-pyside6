@@ -2,9 +2,9 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
@@ -17,7 +17,11 @@ from PySide6.QtWidgets import (
 
 from app.debug import debug_print
 from config.constants import PALETTES
+from viewer.plot_types import PLOT_TYPE_REGISTRY
 from viewer.range_slider_widget import RangeSliderWidget
+from viewer.toggle_switch_widget import ToggleSwitchWidget
+
+_ASSETS = Path(__file__).parent.parent / "assets"
 
 
 class PanelControlsWidget(QWidget):
@@ -51,10 +55,9 @@ class PanelControlsWidget(QWidget):
         row1_layout = QHBoxLayout(row1)
         row1_layout.setContentsMargins(0, 0, 0, 0)
         row1_layout.setSpacing(8)
+
         self.project_combo = QComboBox()
         self.project_combo.setObjectName("viewerCombo")
-        self.project_combo.setEnabled(False)
-        self.project_combo.addItem(self._initial_project_text())
         self.file_combo = QComboBox()
         self.file_combo.setObjectName("viewerCombo")
         self.scalar_combo = QComboBox()
@@ -65,16 +68,24 @@ class PanelControlsWidget(QWidget):
         row1_layout.addWidget(self.scalar_combo, 2)
         layout.addWidget(row1)
 
+        # ------------------------------------------------------------------------------------------------
         # Row 2: range controls
+        # ------------------------------------------------------------------------------------------------
         self.range_row = QWidget()
         self.range_row.setObjectName("controlsRow")
         self.range_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         range_row_layout = QHBoxLayout(self.range_row)
         range_row_layout.setContentsMargins(0, 0, 0, 0)
         range_row_layout.setSpacing(8)
+        self.plot_type_combo  = QComboBox()
+        self.plot_type_combo.setObjectName("viewerCombo")
+        for renderer in PLOT_TYPE_REGISTRY:
+            self.plot_type_combo.addItem(renderer.label, renderer.key)
+        range_row_layout.addWidget(self.plot_type_combo)
         self.range_label = QLabel("Range")
         self.range_label.setObjectName("mutedInfo")
         range_row_layout.addWidget(self.range_label)
+
         self.range_min_spin = QDoubleSpinBox()
         self.range_min_spin.setObjectName("viewerSpin")
         self.range_min_spin.setDecimals(6)
@@ -83,18 +94,24 @@ class PanelControlsWidget(QWidget):
         self.range_max_spin.setObjectName("viewerSpin")
         self.range_max_spin.setDecimals(6)
         self.range_max_spin.setRange(-1e12, 1e12)
-        self.reset_button = QPushButton("↺")
+
+        self.reset_button = QPushButton()
+        self.reset_button.setIcon(QIcon(str(_ASSETS / "refresh.png")))
+        self.reset_button.setIconSize(QSize(16, 16))
         self.reset_button.setProperty("subtle", True)
-        self.reset_button.setFixedWidth(32)
-        self.click_mode_range_check = QCheckBox("Range Selection on Map")
-        self.click_mode_range_check.setChecked(True)
+        self.reset_button.setFixedSize(32, 32)
+        self.reset_button.setToolTip("Reset range to data min/max")
+
+        self.click_mode_range_check = ToggleSwitchWidget("Range Selection on Map", checked=True)
         range_row_layout.addWidget(self.range_min_spin, 1)
         range_row_layout.addWidget(self.range_max_spin, 1)
         range_row_layout.addWidget(self.reset_button)
         range_row_layout.addWidget(self.click_mode_range_check)
         layout.addWidget(self.range_row)
 
+        # ------------------------------------------------------------------------------------------------
         # Row 3: palette / dual range slider / full scale
+        # ------------------------------------------------------------------------------------------------
         self.palette_row = QWidget()
         self.palette_row.setObjectName("controlsRow")
         self.palette_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -107,11 +124,12 @@ class PanelControlsWidget(QWidget):
             label = key.replace("-", " ").title()
             self.palette_combo.addItem(label, key)
         self.range_slider = RangeSliderWidget()
-        self.full_scale_check = QCheckBox("Full Scale")
+        self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
         palette_row_layout.addWidget(self.palette_combo, 1)
-        palette_row_layout.addWidget(self.range_slider, 2)
+        palette_row_layout.addWidget(self.range_slider, 4)
         palette_row_layout.addWidget(self.full_scale_check)
         layout.addWidget(self.palette_row)
+        # ------------------------------------------------------------------------------------------------
 
         # Row 4: slice (hidden until a sliceable dataset is loaded)
         self.slice_controls_container = QWidget()
@@ -146,19 +164,9 @@ class PanelControlsWidget(QWidget):
         self.status_label.hide()
         debug_print("PanelControlsWidget UI ready")
 
-    def _initial_project_text(self) -> str:
-        debug_print("PanelControlsWidget._initial_project_text called")
-        vtk_folder = self.dataset_info.get("vtk_folder")
-        if vtk_folder:
-            folder = Path(vtk_folder)
-            project = folder.parent.name
-            return f"{project}/{folder.name}"
-        if self.dataset_info.get("project_name"):
-            return self.dataset_info["project_name"]
-        return "Project/VTK"
-
     def _connect_signals(self) -> None:
         debug_print("PanelControlsWidget._connect_signals called")
+        self.project_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("project"))
         self.file_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("file"))
         self.scalar_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("scalar"))
         self.axis_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("axis"))
@@ -171,6 +179,7 @@ class PanelControlsWidget(QWidget):
         self.click_mode_range_check.toggled.connect(lambda *_: self._emit_refresh_requested("click-mode"))
         self.palette_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("palette"))
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
+        self.plot_type_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("plot-type"))
         debug_print("PanelControlsWidget signals connected")
 
     def _emit_refresh_requested(self, trigger: str) -> None:
@@ -228,10 +237,20 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget.set_status_text called")
         self.status_label.setText(message)
 
-    def set_project_text(self, text: str) -> None:
-        debug_print("PanelControlsWidget.set_project_text called")
+    def set_project_options(self, projects: list[dict]) -> None:
+        debug_print("PanelControlsWidget.set_project_options called")
+        self.project_combo.blockSignals(True)
         self.project_combo.clear()
-        self.project_combo.addItem(text)
+        for p in projects:
+            folder = Path(p["vtk_folder"])
+            label = f"{folder.parent.name}/{folder.name}"
+            self.project_combo.addItem(label, p)
+        self.project_combo.blockSignals(False)
+        debug_print(f"PanelControlsWidget project options count={self.project_combo.count()}")
+
+    def current_project_info(self) -> dict:
+        debug_print("PanelControlsWidget.current_project_info called")
+        return self.project_combo.currentData() or {}
 
     def set_range_values(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget.set_range_values called")
@@ -284,6 +303,9 @@ class PanelControlsWidget(QWidget):
     def full_scale_enabled(self) -> bool:
         debug_print("PanelControlsWidget.full_scale_enabled called")
         return self.full_scale_check.isChecked()
+
+    def current_plot_type(self) -> str:
+        return self.plot_type_combo.currentData() or "heatmap"
 
     def click_mode(self) -> str:
         debug_print("PanelControlsWidget.click_mode called")
