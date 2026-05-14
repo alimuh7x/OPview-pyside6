@@ -12,6 +12,7 @@ def build_app_stylesheet() -> str:
     _arrow     = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
     _arrow_up  = str(_assets / "dropUp_icon_2.png").replace("\\", "/")
     _arrow_dn  = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
+    _checkbox_tick = str(_assets / "checkbox-tick.svg").replace("\\", "/")
     return f"""
 QMainWindow, QWidget#appShell {{
     background: #e7ecf4;
@@ -61,6 +62,24 @@ QPushButton#headerDocButton {{
     padding: 0 18px;
     border-radius: 18px;
 }}
+QPushButton#headerSidebarToggleButton {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    min-width: 34px;
+    max-width: 34px;
+    min-height: 34px;
+    max-height: 34px;
+    padding: 0px;
+    margin: 0px 8px 0px 0px;
+}}
+QPushButton#headerSidebarToggleButton:hover {{
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.18);
+}}
+QPushButton#headerSidebarToggleButton:pressed {{
+    background: rgba(255, 255, 255, 0.18);
+}}
 QWidget#sidebarShell {{
     background: #0d2b55;
     border: none;
@@ -109,7 +128,19 @@ QComboBox#sidebarCombo QAbstractItemView {{
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.18);
 }}
-QListWidget#projectList {{
+QLineEdit#sidebarLineEdit {{
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+    min-height: 34px;
+    padding: 2px 12px;
+}}
+QLineEdit#sidebarLineEdit::placeholder {{
+    color: #c9d5e7;
+}}
+QListWidget#projectList,
+QListWidget#textFileList {{
     background: rgba(255, 255, 255, 0.06);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.14);
@@ -117,18 +148,28 @@ QListWidget#projectList {{
     padding: 4px;
     outline: none;
 }}
-QListWidget#projectList::item {{
+QListWidget#projectList::item,
+QListWidget#textFileList::item {{
     padding: 5px 8px;
     border-radius: 6px;
 }}
-QListWidget#projectList::item:hover {{
+QListWidget#projectList::item:hover,
+QListWidget#textFileList::item:hover {{
     background: rgba(255, 255, 255, 0.08);
 }}
-QListWidget#projectList::item:selected {{
+QListWidget#projectList::item:selected,
+QListWidget#textFileList::item:selected {{
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
 }}
 QWidget#contentShell {{
+    background: #e7ecf4;
+}}
+QScrollArea#appContentScroll {{
+    background: #e7ecf4;
+    border: none;
+}}
+QScrollArea#appContentScroll > QWidget > QWidget {{
     background: #e7ecf4;
 }}
 QTabBar#mainTabs {{
@@ -168,6 +209,17 @@ QWidget#toolbarStrip {{
 QWidget#controlsRow {{
     background: transparent;
 }}
+QScrollArea#multiViewScroll {{
+    background: #f7f9fc;
+    border: none;
+}}
+QScrollArea#multiViewScroll > QWidget > QWidget {{
+    background: #f7f9fc;
+}}
+QWidget#multiViewArea,
+QWidget#multiViewHeatmapRow {{
+    background: #f7f9fc;
+}}
 QLabel#sectionTitle {{
     color: #102a52;
     font-size: 20px;
@@ -179,16 +231,17 @@ QLabel#mutedInfo {{
 }}
 QComboBox#viewerCombo,
 QDoubleSpinBox#viewerSpin {{
+    min-width: 72px;
     min-height: 28px;
     background: #ffffff;
     color: #102a52;
     border: 1px solid #ccd7e8;
     border-radius: 10px;
-    padding: 2px 36px 2px 12px;
+    padding: 2px 24px 2px 8px;
 }}
 QComboBox#viewerCombo::drop-down {{
     border: none;
-    width: 28px;
+    width: 22px;
     background: transparent;
     subcontrol-position: right center;
 }}
@@ -212,12 +265,13 @@ QComboBox#viewerCombo QAbstractItemView::item:hover {{
 }}
 
 QLineEdit#viewerLineEdit {{
+    min-width: 72px;
     min-height: 28px;
     background: #ffffff;
     color: #102a52;
     border: 1px solid #ccd7e8;
     border-radius: 10px;
-    padding: 2px 10px;
+    padding: 2px 8px;
     font-size: 13px;
 }}
 QLineEdit#viewerLineEdit:focus {{
@@ -225,13 +279,16 @@ QLineEdit#viewerLineEdit:focus {{
 }}
 QDoubleSpinBox#viewerSpin {{
     background: #ffffff;
-    padding: 4px 8px 4px 12px;
+    padding: 4px 6px 4px 8px;
+}}
+QDoubleSpinBox#viewerSpin[rangeSpin="true"] {{
+    min-width: 120px;
 }}
 
 QDoubleSpinBox#viewerSpin::up-button {{
     subcontrol-origin: border;
     subcontrol-position: top right;
-    width: 20px;
+    width: 16px;
     height: 20px;
     border-left: 1px solid #ccd7e8;
     border-top-right-radius: 10px;
@@ -251,7 +308,7 @@ QDoubleSpinBox#viewerSpin::up-arrow {{
 QDoubleSpinBox#viewerSpin::down-button {{
     subcontrol-origin: border;
     subcontrol-position: bottom right;
-    width: 20px;
+    width: 16px;
     height: 20px;
     border-left: 1px solid #ccd7e8;
     border-top: 1px solid #ccd7e8;
@@ -317,18 +374,22 @@ QCheckBox::indicator:checked {{
     border-color: #c50623;
 }}
 
-QTabWidget#panelTabs {{
+QTabWidget#panelTabs,
+QTabWidget#graphPanelTabs {{
     background: transparent;
 }}
-QTabWidget#panelTabs::pane {{
+QTabWidget#panelTabs::pane,
+QTabWidget#graphPanelTabs::pane {{
     border: none;
     background: transparent;
 }}
-QTabWidget#panelTabs QTabBar {{
+QTabWidget#panelTabs QTabBar,
+QTabWidget#graphPanelTabs QTabBar {{
     background: transparent;
 }}
 
-QTabWidget#panelTabs QTabBar::tab {{
+QTabWidget#panelTabs QTabBar::tab,
+QTabWidget#graphPanelTabs QTabBar::tab {{
     background: #bccbdd;
     border: 4px solid #bccbdd;
     border-bottom: none;
@@ -338,7 +399,8 @@ QTabWidget#panelTabs QTabBar::tab {{
     color: #000000;
     font-weight: 700;
 }}
-QTabWidget#panelTabs QTabBar::tab:selected {{
+QTabWidget#panelTabs QTabBar::tab:selected,
+QTabWidget#graphPanelTabs QTabBar::tab:selected {{
     background: #0d2b55;
     border: 4px solid #0d2b55;
     border-bottom: none;
@@ -347,6 +409,151 @@ QTabWidget#panelTabs QTabBar::tab:selected {{
     padding: 2px 0px 2px 0px;
     color: #ffffff;
     font-weight: 700;
+}}
+QWidget#customGraphPanel {{
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+}}
+QWidget#graphTopControls {{
+    background: #f8fbff;
+    border-bottom: 1px solid #e2e8f0;
+}}
+QGroupBox#graphDataSources {{
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    color: #102a52;
+    font-weight: 600;
+}}
+QGroupBox#graphDataSources::title {{
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px;
+    color: #102a52;
+    background: #f8fbff;
+}}
+QFrame#graphFileSection {{
+    background: rgba(18, 43, 98, 0.02);
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+}}
+QFrame#graphFileSection QLabel {{
+    color: #102a52;
+    font-weight: 600;
+}}
+QFrame#graphFileSection QCheckBox {{
+    color: #102a52;
+    background: transparent;
+}}
+QFrame#graphFileSection QPushButton {{
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #ccd7e8;
+    border-radius: 4px;
+    font-weight: 700;
+}}
+QWidget#graphMainContent {{
+    background: #ffffff;
+}}
+QWidget#graphArea {{
+    background: #ffffff;
+}}
+QWidget#customGraphCanvas {{
+    background: #ffffff;
+}}
+QScrollArea#graphSettingsScroll {{
+    background: #fbfdff;
+    border-left: 1px solid #e2e8f0;
+    border-top: none;
+    border-right: none;
+    border-bottom: none;
+}}
+QScrollArea#graphSettingsScroll > QWidget > QWidget,
+QWidget#graphSettingsContent {{
+    background: #fbfdff;
+}}
+QLabel#graphSettingsTitle {{
+    color: #0d2b55;
+    font-size: 16px;
+    font-weight: 800;
+}}
+QGroupBox#graphSettingsSection {{
+    background: #ffffff;
+    border: 1px solid #d5deeb;
+    border-radius: 8px;
+    margin-top: 16px;
+    color: #102a52;
+    font-weight: 800;
+    font-size: 16px;
+}}
+QGroupBox#graphSettingsSection::title {{
+    subcontrol-origin: margin;
+    left: 18px;
+    padding: 0 7px;
+    color: #102a52;
+    background: #fbfdff;
+}}
+QGroupBox#graphSettingsSection QLabel,
+QGroupBox#graphSettingsSection QRadioButton,
+QGroupBox#graphSettingsSection QCheckBox {{
+    color: #435a7c;
+    background: transparent;
+    font-size: 16px;
+    font-weight: 400;
+}}
+QGroupBox#graphSettingsSection QCheckBox::indicator,
+QFrame#graphFileSection QCheckBox::indicator {{
+    width: 18px;
+    height: 18px;
+    background: #ffffff;
+    border: 2px solid #ccd7e8;
+    border-radius: 5px;
+}}
+QGroupBox#graphSettingsSection QCheckBox::indicator:checked,
+QFrame#graphFileSection QCheckBox::indicator:checked {{
+    background: #ffffff;
+    border: 2px solid #ccd7e8;
+    image: url({_checkbox_tick});
+}}
+QGroupBox#graphSettingsSection QRadioButton::indicator {{
+    width: 18px;
+    height: 18px;
+    background: #ffffff;
+    border: 2px solid #ccd7e8;
+    border-radius: 5px;
+}}
+QGroupBox#graphSettingsSection QRadioButton::indicator:checked {{
+    background: #ffffff;
+    border: 2px solid #ccd7e8;
+    image: url({_checkbox_tick});
+}}
+QComboBox#graphCombo,
+QLineEdit#graphLineEdit {{
+    min-height: 36px;
+    background: #ffffff;
+    color: #001f4d;
+    border: 1px solid #ccd7e8;
+    border-radius: 7px;
+    padding: 2px 10px;
+    font-size: 16px;
+    font-weight: 400;
+}}
+QComboBox#graphCombo::drop-down {{
+    border: none;
+    width: 26px;
+    background: transparent;
+}}
+QComboBox#graphCombo::down-arrow {{
+    image: url({_arrow});
+    width: 10px;
+    height: 7px;
+}}
+QComboBox#graphCombo QAbstractItemView {{
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #ccd7e8;
 }}
 QWidget#panelTabHeader {{
     background: transparent;

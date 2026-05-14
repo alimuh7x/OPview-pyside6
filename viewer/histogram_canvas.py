@@ -22,6 +22,7 @@ class HistogramCanvas(QWidget):
     def __init__(self) -> None:
         debug_print("HistogramCanvas.__init__ start")
         super().__init__()
+        self._canvas_width = _W
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
         self._web_view.setFixedSize(_W, _H)
@@ -33,14 +34,43 @@ class HistogramCanvas(QWidget):
         self._web_view.setHtml(self._empty_html(), self._base_url)
         debug_print("HistogramCanvas.__init__ complete")
 
+    def set_available_width(self, width: int) -> None:
+        debug_print(f"HistogramCanvas.set_available_width width={width}")
+        self._canvas_width = max(240, min(_W, int(width)))
+        self._web_view.setFixedSize(self._canvas_width, _H)
+        self.setFixedSize(self._canvas_width, _H)
+        debug_print(f"HistogramCanvas canvas width={self._canvas_width}")
+
     def render_histogram(self, values, *, label: str, bins: int) -> None:
         debug_print("HistogramCanvas.render_histogram called")
-        data = np.asarray(values).flatten()
-        data = data[~np.isnan(data)]
+        debug_print("HistogramCanvas delegating single trace to render_histograms")
+        self.render_histograms(
+            [{"name": "", "values": values}],
+            label=label,
+            bins=bins,
+        )
+        debug_print("HistogramCanvas.render_histogram complete")
 
+    def render_histograms(self, series, *, label: str, bins: int) -> None:
+        debug_print("HistogramCanvas.render_histograms called")
+        debug_print(f"HistogramCanvas series count={len(series)}")
         figure = go.Figure()
+        colors = ["#183568", "#c50623", "#0f9ca6", "#f0a202", "#7b2cbf", "#2d6a4f"]
+        all_values = []
+        prepared = []
+        for index, item in enumerate(series):
+            debug_print(f"HistogramCanvas preparing series index={index}")
+            name = item.get("name", "")
+            debug_print(f"HistogramCanvas preparing series name={name}")
+            data = np.asarray(item.get("values", [])).flatten()
+            data = data[~np.isnan(data)]
+            prepared.append((name, data))
+            if data.size:
+                all_values.append(data)
+            debug_print(f"HistogramCanvas finite count={data.size}")
 
-        if data.size == 0:
+        if not all_values:
+            debug_print("HistogramCanvas no finite data")
             figure.add_annotation(
                 text="No finite data",
                 xref="paper", yref="paper",
@@ -48,10 +78,13 @@ class HistogramCanvas(QWidget):
                 font=dict(size=14, color="#6a7e9f"),
             )
         else:
-            data_min = float(np.min(data))
-            data_max = float(np.max(data))
+            combined = np.concatenate(all_values)
+            data_min = float(np.min(combined))
+            data_max = float(np.max(combined))
             data_range = data_max - data_min
             tolerance = max(1e-12, abs(data_max) * 1e-12)
+            debug_print(f"HistogramCanvas combined min={data_min}")
+            debug_print(f"HistogramCanvas combined max={data_max}")
 
             if data_range <= tolerance:
                 # Near-constant data — pad symmetrically relative to value magnitude
@@ -65,20 +98,36 @@ class HistogramCanvas(QWidget):
                 bin_start = data_min
                 bin_end   = data_max + bin_size  # ensure last bin included
 
-            figure.add_trace(go.Histogram(
-                x=data.tolist(),
-                xbins=dict(start=bin_start, end=bin_end, size=bin_size),
-                marker_color="#183568",
-                opacity=0.9,
-                hovertemplate="value=%{x:.4g}<br>count=%{y}<extra></extra>",
-            ))
+            for index, (name, data) in enumerate(prepared):
+                if data.size == 0:
+                    debug_print(f"HistogramCanvas skipping empty series index={index}")
+                    continue
+                debug_print(f"HistogramCanvas adding histogram index={index}")
+                figure.add_trace(go.Histogram(
+                    x=data.tolist(),
+                    name=name,
+                    xbins=dict(start=bin_start, end=bin_end, size=bin_size),
+                    marker_color=colors[index % len(colors)],
+                    opacity=0.62 if len(prepared) > 1 else 0.9,
+                    hovertemplate="value=%{x:.4g}<br>count=%{y}<br>%{fullData.name}<extra></extra>",
+                    showlegend=bool(name),
+                ))
 
         figure.update_layout(
-            width=_W,
+            width=self._canvas_width,
             height=_H,
             margin=dict(l=54, r=16, t=16, b=44),
             paper_bgcolor="white",
             plot_bgcolor="white",
+            barmode="overlay",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1.0,
+                font=dict(size=11),
+            ),
             xaxis=dict(
                 title=dict(text=label, font=dict(size=15, color="#000000")),
                 tickfont=dict(size=14, color="#000000"),
@@ -110,7 +159,7 @@ class HistogramCanvas(QWidget):
             bargap=0.05,
         )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
-        debug_print("HistogramCanvas render complete")
+        debug_print("HistogramCanvas.render_histograms complete")
 
     def _build_html(self, figure: go.Figure) -> str:
         figure_json = figure.to_json()

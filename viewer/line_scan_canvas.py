@@ -22,6 +22,7 @@ class LineScanCanvas(QWidget):
     def __init__(self) -> None:
         debug_print("LineScanCanvas.__init__ start")
         super().__init__()
+        self._canvas_width = _W
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
         self._web_view.setFixedSize(_W, _H)
@@ -33,22 +34,68 @@ class LineScanCanvas(QWidget):
         self._web_view.setHtml(self._empty_html(), self._base_url)
         debug_print("LineScanCanvas.__init__ complete")
 
+    def set_available_width(self, width: int) -> None:
+        debug_print(f"LineScanCanvas.set_available_width width={width}")
+        self._canvas_width = max(240, min(_W, int(width)))
+        self._web_view.setFixedSize(self._canvas_width, _H)
+        self.setFixedSize(self._canvas_width, _H)
+        debug_print(f"LineScanCanvas canvas width={self._canvas_width}")
+
     def render_line(self, x_data, z_data, *, title: str, x_label: str, y_label: str) -> None:
         debug_print("LineScanCanvas.render_line called")
+        debug_print("LineScanCanvas delegating single trace to render_lines")
+        self.render_lines(
+            [{"name": "", "x": x_data, "y": z_data}],
+            title=title,
+            x_label=x_label,
+            y_label=y_label,
+        )
+        debug_print("LineScanCanvas.render_line complete")
+
+    def render_lines(self, series, *, title: str, x_label: str, y_label: str) -> None:
+        debug_print("LineScanCanvas.render_lines called")
+        debug_print(f"LineScanCanvas series count={len(series)}")
         figure = go.Figure()
-        figure.add_trace(go.Scatter(
-            x=np.asarray(x_data).tolist(),
-            y=np.asarray(z_data).tolist(),
-            mode="lines",
-            line=dict(color="#c50623", width=2),
-            hovertemplate=f"{x_label}=%{{x:.4f}}<br>{y_label}=%{{y:.4f}}<extra></extra>",
-        ))
+        colors = ["#c50623", "#183568", "#0f9ca6", "#f0a202", "#7b2cbf", "#2d6a4f"]
+        if not series:
+            debug_print("LineScanCanvas no series, adding annotation")
+            figure.add_annotation(
+                text="No line scan data",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=14, color="#6a7e9f"),
+            )
+        for index, item in enumerate(series):
+            name = item.get("name", "")
+            debug_print(f"LineScanCanvas adding series index={index}")
+            debug_print(f"LineScanCanvas adding series name={name}")
+            figure.add_trace(go.Scatter(
+                x=np.asarray(item.get("x", [])).tolist(),
+                y=np.asarray(item.get("y", [])).tolist(),
+                mode="lines",
+                name=name,
+                line=dict(color=colors[index % len(colors)], width=2),
+                hovertemplate=(
+                    f"{x_label}=%{{x:.4f}}<br>"
+                    f"{y_label}=%{{y:.4f}}<br>"
+                    "%{fullData.name}<extra></extra>"
+                ),
+                showlegend=bool(name),
+            ))
         figure.update_layout(
-            width=_W,
+            width=self._canvas_width,
             height=_H,
             margin=dict(l=54, r=16, t=16, b=44),
             paper_bgcolor="white",
             plot_bgcolor="white",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1.0,
+                font=dict(size=11),
+            ),
             xaxis=dict(
                 title=dict(text=x_label, font=dict(size=15, color="#000000")),
                 tickfont=dict(size=14, color="#000000"),
@@ -79,7 +126,7 @@ class LineScanCanvas(QWidget):
             ),
         )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
-        debug_print("LineScanCanvas render complete")
+        debug_print("LineScanCanvas.render_lines complete")
 
     def _build_html(self, figure: go.Figure) -> str:
         figure_json = figure.to_json()

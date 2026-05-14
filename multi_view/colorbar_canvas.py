@@ -9,10 +9,11 @@ from PySide6.QtCore import QUrl
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
+from app.debug import debug_print
 from viewer.colorscale import cmap_to_plotly_scale
 
 _PLOTLY_JS = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
-_W = 90
+_W = 140
 _H = 420
 
 
@@ -21,8 +22,11 @@ class ColorbarCanvas(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        debug_print("MultiView ColorbarCanvas.__init__ start")
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS.parent.resolve()) + "/")
+        debug_print(f"MultiView ColorbarCanvas base_url={self._base_url.toString()}")
         self._web = QWebEngineView(self)
+        debug_print("MultiView ColorbarCanvas web view created")
         self._web.setFixedSize(_W, _H)
         self._web.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
@@ -33,6 +37,7 @@ class ColorbarCanvas(QWidget):
             "<!DOCTYPE html><html><body style='margin:0;background:white;'></body></html>",
             self._base_url,
         )
+        debug_print("MultiView ColorbarCanvas.__init__ complete")
 
     def update_colorbar(
         self,
@@ -41,7 +46,12 @@ class ColorbarCanvas(QWidget):
         vmax: float,
         label: str = "",
     ) -> None:
+        debug_print("MultiView ColorbarCanvas.update_colorbar called")
+        debug_print(f"MultiView ColorbarCanvas vmin={vmin}")
+        debug_print(f"MultiView ColorbarCanvas vmax={vmax}")
+        debug_print(f"MultiView ColorbarCanvas label={label}")
         colorscale = cmap_to_plotly_scale(cmap)
+        debug_print(f"MultiView ColorbarCanvas colorscale stops={len(colorscale)}")
 
         def fmt(v: float) -> str:
             import math
@@ -64,24 +74,26 @@ class ColorbarCanvas(QWidget):
         ]
 
         figure = go.Figure()
+        debug_print("MultiView ColorbarCanvas adding invisible scale trace")
         figure.add_trace(go.Heatmap(
             z=[[vmin, vmax]],
             colorscale=colorscale,
             zmin=vmin,
             zmax=vmax,
             showscale=True,
+            opacity=0.0,
             colorbar=dict(
-                x=0.0,
+                x=0.04,
                 xanchor="left",
-                y=0.35,
+                y=0.5,
                 yanchor="middle",
-                len=0.7,
+                len=0.82,
                 lenmode="fraction",
-                thickness=18,
+                thickness=24,
                 thicknessmode="pixels",
                 outlinewidth=0,
-                title=dict(text=label, side="right", font=dict(size=14)),
-                tickfont=dict(size=12),
+                title=dict(text=label, side="right", font=dict(size=18)),
+                tickfont=dict(size=15),
                 tickmode="array",
                 tickvals=tick_vals,
                 ticktext=[fmt(v) for v in tick_vals],
@@ -96,6 +108,7 @@ class ColorbarCanvas(QWidget):
         )
         figure.update_xaxes(visible=False)
         figure.update_yaxes(visible=False)
+        debug_print("MultiView ColorbarCanvas layout ready")
 
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>
@@ -103,6 +116,7 @@ class ColorbarCanvas(QWidget):
 <style>html,body{{margin:0;padding:0;overflow:hidden;background:white;}}</style>
 <script src="plotly.min.js"></script></head>
 <body><div id="d"></div>
-<script>Plotly.newPlot('d',{fig_json}.data,{fig_json}.layout,{{displayModeBar:false,responsive:false}});</script>
-</body></html>"""
+	<script>Plotly.newPlot('d',{fig_json}.data,{fig_json}.layout,{{displayModeBar:false,responsive:false}});</script>
+	</body></html>"""
         self._web.setHtml(html, self._base_url)
+        debug_print("MultiView ColorbarCanvas.update_colorbar complete")

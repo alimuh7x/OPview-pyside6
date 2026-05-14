@@ -79,6 +79,36 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertIs(window.tab_widget.parentWidget(), window.header_bar)
 
+    def test_header_sidebar_toggle_button_syncs_sidebar_and_menu(self):
+        window = MainWindow()
+        window.show()
+        QApplication.processEvents()
+
+        toggle_button = window.sidebar_toggle_button
+        header_layout = window.header_bar.layout()
+
+        self.assertIs(toggle_button.parentWidget(), window.header_bar)
+        self.assertLess(header_layout.indexOf(toggle_button), header_layout.indexOf(window.tab_widget))
+        self.assertFalse(toggle_button.icon().isNull())
+        self.assertTrue(window.sidebar_widget.isVisible())
+        self.assertTrue(window.app_menu_bar.toggle_sidebar_action.isChecked())
+
+        toggle_button.click()
+
+        self.assertFalse(window.sidebar_widget.isVisible())
+        self.assertFalse(window.app_menu_bar.toggle_sidebar_action.isChecked())
+        self.assertFalse(toggle_button.icon().isNull())
+
+        toggle_button.click()
+
+        self.assertTrue(window.sidebar_widget.isVisible())
+        self.assertTrue(window.app_menu_bar.toggle_sidebar_action.isChecked())
+
+        window.app_menu_bar.toggle_sidebar_action.setChecked(False)
+
+        self.assertFalse(window.sidebar_widget.isVisible())
+        self.assertFalse(toggle_button.icon().isNull())
+
     def test_single_view_tab_creates_panel_widget(self):
         tab = SingleViewTab()
 

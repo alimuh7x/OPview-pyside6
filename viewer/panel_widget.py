@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QSplitter,
     QVBoxLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from utils.combo_box_utils import update_combo_popup_width
 from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.heatmap_controller import HeatmapController
 from viewer.histogram_canvas import HistogramCanvas
@@ -117,6 +119,7 @@ class PanelWidget(QWidget):
             QIcon(str(self._ASSETS / "Vertical.png")), "Vertical", "vertical"
         )
         self.direction_combo.setIconSize(QSize(18, 18))
+        update_combo_popup_width(self.direction_combo)
         self.histogram_field_combo = QComboBox()
         self.histogram_field_combo.setObjectName("viewerCombo")
         self.histogram_bins_slider = QSlider()
@@ -128,13 +131,15 @@ class PanelWidget(QWidget):
         self.colorbar_label_edit = QLineEdit()
         self.colorbar_label_edit.setPlaceholderText("Colorbar label…")
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
-        self.colorbar_label_edit.setFixedWidth(140)
+        self.colorbar_label_edit.setMinimumWidth(72)
+        debug_print("PanelWidget colorbar label min width set to 72")
         self.unit_scale_combo = QComboBox()
         self.unit_scale_combo.setObjectName("viewerCombo")
         self.unit_scale_combo.addItem("Raw",     (1.0,   ""))
         self.unit_scale_combo.addItem("% ×100",  (100.0, ""))
         self.unit_scale_combo.addItem("M ÷1e6",  (1e-6,  ""))
         self.unit_scale_combo.addItem("G ÷1e9",  (1e-9,  ""))
+        update_combo_popup_width(self.unit_scale_combo)
         self.export_button = QPushButton(
             QIcon(str(self._ASSETS / "download.png")), "Export"
         )
@@ -144,6 +149,7 @@ class PanelWidget(QWidget):
         self.heatmap_status_label = QLabel("Heatmap waiting for controller")
         self.heatmap_status_label.setObjectName("mutedInfo")
         self.heatmap_status_label.setWordWrap(True)
+        self._heatmap_toolbar_mode = ""
         self._build_ui()
         self.heatmap_canvas.status_changed.connect(self.heatmap_status_label.setText)
         self.controller = HeatmapController(
@@ -165,12 +171,14 @@ class PanelWidget(QWidget):
         self.controller._file_loaded_callback = self.file_loaded.emit
         self.controller.connect_signals()
         self.controller.refresh_view()
+        update_combo_popup_width(self.histogram_field_combo)
         debug_print("PanelWidget.__init__ complete")
 
     def _build_ui(self) -> None:
         debug_print("PanelWidget._build_ui called")
         left_col    = QWidget()
         left_layout = QVBoxLayout(left_col)
+        self.left_column_layout = left_layout
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(12)
         left_layout.addWidget(self.controls_widget)
@@ -178,21 +186,45 @@ class PanelWidget(QWidget):
         left_layout.addWidget(self.heatmap_card, 1)
 
         self.analysis_card = self._build_analysis_card()
+        right_col = QWidget()
+        right_layout = QVBoxLayout(right_col)
+        self.right_column_layout = right_layout
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        right_layout.addWidget(self.analysis_card)
 
-        left_col.setMinimumWidth(420)
-        self.analysis_card.setMinimumWidth(520)
+        left_col.setMinimumWidth(300)
+        debug_print("PanelWidget left column min width set to 300")
+        right_col.setMinimumWidth(420)
+        self.analysis_card.setMinimumWidth(420)
+        debug_print("PanelWidget analysis card min width set to 420")
         self.analysis_card.setMaximumWidth(720)
 
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.setChildrenCollapsible(False)
         self._splitter.addWidget(left_col)
-        self._splitter.addWidget(self.analysis_card)
+        self._splitter.addWidget(right_col)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(0)
         main_layout.addWidget(self._splitter)
         debug_print("PanelWidget layout ready")
+
+    def set_available_width(self, width: int) -> None:
+        """Constrain panel content to the current app content width."""
+        debug_print(f"PanelWidget.set_available_width width={width}")
+        bounded_width = max(0, int(width))
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(bounded_width)
+        self.controls_widget.set_available_width(max(0, bounded_width - 16))
+        self.heatmap_card.setMaximumWidth(bounded_width)
+        self.analysis_card.setMaximumWidth(bounded_width)
+        self._update_heatmap_toolbar_mode(max(0, bounded_width - 56))
+        self.line_scan_canvas.set_available_width(max(240, bounded_width - 72))
+        self.histogram_canvas.set_available_width(max(240, bounded_width - 72))
+        self._splitter.setMaximumWidth(bounded_width)
+        debug_print(f"PanelWidget max width applied={bounded_width}")
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -202,6 +234,7 @@ class PanelWidget(QWidget):
             else Qt.Orientation.Horizontal
         )
         self._splitter.setOrientation(orientation)
+        self._update_heatmap_toolbar_mode(event.size().width())
 
     def _build_heatmap_card(self) -> QWidget:
         debug_print("PanelWidget._build_heatmap_card called")
@@ -213,22 +246,26 @@ class PanelWidget(QWidget):
         layout.setSpacing(10)
 
         # Topbar: dataset title + actions
-        toolbar = QWidget()
-        toolbar.setObjectName("toolbarStrip")
-        toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        toolbar.setFixedHeight(44)
-        toolbar_layout = QHBoxLayout(toolbar)
-        toolbar_layout.setContentsMargins(12, 0, 12, 0)
-        toolbar_layout.setSpacing(12)
-        cb_label = QLabel("Label:")
-        cb_label.setObjectName("mutedInfo")
-        toolbar_layout.addWidget(cb_label)
-        toolbar_layout.addWidget(self.colorbar_label_edit)
-        toolbar_layout.addWidget(self.unit_scale_combo)
-        toolbar_layout.addStretch(1)
-        toolbar_layout.addWidget(self.interfaces_check)
-        toolbar_layout.addWidget(self.export_button)
-        layout.addWidget(toolbar)
+        self.heatmap_toolbar = QWidget()
+        self.heatmap_toolbar.setObjectName("toolbarStrip")
+        self.heatmap_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.heatmap_toolbar_layout = QVBoxLayout(self.heatmap_toolbar)
+        self.heatmap_toolbar_layout.setContentsMargins(12, 5, 12, 5)
+        self.heatmap_toolbar_layout.setSpacing(6)
+        self.heatmap_toolbar_primary_row = QWidget()
+        self.heatmap_toolbar_primary_layout = QHBoxLayout(self.heatmap_toolbar_primary_row)
+        self.heatmap_toolbar_primary_layout.setContentsMargins(0, 0, 0, 0)
+        self.heatmap_toolbar_primary_layout.setSpacing(12)
+        self.heatmap_toolbar_secondary_row = QWidget()
+        self.heatmap_toolbar_secondary_layout = QHBoxLayout(self.heatmap_toolbar_secondary_row)
+        self.heatmap_toolbar_secondary_layout.setContentsMargins(0, 0, 0, 0)
+        self.heatmap_toolbar_secondary_layout.setSpacing(12)
+        self.heatmap_toolbar_layout.addWidget(self.heatmap_toolbar_primary_row)
+        self.heatmap_toolbar_layout.addWidget(self.heatmap_toolbar_secondary_row)
+        self.colorbar_label_caption = QLabel("Label:")
+        self.colorbar_label_caption.setObjectName("mutedInfo")
+        self._apply_heatmap_toolbar_mode("wide", force=True)
+        layout.addWidget(self.heatmap_toolbar)
 
         # heatmap-row: [logo] [centered heatmap], bottom aligned by canvas height
         logo_card = QWidget()
@@ -258,6 +295,72 @@ class PanelWidget(QWidget):
         layout.addWidget(self.heatmap_status_label)
         return card
 
+    def _clear_toolbar_layout(self, target_layout: QHBoxLayout) -> None:
+        debug_print("PanelWidget._clear_toolbar_layout called")
+        while target_layout.count():
+            item = target_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(self.heatmap_toolbar)
+                debug_print(
+                    "PanelWidget temporarily removed toolbar widget "
+                    f"{widget.objectName() or widget.__class__.__name__}"
+                )
+
+    def _apply_heatmap_toolbar_mode(self, mode: str, *, force: bool = False) -> None:
+        debug_print("PanelWidget._apply_heatmap_toolbar_mode called")
+        if mode == self._heatmap_toolbar_mode and not force:
+            debug_print(f"PanelWidget heatmap toolbar mode unchanged={mode}")
+            self._debug_heatmap_toolbar("unchanged")
+            return
+        debug_print(
+            f"PanelWidget changing heatmap toolbar mode from={self._heatmap_toolbar_mode} to={mode}"
+        )
+        self._clear_toolbar_layout(self.heatmap_toolbar_primary_layout)
+        self._clear_toolbar_layout(self.heatmap_toolbar_secondary_layout)
+        self.heatmap_toolbar_primary_layout.addWidget(self.colorbar_label_caption)
+        self.heatmap_toolbar_primary_layout.addWidget(self.colorbar_label_edit, 1)
+        self.heatmap_toolbar_primary_layout.addWidget(self.unit_scale_combo)
+        if mode == "compact":
+            debug_print("PanelWidget applying compact heatmap toolbar")
+            self.heatmap_toolbar_secondary_layout.addStretch(1)
+            self.heatmap_toolbar_secondary_layout.addWidget(self.interfaces_check)
+            self.heatmap_toolbar_secondary_layout.addWidget(self.export_button)
+            self.heatmap_toolbar.setFixedHeight(82)
+            self.heatmap_toolbar_secondary_row.show()
+        else:
+            debug_print("PanelWidget applying wide heatmap toolbar")
+            self.heatmap_toolbar_primary_layout.addStretch(1)
+            self.heatmap_toolbar_primary_layout.addWidget(self.interfaces_check)
+            self.heatmap_toolbar_primary_layout.addWidget(self.export_button)
+            self.heatmap_toolbar.setFixedHeight(44)
+            self.heatmap_toolbar_secondary_row.hide()
+        self._heatmap_toolbar_mode = mode
+        self.heatmap_toolbar.updateGeometry()
+        self._debug_heatmap_toolbar("applied")
+
+    def _update_heatmap_toolbar_mode(self, width: int) -> None:
+        debug_print("PanelWidget._update_heatmap_toolbar_mode called")
+        bounded_width = max(0, int(width))
+        mode = "compact" if bounded_width and bounded_width < 620 else "wide"
+        debug_print(f"PanelWidget heatmap toolbar width={bounded_width}")
+        debug_print(f"PanelWidget heatmap toolbar selected mode={mode}")
+        self._apply_heatmap_toolbar_mode(mode)
+
+    def _debug_heatmap_toolbar(self, reason: str) -> None:
+        debug_print(f"PanelWidget._debug_heatmap_toolbar reason={reason}")
+        debug_print(f"PanelWidget heatmap toolbar mode={self._heatmap_toolbar_mode}")
+        debug_print(f"PanelWidget heatmap toolbar width={self.heatmap_toolbar.width()}")
+        debug_print(f"PanelWidget heatmap toolbar height={self.heatmap_toolbar.height()}")
+        debug_print(
+            "PanelWidget heatmap primary min="
+            f"{self.heatmap_toolbar_primary_layout.minimumSize().width()}"
+        )
+        debug_print(
+            "PanelWidget heatmap secondary min="
+            f"{self.heatmap_toolbar_secondary_layout.minimumSize().width()}"
+        )
+
     def _build_analysis_card(self) -> QWidget:
         debug_print("PanelWidget._build_analysis_card called")
         card = QWidget()
@@ -281,16 +384,18 @@ class PanelWidget(QWidget):
         title_row.addStretch(1)
         layout.addLayout(title_row)
 
-        line_card = QWidget()
-        line_card.setObjectName("innerCard")
-        line_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        line_layout = QVBoxLayout(line_card)
+        self.line_card = QWidget()
+        self.line_card.setObjectName("innerCard")
+        self.line_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        line_layout = QVBoxLayout(self.line_card)
         line_layout.setContentsMargins(12, 12, 12, 12)
         line_layout.setSpacing(10)
-        line_toolbar = QWidget()
-        line_toolbar.setObjectName("toolbarStrip")
-        line_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        line_toolbar_layout = QHBoxLayout(line_toolbar)
+        self.line_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.line_toolbar = QWidget()
+        self.line_toolbar.setObjectName("toolbarStrip")
+        self.line_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.line_toolbar.setFixedHeight(44)
+        line_toolbar_layout = QHBoxLayout(self.line_toolbar)
         line_toolbar_layout.setContentsMargins(0, 0, 0, 0)
         line_toolbar_layout.setSpacing(12)
         line_toolbar_layout.addWidget(self.line_mode_check)
@@ -300,28 +405,29 @@ class PanelWidget(QWidget):
         line_toolbar_layout.addWidget(scan_dir_label)
         line_toolbar_layout.addWidget(self.direction_combo)
         line_toolbar_layout.addStretch(1)
-        line_layout.addWidget(line_toolbar)
-        line_layout.addWidget(self.line_scan_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(line_card, 1)
+        line_layout.addWidget(self.line_toolbar)
+        line_layout.addWidget(self.line_scan_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.line_card)
 
-        histogram_controls = QWidget()
-        histogram_controls.setObjectName("innerCard")
-        histogram_controls.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        histogram_controls_layout = QHBoxLayout(histogram_controls)
+        self.histogram_controls = QWidget()
+        self.histogram_controls.setObjectName("innerCard")
+        self.histogram_controls.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        histogram_controls_layout = QHBoxLayout(self.histogram_controls)
         histogram_controls_layout.setContentsMargins(12, 12, 12, 12)
         histogram_controls_layout.setSpacing(12)
         histogram_controls_layout.addWidget(QLabel("Histogram Field"))
         histogram_controls_layout.addWidget(self.histogram_field_combo, 1)
         histogram_controls_layout.addWidget(QLabel("Number of Bins"))
         histogram_controls_layout.addWidget(self.histogram_bins_slider, 1)
-        layout.addWidget(histogram_controls)
+        layout.addWidget(self.histogram_controls)
 
-        histogram_card = QWidget()
-        histogram_card.setObjectName("innerCard")
-        histogram_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        histogram_layout = QVBoxLayout(histogram_card)
+        self.histogram_card = QWidget()
+        self.histogram_card.setObjectName("innerCard")
+        self.histogram_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.histogram_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        histogram_layout = QVBoxLayout(self.histogram_card)
         histogram_layout.setContentsMargins(12, 12, 12, 12)
-        histogram_layout.addWidget(self.histogram_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
-        layout.addWidget(histogram_card, 1)
+        histogram_layout.addWidget(self.histogram_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.histogram_card)
 
         return card

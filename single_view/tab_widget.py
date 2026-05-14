@@ -42,6 +42,19 @@ class SingleViewTab(QWidget):
     def set_projects(self, projects: dict[str, dict]) -> None:
         self._projects = projects
 
+    def set_available_width(self, width: int) -> None:
+        """Cap this tab and any loaded panels to the app content viewport width."""
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(width)
+        self._panel_tabs.setMinimumWidth(0)
+        self._panel_tabs.setMaximumWidth(width)
+        for index in range(self._panel_tabs.count()):
+            widget = self._panel_tabs.widget(index)
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(width)
+            if hasattr(widget, "set_available_width"):
+                widget.set_available_width(width)
+
     def add_panel(self, dataset_info: dict) -> None:
         """Start an async panel load — shows spinner immediately, creates panel when ready."""
         label = dataset_info.get("label", "Untitled Panel")

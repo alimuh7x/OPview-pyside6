@@ -10,6 +10,7 @@ from matplotlib.colors import Normalize
 
 from app.debug import debug_print
 from config.constants import DEFAULTS
+from utils.combo_box_utils import update_combo_popup_width
 from utils.vtk_utils import get_reader
 from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
@@ -238,6 +239,7 @@ class HeatmapController:
         if restored_hist >= 0:
             self.histogram_field_combo.setCurrentIndex(restored_hist)
         self.histogram_field_combo.blockSignals(False)
+        update_combo_popup_width(self.histogram_field_combo)
         self.controls_widget.set_slider_bounds(self.state.range_min, self.state.range_max)
         self.controls_widget.set_range_values(self.state.range_min, self.state.range_max)
         self.controls_widget.set_status_text(f"Loaded {Path(file_path).name}")

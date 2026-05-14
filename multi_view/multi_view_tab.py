@@ -34,7 +34,7 @@ class MultiViewTab(QWidget):
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.currentChanged.connect(self._refresh_header_states)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(9, 9, 9, 9)
         layout.addWidget(self._tabs)
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -49,6 +49,19 @@ class MultiViewTab(QWidget):
         self._tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.LeftSide, header)
         self._tabs.setCurrentWidget(panel)
         self._refresh_header_states()
+
+    def set_available_width(self, width: int) -> None:
+        """Cap all comparison tabs to the app content viewport width."""
+        self.setMinimumWidth(0)
+        self.setMaximumWidth(width)
+        self._tabs.setMinimumWidth(0)
+        self._tabs.setMaximumWidth(width)
+        for index in range(self._tabs.count()):
+            widget = self._tabs.widget(index)
+            widget.setMinimumWidth(0)
+            widget.setMaximumWidth(width)
+            if hasattr(widget, "set_available_width"):
+                widget.set_available_width(width)
 
     # ── Tab header (same pattern as SingleViewTab) ────────────────────────────
 

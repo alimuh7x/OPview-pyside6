@@ -71,6 +71,52 @@ def group_projects_by_parent(discovered_folders: Dict[str, Dict[str, Any]]) -> D
     return grouped
 
 
+def get_textdata_files(
+    project_folders: Dict[str, Dict[str, Any]],
+    selected_project_names: List[str] | None = None,
+) -> List[str]:
+    """Find supported text-data files without requiring a TextData directory."""
+    debug_print("get_textdata_files called")
+    debug_print(f"get_textdata_files selected_project_names={selected_project_names}")
+    names = selected_project_names or list(project_folders.keys())
+    skip_names = set(SKIP_FOLDERS) | {"VTK", "vtk", ".git", "__pycache__"}
+    found: set[str] = set()
+    for name in names:
+        debug_print(f"get_textdata_files scanning name={name}")
+        info = project_folders.get(name)
+        if not info:
+            debug_print(f"get_textdata_files missing info name={name}")
+            continue
+        roots: list[Path] = []
+        if info.get("textdata_path"):
+            roots.append(Path(info["textdata_path"]))
+            debug_print(f"get_textdata_files add textdata_path={info['textdata_path']}")
+        if info.get("path"):
+            roots.append(Path(info["path"]))
+            debug_print(f"get_textdata_files add path={info['path']}")
+        for root in roots:
+            if not root.exists() or not root.is_dir():
+                debug_print(f"get_textdata_files skip missing root={root}")
+                continue
+            try:
+                for path in root.rglob("*"):
+                    if not path.is_file():
+                        continue
+                    if any(part in skip_names for part in path.parts):
+                        continue
+                    if path.suffix.lower() not in ALLOWED_TEXTDATA_EXTENSIONS:
+                        continue
+                    resolved = str(path.resolve())
+                    debug_print(f"get_textdata_files found={resolved}")
+                    found.add(resolved)
+            except (OSError, PermissionError) as exc:
+                debug_print(f"get_textdata_files scan error root={root} error={exc}")
+                continue
+    result = sorted(found)
+    debug_print(f"get_textdata_files returning count={len(result)}")
+    return result
+
+
 def _scan_vtk_dir(directory: Path) -> List[str]:
     """Recursively list supported VTK files."""
     debug_print("_scan_vtk_dir called")
