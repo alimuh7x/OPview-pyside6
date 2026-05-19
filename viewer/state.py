@@ -34,6 +34,7 @@ class ViewerState:
     line_overlay_visible: bool = True
     interfaces_overlay_visible: bool = False
     status_message: str = "Waiting for data"
+    rotated: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Return JSON-serialisable dict."""

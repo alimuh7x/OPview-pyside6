@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QAbstractItemView,
     QPushButton,
+    QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
@@ -33,6 +34,7 @@ class SidebarWidget(QWidget):
     add_panel_requested = Signal(dict)
     projects_changed = Signal(dict)
     reload_requested = Signal()
+    add_folder_requested = Signal()
     text_files_add_requested = Signal(list)
 
     def __init__(self) -> None:
@@ -70,9 +72,14 @@ class SidebarWidget(QWidget):
         self.project_list.setMaximumHeight(160)
         projects_layout.addWidget(self.project_list)
 
-        self.reload_projects_button = QPushButton("Reload Projects")
+        btn_row = QHBoxLayout()
+        self.add_folder_button = QPushButton("+ Add Folder")
+        self.add_folder_button.setProperty("accent", True)
+        btn_row.addWidget(self.add_folder_button)
+        self.reload_projects_button = QPushButton("Reload")
         self.reload_projects_button.setProperty("accent", True)
-        projects_layout.addWidget(self.reload_projects_button)
+        btn_row.addWidget(self.reload_projects_button)
+        projects_layout.addLayout(btn_row)
         layout.addWidget(self.projects_group)
 
         self.panel_group = QGroupBox("ADD PANEL")
@@ -132,6 +139,7 @@ class SidebarWidget(QWidget):
         self.add_panel_button.clicked.connect(self._emit_add_panel_request)
         self.project_list.itemChanged.connect(self._on_project_check_changed)
         self.reload_projects_button.clicked.connect(self.reload_from_cwd)
+        self.add_folder_button.clicked.connect(self.add_folder_requested.emit)
         self.text_file_filter.textChanged.connect(self._refresh_text_file_list)
         self.add_text_files_button.clicked.connect(self._emit_text_files_add_request)
         self.add_external_text_file_button.clicked.connect(self._open_external_text_files)

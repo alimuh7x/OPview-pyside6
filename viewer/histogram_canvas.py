@@ -51,7 +51,7 @@ class HistogramCanvas(QWidget):
         )
         debug_print("HistogramCanvas.render_histogram complete")
 
-    def render_histograms(self, series, *, label: str, bins: int) -> None:
+    def render_histograms(self, series, *, label: str, bins: int, show_grid: bool = True) -> None:
         debug_print("HistogramCanvas.render_histograms called")
         debug_print(f"HistogramCanvas series count={len(series)}")
         figure = go.Figure()
@@ -113,48 +113,45 @@ class HistogramCanvas(QWidget):
                     showlegend=bool(name),
                 ))
 
+        _pub_axis = dict(
+            showgrid=show_grid,
+            gridcolor="rgba(128, 128, 128, 0.2)",
+            zeroline=False,
+            showline=True,
+            linecolor="black",
+            linewidth=2.5,
+            mirror="allticks",
+            ticks="inside",
+            ticklen=10,
+            tickwidth=2.5,
+            tickcolor="black",
+            minor=dict(ticks="inside", ticklen=6, tickwidth=1.5, tickcolor="black", showgrid=False),
+        )
         figure.update_layout(
             width=self._canvas_width,
             height=_H,
-            margin=dict(l=54, r=16, t=16, b=44),
+            margin=dict(l=80, r=20, t=30, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
             barmode="overlay",
+            font=dict(color="#102a52", size=14, family="Arial"),
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
                 y=1.02,
                 xanchor="right",
                 x=1.0,
-                font=dict(size=11),
+                font=dict(size=13, family="Arial"),
             ),
             xaxis=dict(
-                title=dict(text=label, font=dict(size=15, color="#000000")),
-                tickfont=dict(size=14, color="#000000"),
-                showgrid=False,
-                zeroline=False,
-                showline=True,
-                linecolor="#000000",
-                linewidth=2,
-                mirror=True,
-                ticks="inside",
-                ticklen=8,
-                tickcolor="#000000",
-                minor=dict(ticks="inside", ticklen=4, showgrid=False),
+                title=dict(text=label, font=dict(size=20, family="Arial", color="#102a52")),
+                tickfont=dict(size=16, family="Arial", color="#102a52"),
+                **_pub_axis,
             ),
             yaxis=dict(
-                title=dict(text="Frequency", font=dict(size=15, color="#000000")),
-                tickfont=dict(size=14, color="#000000"),
-                showgrid=False,
-                zeroline=False,
-                showline=True,
-                linecolor="#000000",
-                linewidth=2,
-                mirror=True,
-                ticks="inside",
-                ticklen=8,
-                tickcolor="#000000",
-                minor=dict(ticks="inside", ticklen=4, showgrid=False),
+                title=dict(text="Frequency", font=dict(size=20, family="Arial", color="#102a52")),
+                tickfont=dict(size=16, family="Arial", color="#102a52"),
+                **_pub_axis,
             ),
             bargap=0.05,
         )
@@ -171,7 +168,7 @@ class HistogramCanvas(QWidget):
 <div id="div"></div>
 <script>
 var fig = {figure_json};
-Plotly.newPlot('div', fig.data, fig.layout, {{displayModeBar:false, responsive:false}});
+Plotly.newPlot('div', fig.data, fig.layout, {{displayModeBar:true, responsive:false}});
 </script>
 </body></html>"""
 

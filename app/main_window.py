@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtCore import QEvent, QSettings, QSize, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
         self.app_menu_bar: AppMenuBar | None = None
         self.file_watcher: FileWatcherService | None = None
         self.sidebar_toggle_button: QPushButton | None = None
+        self._settings = QSettings("OPview", "OPview")
         self._build_window()
         self._connect_signals()
         self._load_initial_projects()
@@ -207,6 +208,8 @@ class MainWindow(QMainWindow):
         debug_print("Connected file_watcher.loaded_file_changed")
         self.sidebar_widget.reload_requested.connect(self._force_full_rescan)
         debug_print("Connected sidebar reload_requested to _force_full_rescan")
+        self.sidebar_widget.add_folder_requested.connect(self._on_add_project_folder)
+        debug_print("Connected sidebar add_folder_requested to _on_add_project_folder")
         self.single_view_tab.panel_ready.connect(self._on_panel_ready)
         debug_print("Connected single_view_tab.panel_ready to _on_panel_ready")
         debug_print("Menu export_requested not yet connected (no export handler)")
@@ -403,9 +406,11 @@ class MainWindow(QMainWindow):
         """Open a folder dialog and load all VTK files directly from it."""
         debug_print("MainWindow._on_add_project_folder called")
         assert self.sidebar_widget is not None
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing VTK Files")
+        last = self._settings.value("last_vtk_folder", "")
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing VTK Files", last)
         if not folder:
             return
+        self._settings.setValue("last_vtk_folder", folder)
         vtk_folder = Path(folder)
         project_name = f"[Folder] {vtk_folder.name}"
         info = {

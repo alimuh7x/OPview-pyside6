@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Claude / editor internals
+.claude/
+.codex
+
+# Stray files
+]
+
+# Generated images / exports
+*.png
+*.jpg
+
+# OS
+.DS_Store
+Thumbs.db

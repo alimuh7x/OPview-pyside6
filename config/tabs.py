@@ -41,8 +41,6 @@ TAB_CONFIGS = [
                 "id": "elastic",
                 "label": "Elastic Strains",
                 "file_glob": "ElasticStrains_*.vts",
-                "units": "%",
-                "scale": 100.0,
                 "scalars": tensor_scalars("ElasticStrains", "eps"),
             },
             {
@@ -79,8 +77,6 @@ TAB_CONFIGS = [
                 "id": "plastic-strain",
                 "label": "Plastic Strain",
                 "file_glob": "PlasticStrain_*.vts",
-                "units": "%",
-                "scale": 100.0,
                 "scalars": tensor_scalars("PlasticStrain", "eps_p"),
             },
         ],

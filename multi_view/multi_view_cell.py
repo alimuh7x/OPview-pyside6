@@ -12,6 +12,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -57,9 +58,10 @@ class _MultiViewDebugPage(QWebEnginePage):
 
 
 class MultiViewHeader(QWidget):
-    """Filename label + close button above a heatmap cell."""
+    """Filename label (editable) + close button above a heatmap cell."""
 
     close_requested = Signal(str)
+    legend_name_changed = Signal(str, str)  # (file_path, new_name)
 
     def __init__(self, file_path: str, parent=None) -> None:
         super().__init__(parent)
@@ -68,10 +70,29 @@ class MultiViewHeader(QWidget):
         layout.setContentsMargins(6, 2, 4, 2)
         layout.setSpacing(4)
 
-        label = QLabel(Path(file_path).name)
-        label.setObjectName("mutedInfo")
-        label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        label.setToolTip(file_path)
+        legend_lbl = QLabel("Legend:")
+        legend_lbl.setObjectName("mutedInfo")
+
+        self._name_edit = QLineEdit(Path(file_path).name)
+        self._name_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._name_edit.setFixedHeight(22)
+        self._name_edit.setToolTip(f"Edit legend label — file: {file_path}")
+        self._name_edit.setStyleSheet(
+            "QLineEdit {"
+            "  background: #f0f4fa;"
+            "  color: #0d2b55;"
+            "  font-size: 11px;"
+            "  font-weight: 500;"
+            "  border: 1px solid #c2d0e8;"
+            "  border-radius: 3px;"
+            "  padding: 1px 5px;"
+            "}"
+            "QLineEdit:focus {"
+            "  border: 1.5px solid #1e4a8a;"
+            "  background: #ffffff;"
+            "}"
+        )
+        self._name_edit.editingFinished.connect(self._on_name_edited)
 
         btn = QPushButton()
         btn.setObjectName("panelTabCloseButton")
@@ -81,9 +102,16 @@ class MultiViewHeader(QWidget):
         btn.setIconSize(btn.size())
         btn.clicked.connect(lambda: self.close_requested.emit(self.file_path))
 
-        layout.addWidget(label)
+        layout.addWidget(legend_lbl)
+        layout.addWidget(self._name_edit)
         layout.addWidget(btn)
         self.setFixedWidth(_CELL_W)
+
+    def legend_name(self) -> str:
+        return self._name_edit.text().strip() or Path(self.file_path).name
+
+    def _on_name_edited(self) -> None:
+        self.legend_name_changed.emit(self.file_path, self.legend_name())
 
 
 class MultiViewCell(QWidget):

@@ -10,7 +10,6 @@ from matplotlib.colors import Normalize
 
 from app.debug import debug_print
 from config.constants import DEFAULTS
-from utils.combo_box_utils import update_combo_popup_width
 from utils.vtk_utils import get_reader
 from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
@@ -30,7 +29,6 @@ class HeatmapController:
         line_mode_check,
         show_line_check,
         direction_combo,
-        histogram_field_combo,
         histogram_bins_slider,
         interfaces_check,
         export_button,
@@ -47,7 +45,6 @@ class HeatmapController:
         self.line_mode_check = line_mode_check
         self.show_line_check = show_line_check
         self.direction_combo = direction_combo
-        self.histogram_field_combo = histogram_field_combo
         self.histogram_bins_slider = histogram_bins_slider
         self.interfaces_check = interfaces_check
         self.export_button = export_button
@@ -73,6 +70,10 @@ class HeatmapController:
         debug_print(f"HeatmapController initial state={self.state}")
         debug_print("HeatmapController.__init__ complete")
 
+    def get_file_count(self) -> int:
+        """Return number of files currently loaded in the file combo."""
+        return self.controls_widget.file_combo.count()
+
     def connect_signals(self) -> None:
         """Wire all Qt signals from controls and canvases to their handler methods."""
         debug_print("HeatmapController.connect_signals called")
@@ -82,10 +83,10 @@ class HeatmapController:
         self.controls_widget.click_mode_range_check.toggled.connect(self._on_range_mode_toggled)
         self.show_line_check.toggled.connect(self.refresh_view)
         self.direction_combo.currentIndexChanged.connect(self.refresh_view)
-        self.histogram_field_combo.currentIndexChanged.connect(self._on_histogram_field_changed)
-        self.controls_widget.scalar_combo.currentIndexChanged.connect(self._on_scalar_changed)
+        self.controls_widget.scalar_combo.currentIndexChanged.connect(self.refresh_view)
         self.histogram_bins_slider.valueChanged.connect(self.refresh_view)
         self.interfaces_check.toggled.connect(self.refresh_view)
+        self.controls_widget.rotate_check.toggled.connect(self._on_rotate_toggled)
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
         self.colorbar_label_edit.editingFinished.connect(self.refresh_view)
@@ -230,16 +231,6 @@ class HeatmapController:
             self.controls_widget.scalar_combo.setCurrentIndex(restored)
             self.controls_widget.scalar_combo.blockSignals(False)
 
-        prev_hist_key = self.histogram_field_combo.currentData()
-        self.histogram_field_combo.blockSignals(True)
-        self.histogram_field_combo.clear()
-        for scalar_def in self.scalar_defs:
-            self.histogram_field_combo.addItem(scalar_def["label"], scalar_def["value"])
-        restored_hist = self.histogram_field_combo.findData(prev_hist_key)
-        if restored_hist >= 0:
-            self.histogram_field_combo.setCurrentIndex(restored_hist)
-        self.histogram_field_combo.blockSignals(False)
-        update_combo_popup_width(self.histogram_field_combo)
         self.controls_widget.set_slider_bounds(self.state.range_min, self.state.range_max)
         self.controls_widget.set_range_values(self.state.range_min, self.state.range_max)
         self.controls_widget.set_status_text(f"Loaded {Path(file_path).name}")
@@ -368,24 +359,6 @@ class HeatmapController:
             return max(dx, 1), max(dz, 1)
         return max(dx, 1), max(dy, 1)
 
-    def _on_scalar_changed(self) -> None:
-        """Sync histogram field combo when heatmap scalar changes."""
-        key = self.controls_widget.current_scalar_key()
-        idx = self.histogram_field_combo.findData(key)
-        if idx >= 0 and idx != self.histogram_field_combo.currentIndex():
-            self.histogram_field_combo.blockSignals(True)
-            self.histogram_field_combo.setCurrentIndex(idx)
-            self.histogram_field_combo.blockSignals(False)
-
-    def _on_histogram_field_changed(self) -> None:
-        """Sync heatmap scalar combo when histogram field changes, then refresh."""
-        key = self.histogram_field_combo.currentData()
-        idx = self.controls_widget.scalar_combo.findData(key)
-        if idx >= 0 and idx != self.controls_widget.scalar_combo.currentIndex():
-            self.controls_widget.scalar_combo.blockSignals(True)
-            self.controls_widget.scalar_combo.setCurrentIndex(idx)
-            self.controls_widget.scalar_combo.blockSignals(False)
-        self.refresh_view()
 
     def _get_display_params(self, scalar_label: str) -> tuple[float, str]:
         """Read UI controls and return (extra_scale, display_label) for all canvases."""
@@ -434,7 +407,12 @@ class HeatmapController:
                     else float(np.nanmean(x_grid))
                 line_overlay = ("vertical", x_val)
 
+        if self.state.rotated:
+            x_grid, y_grid, z_grid = y_grid, x_grid, np.transpose(z_grid)
+
         nx, ny = self._slice_dimensions(self.state.axis)
+        if self.state.rotated:
+            nx, ny = ny, nx
         fig_width = max(100, min(1200, int(_CANVAS_HEIGHT * nx / ny)))
         self.heatmap_canvas.set_canvas_width(fig_width)
 
@@ -540,7 +518,7 @@ class HeatmapController:
         debug_print("HeatmapController._render_histogram called")
         if not self._last_grids:
             return
-        scalar_key = self.histogram_field_combo.currentData() or self.state.scalar_key
+        scalar_key = self.state.scalar_key
         scalar_def = self._get_scalar_def(scalar_key)
         if scalar_def is None:
             return
@@ -618,6 +596,10 @@ class HeatmapController:
         self.line_mode_check.blockSignals(True)
         self.line_mode_check.setChecked(not checked)
         self.line_mode_check.blockSignals(False)
+        self.refresh_view()
+
+    def _on_rotate_toggled(self, checked: bool) -> None:
+        self.state.rotated = checked
         self.refresh_view()
 
     def _sync_line_mode(self) -> None:

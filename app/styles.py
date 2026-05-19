@@ -200,7 +200,6 @@ QWidget#viewerCard,
 QWidget#innerCard {{
     background: #ffffff;
     border: 1px solid #d7deea;
-    border-radius: 16px;
 }}
 QWidget#toolbarStrip {{
     background: #f3f6fa;
@@ -222,8 +221,8 @@ QWidget#multiViewHeatmapRow {{
 }}
 QLabel#sectionTitle {{
     color: #102a52;
-    font-size: 20px;
-    font-weight: 800;
+    font-size: 14px;
+    font-weight: 700;
 }}
 QLabel#mutedInfo {{
     color: #6a7e9f;
@@ -421,7 +420,6 @@ QWidget#graphTopControls {{
 QGroupBox#graphDataSources {{
     background: #ffffff;
     border: 1px solid #e2e8f0;
-    border-radius: 8px;
     margin-top: 12px;
     padding-top: 12px;
     color: #102a52;
@@ -437,7 +435,6 @@ QGroupBox#graphDataSources::title {{
 QFrame#graphFileSection {{
     background: rgba(18, 43, 98, 0.02);
     border: 1px solid #e2e8f0;
-    border-radius: 6px;
 }}
 QFrame#graphFileSection QLabel {{
     color: #102a52;
@@ -451,7 +448,6 @@ QFrame#graphFileSection QPushButton {{
     background: #ffffff;
     color: #102a52;
     border: 1px solid #ccd7e8;
-    border-radius: 4px;
     font-weight: 700;
 }}
 QWidget#graphMainContent {{
@@ -482,7 +478,6 @@ QLabel#graphSettingsTitle {{
 QGroupBox#graphSettingsSection {{
     background: #ffffff;
     border: 1px solid #d5deeb;
-    border-radius: 8px;
     margin-top: 16px;
     color: #102a52;
     font-weight: 800;

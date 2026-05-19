@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from viewer.animation_player import AnimationPlayer
+
 from app.debug import debug_print
 from utils.combo_box_utils import update_combo_popup_width
 from viewer.heatmap_canvas import HeatmapCanvas
@@ -33,7 +35,7 @@ class HeatmapAlignmentRow(QWidget):
     def __init__(
         self,
         logo_widget: QWidget,
-        heatmap_widget: HeatmapCanvas,
+        heatmap_widget: QWidget,
         *,
         gap: int = 8,
     ) -> None:
@@ -105,7 +107,7 @@ class PanelWidget(QWidget):
         self.dataset_info = dataset_info
         self.projects = projects or {}
         self.controls_widget = PanelControlsWidget(dataset_info)
-        self.heatmap_canvas = HeatmapCanvas()
+        self.heatmap_canvas  = HeatmapCanvas()
         self.line_scan_canvas = LineScanCanvas()
         self.histogram_canvas = HistogramCanvas()
         self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
@@ -120,8 +122,6 @@ class PanelWidget(QWidget):
         )
         self.direction_combo.setIconSize(QSize(18, 18))
         update_combo_popup_width(self.direction_combo)
-        self.histogram_field_combo = QComboBox()
-        self.histogram_field_combo.setObjectName("viewerCombo")
         self.histogram_bins_slider = QSlider()
         self.histogram_bins_slider.setOrientation(self.controls_widget.slice_slider.orientation())
         self.histogram_bins_slider.setRange(10, 200)
@@ -133,6 +133,16 @@ class PanelWidget(QWidget):
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
         self.colorbar_label_edit.setMinimumWidth(72)
         debug_print("PanelWidget colorbar label min width set to 72")
+
+        # Timeline row widgets
+        self.playback_slider = QSlider(Qt.Orientation.Horizontal)
+        self.playback_slider.setRange(0, 0)
+        self.frame_label = QLabel("– / –")
+        self.frame_label.setObjectName("mutedInfo")
+        self.frame_label.setMinimumWidth(52)
+        self.animate_btn = QPushButton("▶  Animate")
+        self.animate_btn.setFixedHeight(28)
+        self.animate_btn.setObjectName("playbackBtn")
         self.unit_scale_combo = QComboBox()
         self.unit_scale_combo.setObjectName("viewerCombo")
         self.unit_scale_combo.addItem("Raw",     (1.0,   ""))
@@ -160,7 +170,6 @@ class PanelWidget(QWidget):
             line_mode_check=self.line_mode_check,
             show_line_check=self.show_line_check,
             direction_combo=self.direction_combo,
-            histogram_field_combo=self.histogram_field_combo,
             histogram_bins_slider=self.histogram_bins_slider,
             interfaces_check=self.interfaces_check,
             export_button=self.export_button,
@@ -171,8 +180,62 @@ class PanelWidget(QWidget):
         self.controller._file_loaded_callback = self.file_loaded.emit
         self.controller.connect_signals()
         self.controller.refresh_view()
-        update_combo_popup_width(self.histogram_field_combo)
+
+        # Timeline slider wiring
+        self._sync_playback_frame_count()
+        self.playback_slider.sliderMoved.connect(self._on_slider_moved)
+        self.animate_btn.clicked.connect(self._open_animation_player)
+
+        # Keep slider in sync when user manually picks a file
+        self.controls_widget.file_combo.currentIndexChanged.connect(
+            self._on_file_combo_changed
+        )
         debug_print("PanelWidget.__init__ complete")
+
+    # ------------------------------------------------------------------
+    # Playback handlers
+    # ------------------------------------------------------------------
+
+    def _sync_playback_frame_count(self) -> None:
+        n = self.controller.get_file_count()
+        self.playback_slider.setRange(0, max(0, n - 1))
+        self.frame_label.setText(f"1 / {n}" if n > 0 else "– / –")
+
+    def _on_slider_moved(self, index: int) -> None:
+        n = self.playback_slider.maximum() + 1
+        self.frame_label.setText(f"{index + 1} / {n}")
+        self.controls_widget.file_combo.setCurrentIndex(index)
+
+    def _on_file_combo_changed(self, index: int) -> None:
+        self.playback_slider.blockSignals(True)
+        self.playback_slider.setValue(index)
+        self.playback_slider.blockSignals(False)
+        n = self.playback_slider.maximum() + 1
+        self.frame_label.setText(f"{index + 1} / {n}" if n > 0 else "– / –")
+
+    def _open_animation_player(self) -> None:
+        combo = self.controls_widget.file_combo
+        file_paths = [combo.itemData(i) for i in range(combo.count())]
+        file_paths = [p for p in file_paths if p]
+        if not file_paths:
+            return
+        scalar_def = self.controller._get_scalar_def(
+            self.controls_widget.current_scalar_key()
+        )
+        if scalar_def is None:
+            return
+        state = self.controller.state
+        dlg = AnimationPlayer(
+            file_paths=file_paths,
+            scalar_def=scalar_def,
+            axis=state.axis,
+            slice_index=state.slice_index,
+            palette=state.palette,
+            vmin=state.range_min,
+            vmax=state.range_max,
+            parent=self,
+        )
+        dlg.show()
 
     def _build_ui(self) -> None:
         debug_print("PanelWidget._build_ui called")
@@ -266,6 +329,15 @@ class PanelWidget(QWidget):
         self.colorbar_label_caption.setObjectName("mutedInfo")
         self._apply_heatmap_toolbar_mode("wide", force=True)
         layout.addWidget(self.heatmap_toolbar)
+
+        # Timeline row: [==slider==] [3/24] [▶ Animate]
+        playback_row = QHBoxLayout()
+        playback_row.setContentsMargins(0, 2, 0, 2)
+        playback_row.setSpacing(8)
+        playback_row.addWidget(self.playback_slider, 1)
+        playback_row.addWidget(self.frame_label)
+        playback_row.addWidget(self.animate_btn)
+        layout.addLayout(playback_row)
 
         # heatmap-row: [logo] [centered heatmap], bottom aligned by canvas height
         logo_card = QWidget()
@@ -367,8 +439,8 @@ class PanelWidget(QWidget):
         card.setObjectName("viewerCard")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(14)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(8)
 
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
@@ -388,8 +460,8 @@ class PanelWidget(QWidget):
         self.line_card.setObjectName("innerCard")
         self.line_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         line_layout = QVBoxLayout(self.line_card)
-        line_layout.setContentsMargins(12, 12, 12, 12)
-        line_layout.setSpacing(10)
+        line_layout.setContentsMargins(10, 8, 10, 8)
+        line_layout.setSpacing(6)
         self.line_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.line_toolbar = QWidget()
         self.line_toolbar.setObjectName("toolbarStrip")
@@ -409,24 +481,21 @@ class PanelWidget(QWidget):
         line_layout.addWidget(self.line_scan_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.line_card)
 
-        self.histogram_controls = QWidget()
-        self.histogram_controls.setObjectName("innerCard")
-        self.histogram_controls.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        histogram_controls_layout = QHBoxLayout(self.histogram_controls)
-        histogram_controls_layout.setContentsMargins(12, 12, 12, 12)
-        histogram_controls_layout.setSpacing(12)
-        histogram_controls_layout.addWidget(QLabel("Histogram Field"))
-        histogram_controls_layout.addWidget(self.histogram_field_combo, 1)
-        histogram_controls_layout.addWidget(QLabel("Number of Bins"))
-        histogram_controls_layout.addWidget(self.histogram_bins_slider, 1)
-        layout.addWidget(self.histogram_controls)
-
         self.histogram_card = QWidget()
         self.histogram_card.setObjectName("innerCard")
         self.histogram_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.histogram_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         histogram_layout = QVBoxLayout(self.histogram_card)
-        histogram_layout.setContentsMargins(12, 12, 12, 12)
+        histogram_layout.setContentsMargins(10, 8, 10, 8)
+        histogram_layout.setSpacing(6)
+        bins_row = QHBoxLayout()
+        bins_row.setSpacing(8)
+        bins_label = QLabel("Bins:")
+        bins_label.setObjectName("mutedInfo")
+        bins_row.addStretch(1)
+        bins_row.addWidget(bins_label)
+        bins_row.addWidget(self.histogram_bins_slider, 2)
+        histogram_layout.addLayout(bins_row)
         histogram_layout.addWidget(self.histogram_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.histogram_card)
 

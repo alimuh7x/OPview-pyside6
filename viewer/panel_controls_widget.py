@@ -147,9 +147,11 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
+        self.rotate_check = ToggleSwitchWidget("Rotate", checked=False)
         palette_row_layout.addWidget(self.palette_combo, 1)
         palette_row_layout.addWidget(self.range_slider, 4)
         palette_row_layout.addWidget(self.full_scale_check)
+        palette_row_layout.addWidget(self.rotate_check)
         layout.addWidget(self.palette_row)
         self._apply_layout_mode("wide", force=True)
         # ------------------------------------------------------------------------------------------------

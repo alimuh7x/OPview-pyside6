@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtGui import QColor, QFont, QImage, QPainter
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -51,6 +50,7 @@ class MultiViewPanel(QWidget):
         self._available_projects = dataset_info.get("available_projects", [])
         debug_print(f"MultiViewPanel available_projects count={len(self._available_projects)}")
         self._columns: dict[str, tuple[MultiViewHeader, MultiViewCell]] = {}
+        self._legend_names: dict[str, str] = {}
         self._grid_cache: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
         self._histogram_cache: dict[tuple[str, str], np.ndarray] = {}
         self._click_count = 0
@@ -59,6 +59,7 @@ class MultiViewPanel(QWidget):
         self._line_scan_y: float | None = None
         self._line_scan_x: float | None = None
         self._available_width: int | None = None
+        self._rotated: bool = False
         self._build_ui()
         self._connect_signals()
         self._populate_project_combo()
@@ -114,21 +115,25 @@ class MultiViewPanel(QWidget):
         r2_card = QWidget()
         r2_card.setObjectName("controlsCard")
         r2_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        r2 = QHBoxLayout(r2_card)
-        r2.setContentsMargins(14, 6, 14, 6)
+        r2_vbox = QVBoxLayout(r2_card)
+        r2_vbox.setContentsMargins(14, 6, 14, 6)
+        r2_vbox.setSpacing(4)
+        r2 = QHBoxLayout()
         r2.setSpacing(8)
-        debug_print("MultiViewPanel row 2 uses one horizontal layout")
+        r2_bottom = QHBoxLayout()
+        r2_bottom.setSpacing(8)
+        r2_vbox.addLayout(r2)
+        r2_vbox.addLayout(r2_bottom)
+        debug_print("MultiViewPanel row 2 split into two sub-rows")
 
-        r2.addWidget(QLabel("Range:"))
-        debug_print("MultiViewPanel row 2 range label added")
         self.range_min = QDoubleSpinBox(); self.range_min.setObjectName("viewerSpin")
         self.range_min.setDecimals(6); self.range_min.setRange(-1e12, 1e12)
-        self.range_min.setMinimumWidth(90)
-        debug_print("MultiViewPanel range_min minimum width set to 90")
+        self.range_min.setMinimumWidth(200)
+        debug_print("MultiViewPanel range_min minimum width set to 200")
         self.range_max = QDoubleSpinBox(); self.range_max.setObjectName("viewerSpin")
         self.range_max.setDecimals(6); self.range_max.setRange(-1e12, 1e12)
-        self.range_max.setMinimumWidth(90)
-        debug_print("MultiViewPanel range_max minimum width set to 90")
+        self.range_max.setMinimumWidth(200)
+        debug_print("MultiViewPanel range_max minimum width set to 200")
         self.range_max.setValue(1.0)
         self.colorbar_label_edit = QLineEdit()
         self.colorbar_label_edit.setPlaceholderText("Colorbar label...")
@@ -158,6 +163,7 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel reset button tooltip set")
         self.full_scale    = ToggleSwitchWidget("Full Scale",         checked=True)
         self.interfaces_on = ToggleSwitchWidget("Interfaces Overlay", checked=False)
+        self.rotate_btn    = ToggleSwitchWidget("Rotate",             checked=False)
         self.export_btn = QPushButton(QIcon(str(_ASSETS / "download.png")), "Export PNG")
         self.export_btn.setProperty("subtle", True)
         self.status_label = QLabel("")
@@ -165,18 +171,12 @@ class MultiViewPanel(QWidget):
         self.status_label.setMinimumWidth(100)
         debug_print("MultiViewPanel status label min width set to 100")
 
-        r2.addWidget(self.range_min, 1)
+        r2.addWidget(QLabel("Range:"))
+        debug_print("MultiViewPanel row 2 range label added")
+        r2.addWidget(self.range_min, 4)
         debug_print("MultiViewPanel row 2 range_min added")
-        r2.addWidget(self.range_max, 1)
+        r2.addWidget(self.range_max, 4)
         debug_print("MultiViewPanel row 2 range_max added")
-        label_caption = QLabel("Label:")
-        label_caption.setObjectName("mutedInfo")
-        r2.addWidget(label_caption)
-        debug_print("MultiViewPanel row 2 colorbar label caption added")
-        r2.addWidget(self.colorbar_label_edit, 1)
-        debug_print("MultiViewPanel row 2 colorbar label edit added")
-        r2.addWidget(self.unit_scale_combo, 1)
-        debug_print("MultiViewPanel row 2 unit scale combo added")
         r2.addWidget(self.range_slider, 12)
         debug_print("MultiViewPanel row 2 range slider added")
         r2.addWidget(self.reset_button)
@@ -185,8 +185,24 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel row 2 full scale toggle added")
         r2.addWidget(self.interfaces_on)
         debug_print("MultiViewPanel row 2 interfaces toggle added")
+        r2.addWidget(self.rotate_btn)
+        debug_print("MultiViewPanel row 2 rotate toggle added")
         r2.addWidget(self.export_btn)
         debug_print("MultiViewPanel row 2 export button added")
+
+        label_caption = QLabel("Label:")
+        label_caption.setObjectName("mutedInfo")
+        r2_bottom.addWidget(label_caption)
+        debug_print("MultiViewPanel row 2b colorbar label caption added")
+        r2_bottom.addWidget(self.colorbar_label_edit, 2)
+        debug_print("MultiViewPanel row 2b colorbar label edit added")
+        conversion_caption = QLabel("Conversion:")
+        conversion_caption.setObjectName("mutedInfo")
+        r2_bottom.addWidget(conversion_caption)
+        debug_print("MultiViewPanel row 2b conversion label added")
+        r2_bottom.addWidget(self.unit_scale_combo, 1)
+        debug_print("MultiViewPanel row 2b unit scale combo added")
+        r2_bottom.addStretch()
         root.addWidget(r2_card)
 
         # Heatmap area
@@ -283,10 +299,12 @@ class MultiViewPanel(QWidget):
         update_combo_popup_width(self.direction_combo)
         direction_label = QLabel("Direction:")
         direction_label.setObjectName("mutedInfo")
+        self.line_grid_check = ToggleSwitchWidget("Grid", checked=True)
         line_toolbar_layout.addWidget(self.line_mode_check)
         line_toolbar_layout.addWidget(self.show_line_check)
         line_toolbar_layout.addWidget(direction_label)
         line_toolbar_layout.addWidget(self.direction_combo)
+        line_toolbar_layout.addWidget(self.line_grid_check)
         line_toolbar_layout.addStretch(1)
         self.line_scan_canvas = LineScanCanvas()
         line_layout.addWidget(line_toolbar)
@@ -304,15 +322,13 @@ class MultiViewPanel(QWidget):
         histogram_toolbar_layout = QHBoxLayout(histogram_toolbar)
         histogram_toolbar_layout.setContentsMargins(0, 0, 0, 0)
         histogram_toolbar_layout.setSpacing(12)
-        histogram_toolbar_layout.addWidget(QLabel("Histogram Field"))
-        self.histogram_field_combo = QComboBox()
-        self.histogram_field_combo.setObjectName("viewerCombo")
-        histogram_toolbar_layout.addWidget(self.histogram_field_combo, 1)
         histogram_toolbar_layout.addWidget(QLabel("Number of Bins"))
         self.histogram_bins_slider = QSlider(Qt.Orientation.Horizontal)
         self.histogram_bins_slider.setRange(10, 200)
         self.histogram_bins_slider.setValue(30)
         histogram_toolbar_layout.addWidget(self.histogram_bins_slider, 1)
+        self.histogram_grid_check = ToggleSwitchWidget("Grid", checked=True)
+        histogram_toolbar_layout.addWidget(self.histogram_grid_check)
         self.histogram_canvas = HistogramCanvas()
         histogram_layout.addWidget(histogram_toolbar)
         histogram_layout.addWidget(self.histogram_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
@@ -340,12 +356,14 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel reset button connected")
         self.full_scale.toggled.connect(self._render_all)
         self.interfaces_on.toggled.connect(self._render_all)
+        self.rotate_btn.toggled.connect(self._on_rotate_toggled)
         self.export_btn.clicked.connect(self._export)
         self.line_mode_check.toggled.connect(self._on_line_mode_toggled)
         self.show_line_check.toggled.connect(self._render_all)
+        self.line_grid_check.toggled.connect(self._render_all)
         self.direction_combo.currentIndexChanged.connect(self._on_analysis_control_changed)
-        self.histogram_field_combo.currentIndexChanged.connect(self._on_histogram_field_changed)
         self.histogram_bins_slider.valueChanged.connect(self._on_analysis_control_changed)
+        self.histogram_grid_check.toggled.connect(self._render_all)
 
     def set_available_width(self, width: int) -> None:
         """Constrain this panel to the app content viewport width."""
@@ -359,12 +377,9 @@ class MultiViewPanel(QWidget):
             self.scalar_combo,
             self.type_combo,
             self.palette_combo,
-            self.range_min,
-            self.range_max,
             self.colorbar_label_edit,
             self.unit_scale_combo,
             self.range_slider,
-            self.histogram_field_combo,
         ]
         for control in controls:
             control.setMaximumWidth(self._available_width)
@@ -403,25 +418,7 @@ class MultiViewPanel(QWidget):
             self.scalar_combo.addItem(scalar_def["label"], scalar_def["value"])
         self.scalar_combo.blockSignals(False)
         update_combo_popup_width(self.scalar_combo)
-        self._populate_histogram_combo()
         debug_print(f"MultiViewPanel scalar combo count={self.scalar_combo.count()}")
-
-    def _populate_histogram_combo(self) -> None:
-        debug_print("MultiViewPanel._populate_histogram_combo called")
-        self.histogram_field_combo.blockSignals(True)
-        previous_key = self.histogram_field_combo.currentData()
-        debug_print(f"MultiViewPanel previous histogram key={previous_key}")
-        self.histogram_field_combo.clear()
-        for scalar_def in self._scalar_defs:
-            debug_print(f"MultiViewPanel adding histogram field={scalar_def.get('label')}")
-            self.histogram_field_combo.addItem(scalar_def["label"], scalar_def["value"])
-        restored = self.histogram_field_combo.findData(previous_key)
-        if restored >= 0:
-            self.histogram_field_combo.setCurrentIndex(restored)
-            debug_print(f"MultiViewPanel restored histogram index={restored}")
-        self.histogram_field_combo.blockSignals(False)
-        update_combo_popup_width(self.histogram_field_combo)
-        debug_print(f"MultiViewPanel histogram combo count={self.histogram_field_combo.count()}")
 
     def _on_project_changed(self) -> None:
         debug_print("MultiViewPanel._on_project_changed called")
@@ -458,6 +455,7 @@ class MultiViewPanel(QWidget):
         header = MultiViewHeader(file_path)
         cell   = MultiViewCell(file_path)
         header.close_requested.connect(self._remove_column)
+        header.legend_name_changed.connect(self._on_legend_name_changed)
         cell.heatmap_clicked.connect(self._handle_cell_click)
         self._columns[file_path] = (header, cell)
 
@@ -481,6 +479,7 @@ class MultiViewPanel(QWidget):
         header.deleteLater()
         cell.deleteLater()
         self._grid_cache.pop(file_path, None)
+        self._legend_names.pop(file_path, None)
         self._histogram_cache = {
             key: value for key, value in self._histogram_cache.items() if key[0] != file_path
         }
@@ -489,6 +488,11 @@ class MultiViewPanel(QWidget):
         self._on_project_changed()
         self._render_all()
         debug_print("MultiViewPanel._remove_column complete")
+
+    def _on_legend_name_changed(self, file_path: str, name: str) -> None:
+        debug_print(f"MultiViewPanel._on_legend_name_changed file={file_path} name={name}")
+        self._legend_names[file_path] = name
+        self._render_all()
 
     def _update_area_size(self) -> None:
         debug_print("MultiViewPanel._update_area_size called")
@@ -600,8 +604,9 @@ class MultiViewPanel(QWidget):
                 debug_print(f"MultiViewPanel rendering cell={fp}")
                 line_overlay = self._current_line_overlay()
                 debug_print(f"MultiViewPanel line_overlay={line_overlay}")
+                rx, ry, rz = (y, x, np.transpose(z)) if self._rotated else (x, y, z)
                 cell.render(
-                    x, y, z,
+                    rx, ry, rz,
                     vmin=vmin,
                     vmax=vmax,
                     cmap=cmap,
@@ -618,15 +623,6 @@ class MultiViewPanel(QWidget):
 
     def _on_scalar_changed(self, *_) -> None:
         debug_print("MultiViewPanel._on_scalar_changed called")
-        scalar_def = self._selected_scalar_def()
-        debug_print(f"MultiViewPanel selected scalar={scalar_def.get('label')}")
-        hist_idx = self.histogram_field_combo.findData(scalar_def.get("value"))
-        debug_print(f"MultiViewPanel matching histogram index={hist_idx}")
-        if hist_idx >= 0:
-            self.histogram_field_combo.blockSignals(True)
-            self.histogram_field_combo.setCurrentIndex(hist_idx)
-            self.histogram_field_combo.blockSignals(False)
-            debug_print("MultiViewPanel histogram combo synced to scalar")
         self._reset_click_range_state("scalar changed")
         self._render_all()
         debug_print("MultiViewPanel._on_scalar_changed complete")
@@ -770,12 +766,6 @@ class MultiViewPanel(QWidget):
         self._render_all()
         debug_print("MultiViewPanel._on_analysis_control_changed complete")
 
-    def _on_histogram_field_changed(self, *_) -> None:
-        debug_print("MultiViewPanel._on_histogram_field_changed called")
-        debug_print(f"MultiViewPanel histogram key={self.histogram_field_combo.currentData()}")
-        self._render_all()
-        debug_print("MultiViewPanel._on_histogram_field_changed complete")
-
     def _render_analysis(
         self,
         selected_scalar_def: dict,
@@ -791,6 +781,7 @@ class MultiViewPanel(QWidget):
             title=line_title,
             x_label=x_label,
             y_label=display_label,
+            show_grid=self.line_grid_check.isChecked(),
         )
         hist_series, hist_label = self._build_histogram_series(
             selected_scalar_def,
@@ -803,6 +794,7 @@ class MultiViewPanel(QWidget):
             hist_series,
             label=hist_label,
             bins=int(self.histogram_bins_slider.value()),
+            show_grid=self.histogram_grid_check.isChecked(),
         )
         debug_print("MultiViewPanel._render_analysis complete")
 
@@ -829,8 +821,9 @@ class MultiViewPanel(QWidget):
                 direction,
                 position,
             )
-            series.append({"name": Path(fp).name, "x": x_data, "y": z_data})
-            debug_print(f"MultiViewPanel line series added={Path(fp).name}")
+            legend = self._legend_names.get(fp) or Path(fp).name
+            series.append({"name": legend, "x": x_data, "y": z_data})
+            debug_print(f"MultiViewPanel line series added={legend}")
         debug_print(f"MultiViewPanel line series final count={len(series)}")
         return series, title, x_label
 
@@ -876,33 +869,26 @@ class MultiViewPanel(QWidget):
         display_label: str,
     ) -> tuple[list[dict], str]:
         debug_print("MultiViewPanel._build_histogram_series called")
-        histogram_scalar_def = self._selected_histogram_scalar_def()
-        selected_key = selected_scalar_def.get("value")
-        histogram_key = histogram_scalar_def.get("value")
-        is_same_field = histogram_key == selected_key
-        debug_print(f"MultiViewPanel histogram selected key={selected_key}")
-        debug_print(f"MultiViewPanel histogram field key={histogram_key}")
-        debug_print(f"MultiViewPanel histogram same field={is_same_field}")
-        label = display_label if is_same_field else histogram_scalar_def.get("label", "")
         series = []
         for fp in self._columns:
             debug_print(f"MultiViewPanel histogram file={fp}")
-            if is_same_field and fp in self._grid_cache:
+            if fp in self._grid_cache:
                 debug_print("MultiViewPanel histogram using rendered grid cache")
                 values = self._grid_cache[fp][2]
             else:
                 debug_print("MultiViewPanel histogram loading scalar grid")
-                values = self._histogram_grid_for_file(fp, histogram_scalar_def)
+                values = self._histogram_grid_for_file(fp, selected_scalar_def)
                 if values is None:
                     debug_print("MultiViewPanel histogram grid missing")
                     continue
-                if is_same_field and extra_scale != 1.0:
+                if extra_scale != 1.0:
                     debug_print("MultiViewPanel histogram applying extra scale")
                     values = values * extra_scale
-            series.append({"name": Path(fp).name, "values": values})
-            debug_print(f"MultiViewPanel histogram series added={Path(fp).name}")
+            legend = self._legend_names.get(fp) or Path(fp).name
+            series.append({"name": legend, "values": values})
+            debug_print(f"MultiViewPanel histogram series added={legend}")
         debug_print(f"MultiViewPanel histogram final count={len(series)}")
-        return series, label
+        return series, display_label
 
     def _histogram_grid_for_file(self, file_path: str, scalar_def: dict):
         debug_print("MultiViewPanel._histogram_grid_for_file called")
@@ -952,50 +938,25 @@ class MultiViewPanel(QWidget):
             return None
         return ("vertical", self._line_scan_x)
 
+    def _on_rotate_toggled(self, checked: bool) -> None:
+        self._rotated = checked
+        self._grid_cache.clear()
+        self._render_all()
+
     # ── Export ────────────────────────────────────────────────────────────────
 
     def _export(self) -> None:
         from PySide6.QtWidgets import QFileDialog
 
         debug_print("MultiViewPanel._export called")
-        pixmaps = [cell.grab_pixmap() for _, cell in self._columns.values()]
-        headers = [header.grab() for header, _ in self._columns.values()]
-        cb_px   = self.colorbar._web.grab()
-        debug_print(f"MultiViewPanel export cell count={len(pixmaps)}")
-        if not pixmaps:
-            debug_print("MultiViewPanel export skipped: no pixmaps")
+        if not self._columns:
+            debug_print("MultiViewPanel export skipped: no columns")
             return
-        spacing = 8
-        total_w, total_h = self._export_image_size(
-            cell_widths=[p.width() for p in pixmaps],
-            cell_height=max(p.height() for p in pixmaps),
-            colorbar_width=cb_px.width(),
-            header_height=max(h.height() for h in headers),
-            logo_width=_LOGO_W,
-            spacing=spacing,
-        )
-        debug_print(f"MultiViewPanel export width={total_w}")
-        debug_print(f"MultiViewPanel export height={total_h}")
-        header_h = max(h.height() for h in headers)
-        img = QImage(total_w, total_h, QImage.Format.Format_RGB32)
-        img.fill(QColor("#ffffff"))
-        p = QPainter(img)
-        p.fillRect(0, 0, total_w, header_h, QColor("#f3f6fa"))
-        p.setPen(QColor("#6a7e9f"))
-        p.setFont(QFont("Roboto Condensed", 10))
-        p.drawText(0, 0, _LOGO_W, header_h, Qt.AlignmentFlag.AlignCenter, "OP")
-        x = _LOGO_W + spacing
-        for header, px in zip(headers, pixmaps):
-            debug_print(f"MultiViewPanel drawing export column x={x}")
-            p.drawPixmap(x, 0, header)
-            p.drawPixmap(x, header_h, px)
-            x += px.width() + spacing
-        p.drawPixmap(x, header_h, cb_px)
-        p.end()
+        px = self._heatmap_row.grab()
         path, _ = QFileDialog.getSaveFileName(self, "Export", "multi_view.png", "PNG (*.png)")
         if path:
             debug_print(f"MultiViewPanel saving export path={path}")
-            img.save(path)
+            px.save(path)
         else:
             debug_print("MultiViewPanel export cancelled")
         debug_print("MultiViewPanel._export complete")
@@ -1042,20 +1003,6 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel selected scalar fallback to first")
         return self._scalar_defs[0]
 
-    def _selected_histogram_scalar_def(self) -> dict:
-        debug_print("MultiViewPanel._selected_histogram_scalar_def called")
-        histogram_key = (
-            self.histogram_field_combo.currentData()
-            if hasattr(self, "histogram_field_combo")
-            else None
-        )
-        debug_print(f"MultiViewPanel selected histogram key={histogram_key}")
-        for scalar_def in self._scalar_defs:
-            if scalar_def.get("value") == histogram_key:
-                debug_print("MultiViewPanel histogram scalar matched")
-                return scalar_def
-        debug_print("MultiViewPanel histogram scalar fallback to selected scalar")
-        return self._selected_scalar_def()
 
     def _get_display_params(self, scalar_label: str, units: str | None) -> tuple[float, str]:
         debug_print("MultiViewPanel._get_display_params called")
@@ -1136,23 +1083,3 @@ class MultiViewPanel(QWidget):
             return candidate
         debug_print("MultiViewPanel overlay candidate missing")
         return None
-
-    @staticmethod
-    def _export_image_size(
-        *,
-        cell_widths: list[int],
-        cell_height: int,
-        colorbar_width: int,
-        header_height: int,
-        logo_width: int,
-        spacing: int,
-    ) -> tuple[int, int]:
-        debug_print("MultiViewPanel._export_image_size called")
-        debug_print(f"MultiViewPanel export widths={cell_widths}")
-        count = len(cell_widths)
-        debug_print(f"MultiViewPanel export count={count}")
-        width = logo_width + sum(cell_widths) + colorbar_width + spacing * (count + 1)
-        height = header_height + cell_height
-        debug_print(f"MultiViewPanel export computed width={width}")
-        debug_print(f"MultiViewPanel export computed height={height}")
-        return width, height
