@@ -6,14 +6,16 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
 
 from data.text_sources import GenericTextDataSource
 from app.styles import build_app_stylesheet
 from graphs.graph_canvas import GraphCanvas
+from graphs.graph_panel_widget import GraphPanelWidget
 from graphs.tab_widget import CustomGraphTab
 from sidebar.sidebar_widget import SidebarWidget
 from utils.project_scanner import get_textdata_files
+from viewer.plot_style import PlotStyle
 
 
 class CustomGraphPySide6Tests(unittest.TestCase):
@@ -78,22 +80,38 @@ class CustomGraphPySide6Tests(unittest.TestCase):
     def test_custom_graph_tab_creates_closeable_graph_panel_tabs(self):
         tab = CustomGraphTab()
 
-        panel = tab.add_graph_panel()
-
         tabs = tab.findChild(QTabWidget, "graphPanelTabs")
         self.assertIsNotNone(tabs)
-        self.assertEqual(tabs.count(), 1)
+        self.assertEqual(tabs.count(), 2)
+        panel = tabs.widget(0)
         self.assertIs(panel, tabs.widget(0))
+        self.assertEqual(tabs.tabText(1), "+")
         header = tabs.tabBar().tabButton(0, tabs.tabBar().ButtonPosition.LeftSide)
         self.assertIsNotNone(header)
         label = header.findChild(QLabel, "panelTabLabel")
         close_button = header.findChild(QPushButton, "panelTabCloseButton")
         self.assertIsNotNone(label)
-        self.assertEqual(label.text(), "Graph Panel 1")
+        self.assertEqual(label.text(), "Graph Tab 1")
         self.assertIsNotNone(close_button)
-        add_button = tabs.cornerWidget(Qt.Corner.TopRightCorner)
-        self.assertIsNotNone(add_button)
-        self.assertEqual(add_button.objectName(), "addGraphPanelButton")
+        self.assertEqual(panel.state()["files"], [])
+
+    def test_custom_graph_plus_tab_creates_tabs_after_all_tabs_closed(self):
+        tab = CustomGraphTab()
+        tabs = tab.findChild(QTabWidget, "graphPanelTabs")
+        first_panel = tabs.widget(0)
+
+        tab._on_tab_bar_clicked(tab._plus_index())
+        tab._on_tab_bar_clicked(tab._plus_index())
+        self.assertEqual(tabs.count(), 4)
+
+        tab._remove_panel(first_panel)
+        tab._remove_panel(tabs.widget(0))
+        tab._remove_panel(tabs.widget(0))
+        self.assertEqual(tabs.count(), 2)
+        self.assertEqual(tabs.tabText(1), "+")
+
+        tab._on_tab_bar_clicked(tab._plus_index())
+        self.assertEqual(tabs.count(), 3)
 
     def test_custom_graph_tab_adds_files_to_active_panel_and_creates_panel_if_needed(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -104,11 +122,11 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         panel = tab.add_files_to_active_panel([str(path)])
 
         tabs = tab.findChild(QTabWidget, "graphPanelTabs")
-        self.assertEqual(tabs.count(), 1)
-        self.assertIs(panel, tabs.currentWidget())
+        self.assertEqual(tabs.count(), 2)
+        self.assertIs(panel, tabs.widget(0))
         self.assertEqual(panel.state()["files"], [str(path.resolve())])
 
-    def test_sidebar_custom_graph_mode_lists_textdata_projects_and_filters_files(self):
+    def test_sidebar_custom_graph_mode_only_filters_projects_for_graph_tabs(self):
         root = Path(tempfile.mkdtemp()) / "TextOnlyProject"
         textdata = root / "TextData"
         textdata.mkdir(parents=True)
@@ -137,15 +155,11 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         sidebar.set_mode("custom_graph")
         sidebar.set_projects(projects)
         sidebar.project_list.item(0).setCheckState(Qt.CheckState.Checked)
-        sidebar.text_file_filter.setText("keep")
 
         self.assertEqual(sidebar.project_list.count(), 1)
         self.assertEqual(sidebar.project_list.item(0).text(), "TextOnlyProject")
-        self.assertEqual(sidebar.text_file_list.count(), 1)
-        self.assertEqual(sidebar.text_file_list.item(0).text(), "curve_keep.txt")
-        self.assertEqual(sidebar.text_file_list.item(0).data(Qt.ItemDataRole.UserRole), str(keep.resolve()))
         self.assertTrue(sidebar.panel_group.isHidden())
-        self.assertFalse(sidebar.text_files_group.isHidden())
+        self.assertTrue(sidebar.text_files_group.isHidden())
 
     def test_sidebar_normal_mode_keeps_vtk_project_list(self):
         root = Path(tempfile.mkdtemp())
@@ -175,7 +189,99 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertFalse(sidebar.panel_group.isHidden())
         self.assertTrue(sidebar.text_files_group.isHidden())
 
-    def test_main_window_routes_selected_sidebar_text_files_to_custom_graph(self):
+    def test_sidebar_remembers_project_check_state_when_switching_modes(self):
+        root = Path(tempfile.mkdtemp())
+        text_project = root / "TextProject"
+        textdata = text_project / "TextData"
+        textdata.mkdir(parents=True)
+        textdata.joinpath("curves.txt").write_text("Time A\n0 1\n", encoding="utf-8")
+        vtk_project = root / "VtkProject"
+        vtk_path = vtk_project / "VTK"
+        vtk_path.mkdir(parents=True)
+        sidebar = SidebarWidget()
+        sidebar.set_projects({
+            "TextProject": {
+                "path": text_project,
+                "has_vtk": False,
+                "vtk_path": None,
+                "has_textdata": True,
+                "textdata_path": textdata,
+            },
+            "VtkProject": {
+                "path": vtk_project,
+                "has_vtk": True,
+                "vtk_path": vtk_path,
+                "has_textdata": False,
+                "textdata_path": None,
+            },
+        })
+
+        sidebar.set_mode("custom_graph")
+        sidebar.project_list.item(0).setCheckState(Qt.CheckState.Checked)
+        sidebar.set_mode("vtk")
+        sidebar.project_list.item(0).setCheckState(Qt.CheckState.Checked)
+        sidebar.set_mode("custom_graph")
+
+        self.assertEqual(sidebar.project_list.item(0).text(), "TextProject")
+        self.assertEqual(sidebar.project_list.item(0).checkState(), Qt.CheckState.Checked)
+
+        sidebar.project_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+        sidebar.set_mode("vtk")
+        sidebar.set_mode("custom_graph")
+
+        self.assertEqual(sidebar.project_list.item(0).checkState(), Qt.CheckState.Unchecked)
+
+    def test_sidebar_project_list_grows_with_projects_and_dataset_list_shows_eight_rows(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        projects = {}
+        for index in range(3):
+            project_root = root / f"Project{index}"
+            vtk_path = project_root / "VTK"
+            vtk_path.mkdir(parents=True)
+            projects[f"Project{index}"] = {
+                "path": project_root,
+                "has_vtk": True,
+                "vtk_path": vtk_path,
+                "has_textdata": False,
+                "textdata_path": None,
+            }
+
+        sidebar.set_mode("vtk")
+        sidebar.set_projects({"Project0": projects["Project0"]})
+        one_project_height = sidebar.project_list.maximumHeight()
+        sidebar.set_projects(projects)
+        three_project_height = sidebar.project_list.maximumHeight()
+
+        self.assertGreater(three_project_height, one_project_height)
+        self.assertEqual(
+            sidebar.dataset_list.minimumHeight(),
+            sidebar._list_height_for_rows(8),
+        )
+
+    def test_sidebar_project_row_click_toggles_checkbox_state(self):
+        root = Path(tempfile.mkdtemp())
+        vtk_project = root / "VtkProject"
+        vtk_path = vtk_project / "VTK"
+        vtk_path.mkdir(parents=True)
+        sidebar = SidebarWidget()
+        sidebar.set_projects({
+            "VtkProject": {
+                "path": vtk_project,
+                "has_vtk": True,
+                "vtk_path": vtk_path,
+                "has_textdata": False,
+                "textdata_path": None,
+            }
+        })
+        item = sidebar.project_list.item(0)
+
+        sidebar._toggle_project_item_from_row_click(item)
+        self.assertEqual(item.checkState(), Qt.CheckState.Checked)
+        sidebar._toggle_project_item_from_row_click(item)
+        self.assertEqual(item.checkState(), Qt.CheckState.Unchecked)
+
+    def test_main_window_routes_checked_text_projects_to_custom_graph_tab_selectors(self):
         from app.main_window import MainWindow
 
         root = Path(tempfile.mkdtemp()) / "TextOnlyProject"
@@ -198,14 +304,79 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         window.tab_widget.setCurrentIndex(2)
         window.sidebar_widget.project_list.item(0).setCheckState(Qt.CheckState.Checked)
-        window.sidebar_widget.text_file_list.item(0).setSelected(True)
-        window.sidebar_widget.add_text_files_button.click()
 
         tabs = window.custom_graph_tab.findChild(QTabWidget, "graphPanelTabs")
-        panel = tabs.currentWidget()
+        panel = tabs.widget(0)
+        project_combo = panel.findChild(QComboBox, "graphProjectCombo") or panel.project_combo
+        folder_combo = panel.findChild(QComboBox, "graphFolderCombo") or panel.folder_combo
+        file_combo = panel.findChild(QComboBox, "graphFileCombo") or panel.file_combo
         self.assertEqual(window.sidebar_widget.mode(), "custom_graph")
-        self.assertEqual(tabs.count(), 1)
+        self.assertEqual(tabs.count(), 2)
+        self.assertEqual(project_combo.currentData(), "TextOnlyProject")
+        self.assertEqual(folder_combo.currentText(), "TextData")
+        self.assertEqual(file_combo.currentData(), str(path.resolve()))
+
+    def test_graph_tab_selectors_add_checked_project_file_to_graph(self):
+        root = Path(tempfile.mkdtemp()) / "RunA"
+        textdata = root / "TextData"
+        textdata.mkdir(parents=True)
+        path = textdata / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n", encoding="utf-8")
+        tab = CustomGraphTab()
+        tab.set_projects({
+            "RunA": {
+                "path": root,
+                "has_vtk": False,
+                "vtk_path": None,
+                "has_textdata": True,
+                "textdata_path": textdata,
+            }
+        })
+        tab.set_selected_project_names(["RunA"])
+        panel = tab.findChild(QTabWidget, "graphPanelTabs").widget(0)
+
+        self.assertEqual(panel.project_combo.currentData(), "RunA")
+        self.assertEqual(panel.folder_combo.currentText(), "TextData")
+        self.assertEqual(panel.file_combo.currentData(), str(path.resolve()))
+        panel.add_file_button.click()
+
         self.assertEqual(panel.state()["files"], [str(path.resolve())])
+
+    def test_graph_panel_exposes_png_download_button(self):
+        panel = GraphPanelWidget(panel_number=1)
+
+        self.assertEqual(panel.download_png_button.text(), "PNG")
+        self.assertEqual(panel.download_png_button.toolTip(), "Download graph as PNG")
+        self.assertFalse(panel.download_png_button.icon().isNull())
+
+    def test_graph_panel_disambiguates_same_named_files_and_duplicate_legends(self):
+        root = Path(tempfile.mkdtemp())
+        paths = []
+        projects = {}
+        for project_name, value in [("RunA", 1), ("RunB", 2)]:
+            textdata = root / project_name / "TextData"
+            textdata.mkdir(parents=True)
+            path = textdata / "curves.txt"
+            path.write_text(f"Time A\n0 {value}\n1 {value + 1}\n", encoding="utf-8")
+            paths.append(str(path.resolve()))
+            projects[project_name] = {
+                "path": root / project_name,
+                "has_vtk": False,
+                "vtk_path": None,
+                "has_textdata": True,
+                "textdata_path": textdata,
+            }
+        panel = GraphPanelWidget(panel_number=1, projects=projects, selected_project_names=["RunA", "RunB"])
+
+        panel.add_files(paths)
+        panel._column_checkboxes[(paths[0], "A")].setChecked(True)
+        panel._column_checkboxes[(paths[1], "A")].setChecked(True)
+        state = panel.state()
+
+        self.assertEqual(panel._file_label(paths[0]), "RunA / TextData/curves.txt")
+        self.assertEqual(panel._file_label(paths[1]), "RunB / TextData/curves.txt")
+        self.assertEqual(state["column_settings"][paths[0]]["A"]["legend"], "RunA / TextData: A")
+        self.assertEqual(state["column_settings"][paths[1]]["A"]["legend"], "RunB / TextData: A")
 
     def test_graph_panel_loads_file_columns_and_updates_state(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -364,6 +535,36 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(list(figure.data[2].y), [3000, 6000])
         self.assertEqual(list(figure.data[3].y), [3, 6])
 
+    def test_graph_canvas_limits_lines_plus_markers_to_15_marker_points(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "many_points.txt"
+        rows = ["Time A"] + [f"{index} {index * 2}" for index in range(40)]
+        path.write_text("\n".join(rows), encoding="utf-8")
+        canvas = GraphCanvas()
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "A", "yaxis": "y1", "conversion": "as-is"},
+                }
+            },
+            "x_axis_column": "Time",
+            "trace_mode": "lines+markers",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+        }
+
+        figure = canvas._build_figure(state)
+
+        self.assertEqual(len(figure.data), 1)
+        self.assertEqual(figure.data[0].mode, "lines+markers")
+        self.assertEqual(len(figure.data[0].x), 40)
+        self.assertEqual(figure.data[0].marker.size, PlotStyle.MARKER_SIZE)
+        self.assertEqual(figure.data[0].marker.maxdisplayed, PlotStyle.MAX_MARKER_POINTS)
+        self.assertEqual(figure.data[0].marker.line.width, 1.5)
+
     def test_graph_canvas_accepts_display_conversion_labels(self):
         canvas = GraphCanvas()
 
@@ -415,10 +616,13 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         figure = canvas._apply_publication_axis_styling(figure, state)
 
         for axis in (figure.layout.xaxis, figure.layout.yaxis, figure.layout.yaxis2):
-            self.assertEqual(axis.title.font.size, 24)
+            self.assertEqual(axis.title.font.size, PlotStyle.GRAPH_AXIS_TITLE_SIZE)
             self.assertEqual(axis.title.font.family, "Arial")
-            self.assertEqual(axis.tickfont.size, 22)
+            self.assertEqual(axis.tickfont.size, PlotStyle.GRAPH_TICK_FONT_SIZE)
             self.assertEqual(axis.tickfont.family, "Arial")
+            self.assertEqual(axis.exponentformat, "e")
+            self.assertEqual(axis.showexponent, "all")
+            self.assertEqual(axis.minexponent, 4)
             self.assertEqual(axis.mirror, "allticks")
             self.assertEqual(axis.ticks, "inside")
             self.assertEqual(axis.ticklen, 10)

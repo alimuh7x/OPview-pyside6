@@ -16,6 +16,8 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
 from viewer.colorscale import cmap_to_plotly_scale
+from viewer.heatmap_orientation import Heatmap2DOrientation
+from viewer.plot_style import PlotStyle
 
 _CANVAS_HEIGHT = 420
 _CANVAS_WIDTH  = 360
@@ -154,7 +156,7 @@ class HeatmapCanvas(QWidget):
             return f"{v:.2e}"
 
         n_chars = max(len(_fmt(vmin)), len(_fmt(vmax)), len(_fmt(0)))
-        # tickfont size=22 in Roboto Condensed → ~11px per character
+        # Shared tick font is size 22; estimate roughly 11px per character.
         # bar thickness (18px) + gap (8px) + label text + right padding (14px)
         return max(_COLORBAR_WIDTH, 18 + 8 + n_chars * 11 + 14)
 
@@ -300,8 +302,7 @@ class HeatmapCanvas(QWidget):
     ) -> go.Figure:
         debug_print("HeatmapCanvas._build_figure called")
         rows, cols = np.asarray(z_grid).shape[:2]
-        x_values = np.linspace(float(np.nanmin(x_grid)), float(np.nanmax(x_grid)), cols)
-        y_values = np.linspace(float(np.nanmin(y_grid)), float(np.nanmax(y_grid)), rows)
+        x_values, y_values = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
         colorscale = cmap_to_plotly_scale(cmap)
         colorbar_x = 1.0 + _COLORBAR_GAP
         colorbar_cfg = dict(
@@ -314,8 +315,8 @@ class HeatmapCanvas(QWidget):
             thickness     = 18,
             thicknessmode = "pixels",
             outlinewidth  = 0,
-            title         = dict(text=colorbar_label, side="right", font=dict(size=24)),
-            tickfont      = dict(size=22),
+            title         = dict(text=colorbar_label, side="right", font=PlotStyle.colorbar_title_font()),
+            tickfont      = PlotStyle.colorbar_tick_font(),
             tickmode      = "array",
             tickvals      = [
                 vmin,
@@ -342,10 +343,15 @@ class HeatmapCanvas(QWidget):
             figure.add_trace(trace)
         if overlay_grid is not None:
             debug_print("HeatmapCanvas adding smooth contour overlay")
+            overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
+                overlay_grid["x"],
+                overlay_grid["y"],
+                overlay_grid["z"],
+            )
             figure.add_trace(
                 go.Contour(
-                    x=np.asarray(overlay_grid["x"])[0],
-                    y=np.asarray(overlay_grid["y"])[:, 0],
+                    x=overlay_x,
+                    y=overlay_y,
                     z=np.asarray(overlay_grid["z"]),
                     showscale=False,
                     contours=dict(
@@ -370,9 +376,19 @@ class HeatmapCanvas(QWidget):
             debug_print("HeatmapCanvas adding line overlay")
             orientation, value = line_overlay
             if orientation == "horizontal":
-                figure.add_hline(y=value, line_width=2, line_dash="dash", line_color="#c50623")
+                figure.add_hline(
+                    y=value,
+                    line_width=PlotStyle.GUIDE_LINE_WIDTH,
+                    line_dash="dash",
+                    line_color="#c50623",
+                )
             else:
-                figure.add_vline(x=value, line_width=2, line_dash="dash", line_color="#c50623")
+                figure.add_vline(
+                    x=value,
+                    line_width=PlotStyle.GUIDE_LINE_WIDTH,
+                    line_dash="dash",
+                    line_color="#c50623",
+                )
         figure.update_layout(
             title=dict(text=title),
             width=self.width(),
@@ -380,6 +396,7 @@ class HeatmapCanvas(QWidget):
             margin=dict(l=0, r=self._colorbar_width, t=60, b=15),
             paper_bgcolor="white",
             plot_bgcolor="white",
+            font=PlotStyle.layout_font(),
             dragmode="pan",
         )
         figure.update_xaxes(

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from viewer.animation_player import AnimationPlayer
 
 from app.debug import debug_print
+from app.resources import HEATMAP_LOGO_PATH
 from utils.combo_box_utils import update_combo_popup_width
 from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.heatmap_controller import HeatmapController
@@ -111,7 +112,7 @@ class PanelWidget(QWidget):
         self.line_scan_canvas = LineScanCanvas()
         self.histogram_canvas = HistogramCanvas()
         self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
-        self.show_line_check = ToggleSwitchWidget("Show Line", checked=True)
+        self.show_line_check = ToggleSwitchWidget("Show Line", checked=False)
         self.direction_combo = QComboBox()
         self.direction_combo.setObjectName("viewerCombo")
         self.direction_combo.addItem(
@@ -135,6 +136,10 @@ class PanelWidget(QWidget):
         debug_print("PanelWidget colorbar label min width set to 72")
 
         # Timeline row widgets
+        self.first_frame_btn = self._make_playback_button("black_first.png", "First frame")
+        self.previous_frame_btn = self._make_playback_button("black_previous.png", "Previous frame")
+        self.next_frame_btn = self._make_playback_button("black_fast-forward.png", "Next frame")
+        self.last_frame_btn = self._make_playback_button("black_last.png", "Last frame")
         self.playback_slider = QSlider(Qt.Orientation.Horizontal)
         self.playback_slider.setRange(0, 0)
         self.frame_label = QLabel("– / –")
@@ -183,7 +188,11 @@ class PanelWidget(QWidget):
 
         # Timeline slider wiring
         self._sync_playback_frame_count()
-        self.playback_slider.sliderMoved.connect(self._on_slider_moved)
+        self.playback_slider.valueChanged.connect(self._on_slider_value_changed)
+        self.first_frame_btn.clicked.connect(lambda: self._jump_to_frame(0))
+        self.previous_frame_btn.clicked.connect(lambda: self._jump_to_frame(self.playback_slider.value() - 1))
+        self.next_frame_btn.clicked.connect(lambda: self._jump_to_frame(self.playback_slider.value() + 1))
+        self.last_frame_btn.clicked.connect(lambda: self._jump_to_frame(self.playback_slider.maximum()))
         self.animate_btn.clicked.connect(self._open_animation_player)
 
         # Keep slider in sync when user manually picks a file
@@ -196,15 +205,27 @@ class PanelWidget(QWidget):
     # Playback handlers
     # ------------------------------------------------------------------
 
+    def _make_playback_button(self, icon_name: str, tooltip: str) -> QPushButton:
+        button = QPushButton()
+        button.setObjectName("playbackTransportButton")
+        button.setToolTip(tooltip)
+        button.setFixedSize(34, 30)
+        button.setIcon(QIcon(str(self._ASSETS / icon_name)))
+        button.setIconSize(QSize(20, 20))
+        return button
+
     def _sync_playback_frame_count(self) -> None:
         n = self.controller.get_file_count()
         self.playback_slider.setRange(0, max(0, n - 1))
         self.frame_label.setText(f"1 / {n}" if n > 0 else "– / –")
+        self._update_playback_buttons()
 
-    def _on_slider_moved(self, index: int) -> None:
+    def _on_slider_value_changed(self, index: int) -> None:
         n = self.playback_slider.maximum() + 1
         self.frame_label.setText(f"{index + 1} / {n}")
-        self.controls_widget.file_combo.setCurrentIndex(index)
+        if self.controls_widget.file_combo.currentIndex() != index:
+            self.controls_widget.file_combo.setCurrentIndex(index)
+        self._update_playback_buttons()
 
     def _on_file_combo_changed(self, index: int) -> None:
         self.playback_slider.blockSignals(True)
@@ -212,6 +233,30 @@ class PanelWidget(QWidget):
         self.playback_slider.blockSignals(False)
         n = self.playback_slider.maximum() + 1
         self.frame_label.setText(f"{index + 1} / {n}" if n > 0 else "– / –")
+        self._update_playback_buttons()
+
+    def _jump_to_frame(self, index: int) -> None:
+        maximum = self.playback_slider.maximum()
+        if maximum < 0:
+            return
+        target = max(0, min(index, maximum))
+        self.controls_widget.file_combo.setCurrentIndex(target)
+
+    def _update_playback_buttons(self) -> None:
+        maximum = self.playback_slider.maximum()
+        current = self.playback_slider.value()
+        has_frames = maximum >= 0 and self.controller.get_file_count() > 0
+        for button in (
+            self.first_frame_btn,
+            self.previous_frame_btn,
+            self.next_frame_btn,
+            self.last_frame_btn,
+        ):
+            button.setEnabled(has_frames)
+        self.first_frame_btn.setEnabled(has_frames and current > 0)
+        self.previous_frame_btn.setEnabled(has_frames and current > 0)
+        self.next_frame_btn.setEnabled(has_frames and current < maximum)
+        self.last_frame_btn.setEnabled(has_frames and current < maximum)
 
     def _open_animation_player(self) -> None:
         combo = self.controls_widget.file_combo
@@ -225,6 +270,9 @@ class PanelWidget(QWidget):
         if scalar_def is None:
             return
         state = self.controller.state
+        _, colorbar_label = self.controller._get_display_params(
+            self.controls_widget.current_scalar_label()
+        )
         dlg = AnimationPlayer(
             file_paths=file_paths,
             scalar_def=scalar_def,
@@ -233,6 +281,8 @@ class PanelWidget(QWidget):
             palette=state.palette,
             vmin=state.range_min,
             vmax=state.range_max,
+            colorbar_label=colorbar_label,
+            interfaces_overlay=self.interfaces_check.isChecked(),
             parent=self,
         )
         dlg.show()
@@ -254,7 +304,7 @@ class PanelWidget(QWidget):
         self.right_column_layout = right_layout
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
-        right_layout.addWidget(self.analysis_card)
+        right_layout.addWidget(self.analysis_card, 1)
 
         left_col.setMinimumWidth(300)
         debug_print("PanelWidget left column min width set to 300")
@@ -269,7 +319,7 @@ class PanelWidget(QWidget):
         self._splitter.addWidget(right_col)
 
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setContentsMargins(0, 0, 8, 8)
         main_layout.setSpacing(0)
         main_layout.addWidget(self._splitter)
         debug_print("PanelWidget layout ready")
@@ -330,10 +380,18 @@ class PanelWidget(QWidget):
         self._apply_heatmap_toolbar_mode("wide", force=True)
         layout.addWidget(self.heatmap_toolbar)
 
-        # Timeline row: [==slider==] [3/24] [▶ Animate]
+        # Timeline row: transport buttons, slider, frame label, Animate
         playback_row = QHBoxLayout()
         playback_row.setContentsMargins(0, 2, 0, 2)
-        playback_row.setSpacing(8)
+        playback_row.setSpacing(6)
+        for button in (
+            self.first_frame_btn,
+            self.previous_frame_btn,
+            self.next_frame_btn,
+            self.last_frame_btn,
+        ):
+            playback_row.addWidget(button)
+        playback_row.addSpacing(4)
         playback_row.addWidget(self.playback_slider, 1)
         playback_row.addWidget(self.frame_label)
         playback_row.addWidget(self.animate_btn)
@@ -341,7 +399,7 @@ class PanelWidget(QWidget):
 
         # heatmap-row: [logo] [centered heatmap], bottom aligned by canvas height
         logo_card = QWidget()
-        logo_path = Path(__file__).parent.parent / "assets" / "OP_Logo.png"
+        logo_path = HEATMAP_LOGO_PATH
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path)).scaledToWidth(
                 52, Qt.TransformationMode.SmoothTransformation
@@ -438,6 +496,7 @@ class PanelWidget(QWidget):
         card = QWidget()
         card.setObjectName("viewerCard")
         card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(8)
@@ -449,7 +508,7 @@ class PanelWidget(QWidget):
             20, Qt.TransformationMode.SmoothTransformation
         )
         chart_icon.setPixmap(chart_pixmap)
-        title_label = QLabel("Line Scan & Histogram Analysis")
+        title_label = QLabel("Analysis")
         title_label.setObjectName("sectionTitle")
         title_row.addWidget(chart_icon)
         title_row.addWidget(title_label)
@@ -462,6 +521,9 @@ class PanelWidget(QWidget):
         line_layout = QVBoxLayout(self.line_card)
         line_layout.setContentsMargins(10, 8, 10, 8)
         line_layout.setSpacing(6)
+        line_title = QLabel("Line Scan")
+        line_title.setObjectName("sectionTitle")
+        line_layout.addWidget(line_title)
         self.line_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self.line_toolbar = QWidget()
         self.line_toolbar.setObjectName("toolbarStrip")
@@ -488,6 +550,9 @@ class PanelWidget(QWidget):
         histogram_layout = QVBoxLayout(self.histogram_card)
         histogram_layout.setContentsMargins(10, 8, 10, 8)
         histogram_layout.setSpacing(6)
+        histogram_title = QLabel("Histogram")
+        histogram_title.setObjectName("sectionTitle")
+        histogram_layout.addWidget(histogram_title)
         bins_row = QHBoxLayout()
         bins_row.setSpacing(8)
         bins_label = QLabel("Bins:")
@@ -498,5 +563,6 @@ class PanelWidget(QWidget):
         histogram_layout.addLayout(bins_row)
         histogram_layout.addWidget(self.histogram_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.histogram_card)
+        layout.addStretch(1)
 
         return card

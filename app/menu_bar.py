@@ -5,6 +5,7 @@ from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QApplication, QMenuBar, QMessageBox
 
 from app.debug import debug_print
+from app.resources import DOCUMENTATION_PATH
 
 
 class AppMenuBar(QMenuBar):
@@ -110,7 +111,7 @@ class AppMenuBar(QMenuBar):
         debug_print("AppMenuBar Help menu built")
 
     def _open_documentation(self) -> None:
-        QDesktopServices.openUrl(QUrl("https://github.com/alimuh7x/OPview-pyside6"))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(DOCUMENTATION_PATH)))
 
     def _show_about(self) -> None:
         QMessageBox.about(

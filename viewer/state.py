@@ -31,10 +31,10 @@ class ViewerState:
     line_scan_x: Optional[float] = None
     line_scan_direction: str = "horizontal"
     click_mode: str = "range"
-    line_overlay_visible: bool = True
+    line_overlay_visible: bool = False
     interfaces_overlay_visible: bool = False
     status_message: str = "Waiting for data"
-    rotated: bool = False
+    rotation_degrees: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Return JSON-serialisable dict."""

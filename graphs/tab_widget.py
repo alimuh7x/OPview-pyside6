@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -19,10 +19,19 @@ from PySide6.QtWidgets import (
 
 from app.debug import debug_print
 from graphs.graph_panel_widget import GraphPanelWidget
-from utils.project_scanner import get_textdata_files
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _REMOVE = str(_ASSETS / "remove.png")
+
+
+class _GraphTabBar(QTabBar):
+    """Tab bar with a wider final add tab."""
+
+    def tabSizeHint(self, index: int) -> QSize:  # noqa: N802
+        size = super().tabSizeHint(index)
+        if index == self.count() - 1:
+            size.setWidth(size.width() * 2)
+        return size
 
 
 class CustomGraphTab(QWidget):
@@ -32,28 +41,50 @@ class CustomGraphTab(QWidget):
         debug_print("CustomGraphTab.__init__ start")
         super().__init__(parent)
         self._projects: dict[str, dict] = {}
-        self._suggested_files: list[str] = []
+        self._selected_project_names: list[str] = []
         self._next_panel_number = 1
+        self._plus_tab = QWidget()
+        self._creating_tab = False
+        self._activating_plus_tab = False
         self._build_ui()
+        self.add_graph_panel()
         debug_print("CustomGraphTab.__init__ complete")
 
     def set_projects(self, projects: dict[str, dict]) -> None:
         debug_print(f"CustomGraphTab.set_projects count={len(projects)}")
         self._projects = projects
-        self._suggested_files = get_textdata_files(projects)
-        debug_print(f"CustomGraphTab.set_projects suggested_files={len(self._suggested_files)}")
+        self._selected_project_names = [
+            name for name in self._selected_project_names if name in self._projects
+        ]
         for index in range(self._tabs.count()):
             panel = self._tabs.widget(index)
             if isinstance(panel, GraphPanelWidget):
-                panel.set_suggested_files(self._suggested_files)
+                panel.set_project_scope(self._projects, self._selected_project_names)
+
+    def set_selected_project_names(self, project_names: list[str]) -> None:
+        debug_print(f"CustomGraphTab.set_selected_project_names count={len(project_names)}")
+        self._selected_project_names = [name for name in project_names if name in self._projects]
+        for index in range(self._tabs.count()):
+            panel = self._tabs.widget(index)
+            if isinstance(panel, GraphPanelWidget):
+                panel.set_project_scope(self._projects, self._selected_project_names)
 
     def add_graph_panel(self) -> GraphPanelWidget:
         debug_print("CustomGraphTab.add_graph_panel called")
         panel_number = self._next_panel_number
         self._next_panel_number += 1
-        label = f"Graph Panel {panel_number}"
-        panel = GraphPanelWidget(panel_number=panel_number, suggested_files=self._suggested_files)
-        index = self._tabs.addTab(panel, label)
+        label = f"Graph Tab {panel_number}"
+        panel = GraphPanelWidget(
+            panel_number=panel_number,
+            projects=self._projects,
+            selected_project_names=self._selected_project_names,
+        )
+        insert_index = self._plus_index()
+        if insert_index < 0:
+            insert_index = self._tabs.count()
+        self._creating_tab = True
+        index = self._tabs.insertTab(insert_index, panel, label)
+        self._creating_tab = False
         self._tabs.setTabText(index, "")
         header = self._build_tab_header(label, panel)
         self._tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.LeftSide, header)
@@ -93,18 +124,16 @@ class CustomGraphTab(QWidget):
 
         self._tabs = QTabWidget()
         self._tabs.setObjectName("graphPanelTabs")
+        self._tabs.setTabBar(_GraphTabBar())
         self._tabs.setProperty("class", "panelTabs")
         self._tabs.setTabsClosable(False)
         self._tabs.setTabPosition(QTabWidget.TabPosition.North)
         self._tabs.currentChanged.connect(self._refresh_header_states)
-
-        self.add_graph_button = QPushButton("+ Add Graph Panel")
-        self.add_graph_button.setObjectName("addGraphPanelButton")
-        self.add_graph_button.setProperty("accent", True)
-        self.add_graph_button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.add_graph_button.clicked.connect(self.add_graph_panel)
-        self._tabs.setCornerWidget(self.add_graph_button, Qt.Corner.TopRightCorner)
-        debug_print("CustomGraphTab._build_ui add graph button moved to tab corner")
+        self._tabs.tabBarClicked.connect(self._on_tab_bar_clicked)
+        self._creating_tab = True
+        self._tabs.addTab(self._plus_tab, "+")
+        self._creating_tab = False
+        self._tabs.setTabToolTip(0, "Add graph tab")
         root.addWidget(self._tabs, 1)
         debug_print("CustomGraphTab._build_ui complete")
 
@@ -149,9 +178,25 @@ class CustomGraphTab(QWidget):
             debug_print("CustomGraphTab._remove_panel panel missing")
             return
         self._tabs.removeTab(index)
-        self._refresh_header_states()
         panel.deleteLater()
+        if self._graph_tab_count() == 0:
+            self.add_graph_panel()
+        else:
+            self._refresh_header_states()
         debug_print("CustomGraphTab._remove_panel complete")
+
+    def _plus_index(self) -> int:
+        return self._tabs.indexOf(self._plus_tab)
+
+    def _graph_tab_count(self) -> int:
+        return max(0, self._tabs.count() - 1)
+
+    def _on_tab_bar_clicked(self, index: int) -> None:
+        debug_print(f"CustomGraphTab._on_tab_bar_clicked index={index}")
+        if index == self._plus_index():
+            self._activating_plus_tab = True
+            self.add_graph_panel()
+            self._activating_plus_tab = False
 
     def _refresh_header_states(self, current_index: int | None = None) -> None:
         debug_print("CustomGraphTab._refresh_header_states called")

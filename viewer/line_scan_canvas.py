@@ -10,6 +10,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from viewer.plot_style import PlotStyle
 
 _W = 600
 _H = 300
@@ -63,7 +64,7 @@ class LineScanCanvas(QWidget):
                 text="No line scan data",
                 xref="paper", yref="paper",
                 x=0.5, y=0.5, showarrow=False,
-                font=dict(size=14, color="#6a7e9f"),
+                font=PlotStyle.empty_annotation_font(),
             )
         for index, item in enumerate(series):
             name = item.get("name", "")
@@ -74,7 +75,7 @@ class LineScanCanvas(QWidget):
                 y=np.asarray(item.get("y", [])).tolist(),
                 mode="lines",
                 name=name,
-                line=dict(color=colors[index % len(colors)], width=2.5),
+                line=PlotStyle.trace_line(color=colors[index % len(colors)]),
                 hovertemplate=(
                     f"{x_label}=%{{x:.4f}}<br>"
                     f"{y_label}=%{{y:.4f}}<br>"
@@ -82,45 +83,22 @@ class LineScanCanvas(QWidget):
                 ),
                 showlegend=bool(name),
             ))
-        _pub_axis = dict(
-            showgrid=show_grid,
-            gridcolor="rgba(128, 128, 128, 0.2)",
-            zeroline=False,
-            showline=True,
-            linecolor="black",
-            linewidth=2.5,
-            mirror="allticks",
-            ticks="inside",
-            ticklen=10,
-            tickwidth=2.5,
-            tickcolor="black",
-            minor=dict(ticks="inside", ticklen=6, tickwidth=1.5, tickcolor="black", showgrid=False),
-        )
         figure.update_layout(
             width=self._canvas_width,
             height=_H,
             margin=dict(l=80, r=20, t=30, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
-            font=dict(color="#102a52", size=14, family="Arial"),
-            legend=dict(
+            font=PlotStyle.layout_font(),
+            legend=PlotStyle.panel_legend(
                 orientation="h",
                 yanchor="bottom",
                 y=1.02,
                 xanchor="right",
                 x=1.0,
-                font=dict(size=13, family="Arial"),
             ),
-            xaxis=dict(
-                title=dict(text=x_label, font=dict(size=20, family="Arial", color="#102a52")),
-                tickfont=dict(size=16, family="Arial", color="#102a52"),
-                **_pub_axis,
-            ),
-            yaxis=dict(
-                title=dict(text=y_label, font=dict(size=20, family="Arial", color="#102a52")),
-                tickfont=dict(size=16, family="Arial", color="#102a52"),
-                **_pub_axis,
-            ),
+            xaxis=PlotStyle.panel_axis(x_label, show_grid),
+            yaxis=PlotStyle.panel_axis(y_label, show_grid),
         )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("LineScanCanvas.render_lines complete")

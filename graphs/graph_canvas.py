@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
 from data.text_sources import GenericTextDataSource
+from viewer.plot_style import PlotStyle
 
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 _GRAPH_WIDTH = 800
@@ -56,6 +57,23 @@ class GraphCanvas(QWidget):
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print(f"GraphCanvas.render complete traces={self._last_trace_count}")
 
+    def download_png(self, filename: str = "custom_graph") -> None:
+        debug_print(f"GraphCanvas.download_png filename={filename}")
+        safe_name = "".join(
+            char if char.isalnum() or char in ("-", "_") else "_"
+            for char in filename
+        ).strip("_") or "custom_graph"
+        script = (
+            "var gd = document.getElementById('graph');"
+            "if (gd && window.Plotly) {"
+            "Plotly.downloadImage(gd, {"
+            f"format: 'png', filename: {safe_name!r}, "
+            f"width: {self._graph_width}, height: {_GRAPH_HEIGHT}, scale: 2"
+            "});"
+            "}"
+        )
+        self._web_view.page().runJavaScript(script)
+
     def _build_figure(self, state: dict[str, Any]) -> go.Figure:
         debug_print("GraphCanvas._build_figure called")
         files = state.get("files", [])
@@ -66,7 +84,8 @@ class GraphCanvas(QWidget):
         line_style = state.get("line_style", "solid")
         show_grid = bool(state.get("show_grid", True))
         show_legend = bool(state.get("show_legend", True))
-        colors = ["#111111", "#d62728", "#2ca02c", "#1f77b4", "#9467bd", "#ff7f0e"]
+        legend_position = state.get("legend_position", "top-left")
+        right_margin = 220 if legend_position == "right-outside" else 82
         figure = go.Figure()
         self._last_trace_count = 0
 
@@ -130,16 +149,17 @@ class GraphCanvas(QWidget):
                 )
                 debug_print(f"GraphCanvas._build_figure raw_y_sample={raw_y[:3].tolist()}")
                 debug_print(f"GraphCanvas._build_figure converted_y_sample={converted_y[:3].tolist()}")
-                figure.add_trace(
-                    go.Scatter(
-                        x=x_data.tolist(),
-                        y=converted_y.tolist(),
-                        mode=trace_mode,
-                        name=legend_label,
-                        yaxis=yaxis,
-                        line=dict(color=colors[color_index % len(colors)], dash=line_style, width=2),
-                        marker=dict(size=6),
-                    )
+                color = settings.get("color") or PlotStyle.series_color(color_index)
+                self._add_series_traces(
+                    figure,
+                    x_data=x_data,
+                    y_data=converted_y,
+                    trace_mode=trace_mode,
+                    line_style=line_style,
+                    legend_label=legend_label,
+                    yaxis=yaxis,
+                    color=color,
+                    series_index=color_index,
                 )
                 color_index += 1
                 self._last_trace_count += 1
@@ -148,14 +168,14 @@ class GraphCanvas(QWidget):
         figure.update_layout(
             height=_GRAPH_HEIGHT,
             width=self._graph_width,
-            margin=dict(l=82, r=82, t=26, b=70),
+            margin=dict(l=82, r=right_margin, t=26, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
-            font=dict(color="#102a52", size=16),
+            font=PlotStyle.layout_font(),
             showlegend=show_legend,
-            legend=self._legend_config(state.get("legend_position", "top-left")),
+            legend=self._legend_config(legend_position),
             xaxis=dict(
-                title=dict(text=state.get("x_axis_title") or x_axis_column or "Time", font=dict(color="#102a52", size=20)),
+                title=dict(text=state.get("x_axis_title") or x_axis_column or "Time", font=PlotStyle.graph_axis_title_font()),
                 showgrid=show_grid,
                 showline=True,
                 linecolor="#111111",
@@ -163,10 +183,10 @@ class GraphCanvas(QWidget):
                 mirror=True,
                 ticks="inside",
                 ticklen=8,
-                tickfont=dict(color="#102a52", size=16),
+                tickfont=PlotStyle.graph_tick_font(),
             ),
             yaxis=dict(
-                title=dict(text=state.get("yaxis1_title") or state.get("y_axis_title") or "Y1", font=dict(color="#102a52", size=20)),
+                title=dict(text=state.get("yaxis1_title") or state.get("y_axis_title") or "Y1", font=PlotStyle.graph_axis_title_font()),
                 showgrid=show_grid,
                 showline=True,
                 linecolor="#111111",
@@ -174,10 +194,10 @@ class GraphCanvas(QWidget):
                 mirror=True,
                 ticks="inside",
                 ticklen=8,
-                tickfont=dict(color="#102a52", size=16),
+                tickfont=PlotStyle.graph_tick_font(),
             ),
             yaxis2=dict(
-                title=dict(text=state.get("yaxis2_title") or "Y2", font=dict(color="#102a52", size=20)),
+                title=dict(text=state.get("yaxis2_title") or "Y2", font=PlotStyle.graph_axis_title_font()),
                 overlaying="y",
                 side="right",
                 showgrid=False,
@@ -187,14 +207,68 @@ class GraphCanvas(QWidget):
                 mirror=True,
                 ticks="inside",
                 ticklen=8,
-                tickfont=dict(color="#102a52", size=16),
+                tickfont=PlotStyle.graph_tick_font(),
             ),
         )
         self._apply_publication_axis_styling(figure, state)
         if self._last_trace_count == 0:
             debug_print("GraphCanvas._build_figure no traces after processing")
-            figure.add_annotation(text="Select Y columns to display the graph", x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+            figure.add_annotation(
+                text="Select Y columns to display the graph",
+                x=0.5,
+                y=0.5,
+                xref="paper",
+                yref="paper",
+                showarrow=False,
+                font=PlotStyle.empty_annotation_font(),
+            )
         return figure
+
+    def _add_series_traces(
+        self,
+        figure: go.Figure,
+        *,
+        x_data: np.ndarray,
+        y_data: np.ndarray,
+        trace_mode: str,
+        line_style: str,
+        legend_label: str,
+        yaxis: str,
+        color: str,
+        series_index: int,
+    ) -> None:
+        debug_print(f"GraphCanvas._add_series_traces mode={trace_mode}")
+        x_values = np.asarray(x_data).tolist()
+        y_values = np.asarray(y_data).tolist()
+        if trace_mode == "lines+markers":
+            figure.add_trace(
+                go.Scatter(
+                    x=x_values,
+                    y=y_values,
+                    mode="lines+markers",
+                    name=legend_label,
+                    yaxis=yaxis,
+                    line=PlotStyle.trace_line(color=color, dash=line_style),
+                    marker=PlotStyle.marker_style(series_index, color=color),
+                )
+            )
+            return
+        marker_indices = (
+            PlotStyle.marker_sample_indices(len(x_values))
+            if trace_mode == "markers"
+            else list(range(len(x_values)))
+        )
+        figure.add_trace(
+            go.Scatter(
+                x=[x_values[index] for index in marker_indices],
+                y=[y_values[index] for index in marker_indices],
+                mode=trace_mode,
+                name=legend_label,
+                yaxis=yaxis,
+                line=PlotStyle.trace_line(color=color, dash=line_style),
+                marker=PlotStyle.marker_style(series_index, color=color),
+            )
+        )
 
     def _apply_publication_axis_styling(self, figure: go.Figure, state: dict[str, Any]) -> go.Figure:
         debug_print("GraphCanvas._apply_publication_axis_styling start")
@@ -228,27 +302,7 @@ class GraphCanvas(QWidget):
 
     def _publication_axis_config(self, title: str, show_grid: bool) -> dict[str, Any]:
         debug_print(f"GraphCanvas._publication_axis_config title={title} show_grid={show_grid}")
-        config = dict(
-            title=dict(text=title, font=dict(size=24, family="Arial")),
-            tickfont=dict(size=22, family="Arial"),
-            showgrid=show_grid,
-            gridcolor="rgba(128, 128, 128, 0.2)",
-            mirror="allticks",
-            ticks="inside",
-            ticklen=10,
-            tickwidth=2.5,
-            tickcolor="black",
-            minor=dict(
-                ticks="inside",
-                ticklen=6,
-                tickwidth=1.5,
-                tickcolor="black",
-                showgrid=False,
-            ),
-            linecolor="black",
-            linewidth=2.5,
-            showline=True,
-        )
+        config = PlotStyle.graph_axis(title, show_grid)
         debug_print("GraphCanvas._publication_axis_config complete")
         return config
 
@@ -332,20 +386,29 @@ class GraphCanvas(QWidget):
             "top-right": dict(x=0.98, y=0.98, xanchor="right", yanchor="top"),
             "bottom-left": dict(x=0.02, y=0.02, xanchor="left", yanchor="bottom"),
             "bottom-right": dict(x=0.98, y=0.02, xanchor="right", yanchor="bottom"),
+            "right-outside": dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
         }
-        return configs.get(position, configs["top-left"])
+        return PlotStyle.graph_legend(**configs.get(position, configs["top-left"]))
 
     def _empty_figure(self, message: str) -> go.Figure:
         debug_print(f"GraphCanvas._empty_figure message={message}")
         figure = go.Figure()
-        figure.add_annotation(text=message, x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False)
+        figure.add_annotation(
+            text=message,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            showarrow=False,
+            font=PlotStyle.empty_annotation_font(),
+        )
         figure.update_layout(
             width=self._graph_width,
             height=_GRAPH_HEIGHT,
             margin=dict(l=82, r=82, t=26, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
-            font=dict(color="#102a52", size=16),
+            font=PlotStyle.layout_font(),
         )
         return figure
 

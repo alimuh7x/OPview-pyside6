@@ -85,10 +85,36 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertIsInstance(first_control_card.layout(), QHBoxLayout)
         self.assertIsInstance(second_control_card.layout(), QHBoxLayout)
 
+    def test_multiview_tab_and_panel_attach_to_upper_tabs(self):
+        from multi_view.multi_view_tab import MultiViewTab
+
+        tab = MultiViewTab()
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        margins = panel.layout().contentsMargins()
+
+        self.assertEqual(tab.layout().spacing(), 0)
+        self.assertEqual(margins.left(), 0)
+        self.assertEqual(margins.top(), 0)
+        self.assertEqual(margins.right(), 8)
+        self.assertEqual(margins.bottom(), 8)
+
     def test_analysis_tools_use_one_visual_row(self):
         panel = MultiViewPanel({"label": "demo", "available_projects": []})
 
         self.assertIsInstance(panel.analysis_card.layout(), QHBoxLayout)
+
+    def test_full_scale_is_off_by_default(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertFalse(panel.full_scale.isChecked())
+
+    def test_interfaces_overlay_is_last_in_third_control_row(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+        control_card = panel.layout().itemAt(1).widget()
+        third_row = control_card.layout().itemAt(1).layout()
+
+        self.assertIs(third_row.itemAt(third_row.count() - 1).widget(), panel.interfaces_on)
 
     def test_selected_scalar_def_falls_back_to_first_scalar(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
@@ -111,6 +137,36 @@ class MultiViewImprovementTests(unittest.TestCase):
 
         self.assertEqual(scale, 1e-9)
         self.assertEqual(label, "Stress (GPa)")
+
+    def test_raw_display_params_do_not_auto_append_config_units(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.colorbar_label_edit = _LineEditStub("")
+        panel.unit_scale_combo = _ComboStub((1.0, ""))
+
+        scale, label = MultiViewPanel._get_display_params(panel, "CRSS 0", "MPa")
+
+        self.assertEqual(scale, 1.0)
+        self.assertEqual(label, "CRSS 0")
+
+    def test_multiview_scalar_defs_are_raw_by_default(self):
+        dataset_info = {
+            "available_projects": [
+                {
+                    "dataset_config": {
+                        "scale": 1e-6,
+                        "units": "MPa",
+                        "scalars": [
+                            {"label": "CRSS 0", "array": "CRSS_0_0", "scale": 1e-6, "units": "MPa"}
+                        ],
+                    }
+                }
+            ]
+        }
+
+        scalar_defs = MultiViewPanel._build_scalar_defs(dataset_info)
+
+        self.assertEqual(scalar_defs[0]["scale"], 1.0)
+        self.assertIsNone(scalar_defs[0]["units"])
 
     def test_nearest_grid_value_uses_clicked_coordinates(self):
         x_grid = np.array([[0.0, 1.0], [0.0, 1.0]])
@@ -156,9 +212,49 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertEqual(panel._click_count, 0)
         self.assertIsNone(panel._first_click_value)
         self.assertEqual(panel._last_selected_range, (2.0, 8.0))
-        self.assertFalse(panel.full_scale.isChecked())
+        self.assertTrue(panel.full_scale.isChecked())
         self.assertEqual(panel.range_min.value(), 2.0)
         self.assertEqual(panel.range_max.value(), 8.0)
+        self.assertEqual(panel._render_count, 1)
+
+    def test_full_scale_spin_edit_keeps_full_scale_enabled(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.full_scale = _ToggleStub(True)
+        panel.range_min = _SpinStub(2.0)
+        panel.range_max = _SpinStub(8.0)
+        panel._range_initialized = False
+        panel._render_count = 0
+
+        def render_all():
+            panel._render_count += 1
+
+        panel._render_all = render_all
+
+        MultiViewPanel._on_range_spin_changed(panel)
+
+        self.assertTrue(panel.full_scale.isChecked())
+        self.assertTrue(panel._range_initialized)
+        self.assertEqual(panel._render_count, 1)
+
+    def test_full_scale_slider_edit_keeps_full_scale_enabled(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.full_scale = _ToggleStub(True)
+        panel.range_min = _SpinStub()
+        panel.range_max = _SpinStub()
+        panel._range_initialized = False
+        panel._render_count = 0
+
+        def render_all():
+            panel._render_count += 1
+
+        panel._render_all = render_all
+
+        MultiViewPanel._on_slider_changed(panel, 3.0, 7.0)
+
+        self.assertTrue(panel.full_scale.isChecked())
+        self.assertTrue(panel._range_initialized)
+        self.assertEqual(panel.range_min.value(), 3.0)
+        self.assertEqual(panel.range_max.value(), 7.0)
         self.assertEqual(panel._render_count, 1)
 
     def test_range_reset_enables_full_scale_and_rerenders(self):
@@ -327,8 +423,8 @@ class _ToggleStub:
 
 
 class _SpinStub:
-    def __init__(self):
-        self._value = 0.0
+    def __init__(self, value=0.0):
+        self._value = value
         self.blocked = False
 
     def blockSignals(self, blocked):

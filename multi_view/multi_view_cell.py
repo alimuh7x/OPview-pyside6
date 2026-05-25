@@ -24,6 +24,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from viewer.colorscale import cmap_to_plotly_scale
 from viewer.heatmap_canvas import _CANVAS_HEIGHT, _CANVAS_WIDTH
+from viewer.heatmap_orientation import Heatmap2DOrientation
 from app.debug import debug_print
 
 _ASSETS     = Path(__file__).resolve().parent.parent / "assets"
@@ -110,6 +111,9 @@ class MultiViewHeader(QWidget):
     def legend_name(self) -> str:
         return self._name_edit.text().strip() or Path(self.file_path).name
 
+    def set_cell_width(self, width: int) -> None:
+        self.setFixedWidth(width)
+
     def _on_name_edited(self) -> None:
         self.legend_name_changed.emit(self.file_path, self.legend_name())
 
@@ -144,6 +148,10 @@ class MultiViewCell(QWidget):
             self._base_url,
         )
 
+    def set_cell_width(self, width: int) -> None:
+        self._web.setFixedSize(width, _CANVAS_HEIGHT)
+        self.setFixedSize(width, _CANVAS_HEIGHT)
+
     def render(self, x_grid, y_grid, z_grid, *, vmin: float, vmax: float,
                cmap, overlay_grid=None, line_overlay=None) -> None:
         debug_print(f"MultiViewCell.render start file={self.file_path}")
@@ -151,8 +159,7 @@ class MultiViewCell(QWidget):
         debug_print(f"MultiViewCell colorscale stops={len(colorscale)}")
         rows, cols  = np.asarray(z_grid).shape[:2]
         debug_print(f"MultiViewCell grid shape rows={rows} cols={cols}")
-        x_vals = np.linspace(float(np.nanmin(x_grid)), float(np.nanmax(x_grid)), cols)
-        y_vals = np.linspace(float(np.nanmin(y_grid)), float(np.nanmax(y_grid)), rows)
+        x_vals, y_vals = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
         debug_print(f"MultiViewCell x range={x_vals[0]}..{x_vals[-1]}")
         debug_print(f"MultiViewCell y range={y_vals[0]}..{y_vals[-1]}")
 
@@ -168,9 +175,12 @@ class MultiViewCell(QWidget):
         ))
         if overlay_grid is not None:
             debug_print("MultiViewCell overlay_grid received")
-            overlay_x = np.asarray(overlay_grid["x"])[0]
-            overlay_y = np.asarray(overlay_grid["y"])[:, 0]
             overlay_z = np.asarray(overlay_grid["z"])
+            overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
+                overlay_grid["x"],
+                overlay_grid["y"],
+                overlay_z,
+            )
             overlay_mask = self._build_overlay_mask(overlay_z)
             debug_print(f"MultiViewCell overlay contour x count={len(overlay_x)}")
             debug_print(f"MultiViewCell overlay contour y count={len(overlay_y)}")
@@ -212,7 +222,7 @@ class MultiViewCell(QWidget):
             debug_print("MultiViewCell no line overlay")
         debug_print("MultiViewCell updating layout")
         figure.update_layout(
-            width=_CELL_W, height=_CANVAS_HEIGHT,
+            width=self.width(), height=_CANVAS_HEIGHT,
             margin=dict(l=0, r=0, t=0, b=0),
             paper_bgcolor="white", plot_bgcolor="white",
         )

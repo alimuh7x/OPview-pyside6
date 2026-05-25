@@ -2,13 +2,12 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, QSize, Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -20,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from app.debug import debug_print
 from app.menu_bar import AppMenuBar
+from app.resources import APP_LOGO_PATH, DOCUMENTATION_PATH
 from graphs.tab_widget import CustomGraphTab
 from multi_view.multi_view_tab import MultiViewTab
 from sidebar.sidebar_widget import SidebarWidget
@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
     def _build_window(self) -> None:
         debug_print("MainWindow._build_window called")
         self.setWindowTitle("OPview PySide6")
+        self.setWindowIcon(QIcon(str(APP_LOGO_PATH)))
         self.setMinimumWidth(800)
         debug_print("MainWindow minimum width set to 800")
         self.resize(1400, 900)
@@ -148,14 +149,14 @@ class MainWindow(QMainWindow):
         self.header_bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         header_bar_layout = QHBoxLayout(self.header_bar)
         header_bar_layout.setContentsMargins(8, 0, 8, 0)
-        header_bar_layout.setSpacing(0)
+        header_bar_layout.setSpacing(8)
         self.sidebar_toggle_button = QPushButton()
         debug_print("MainWindow created sidebar toggle button")
         self.sidebar_toggle_button.setObjectName("headerSidebarToggleButton")
         debug_print("MainWindow assigned object name to sidebar toggle button")
         self.sidebar_toggle_button.setCursor(Qt.CursorShape.PointingHandCursor)
         debug_print("MainWindow set sidebar toggle button cursor")
-        self.sidebar_toggle_button.setIconSize(QSize(20, 20))
+        self.sidebar_toggle_button.setIconSize(QSize(28, 28))
         debug_print("MainWindow set sidebar toggle button icon size")
         self._update_sidebar_toggle_button(True)
         debug_print("MainWindow initialised sidebar toggle button state")
@@ -167,9 +168,23 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow added sidebar toggle button before tabs")
         header_bar_layout.addWidget(self.tab_widget, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom)
         header_bar_layout.addStretch(1)
+        self.documentation_button = QPushButton("Documentation")
+        self.documentation_button.setObjectName("headerDocButton")
+        self.documentation_button.setProperty("accent", True)
+        self.documentation_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.documentation_button.clicked.connect(self._open_documentation)
+        header_bar_layout.addWidget(
+            self.documentation_button,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
         header_layout.addWidget(self.header_bar)
         debug_print("MainWindow header created")
         return header_layout
+
+    def _open_documentation(self) -> None:
+        debug_print("MainWindow._open_documentation called")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(DOCUMENTATION_PATH)))
 
     def _connect_signals(self) -> None:
         debug_print("MainWindow._connect_signals called")
@@ -185,6 +200,8 @@ class MainWindow(QMainWindow):
         debug_print("Connected sidebar projects_changed to SingleViewTab.set_projects")
         self.sidebar_widget.projects_changed.connect(self.custom_graph_tab.set_projects)
         debug_print("Connected sidebar projects_changed to CustomGraphTab.set_projects")
+        self.sidebar_widget.custom_graph_project_scope_changed.connect(self.custom_graph_tab.set_selected_project_names)
+        debug_print("Connected sidebar custom_graph_project_scope_changed")
         self.sidebar_widget.projects_changed.connect(self._on_projects_changed)
         debug_print("Connected sidebar projects_changed to _on_projects_changed")
         self.tab_widget.currentChanged.connect(self._on_main_tab_changed)
@@ -350,7 +367,7 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow._force_full_rescan called")
         assert self.sidebar_widget is not None
         if self.sidebar_widget.mode() == "custom_graph":
-            self.sidebar_widget._refresh_text_file_list()
+            self.sidebar_widget._emit_custom_graph_project_scope()
         else:
             self.sidebar_widget._refresh_dataset_combo()
         for panel in self._iter_panels():
@@ -406,6 +423,28 @@ class MainWindow(QMainWindow):
         """Open a folder dialog and load all VTK files directly from it."""
         debug_print("MainWindow._on_add_project_folder called")
         assert self.sidebar_widget is not None
+        if self.sidebar_widget.mode() == "custom_graph":
+            last = self._settings.value("last_text_folder", "")
+            folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing Text Data Files", last)
+            if not folder:
+                return
+            self._settings.setValue("last_text_folder", folder)
+            text_folder = Path(folder)
+            project_name = f"[Folder] {text_folder.name}"
+            info = {
+                "path"               : text_folder,
+                "has_vtk"            : False,
+                "has_textdata"       : True,
+                "vtk_path"           : None,
+                "textdata_path"      : text_folder,
+                "vtk_file_count"     : 0,
+                "textdata_file_count": -1,
+                "is_subdirectory"    : False,
+                "parent_folder"      : None,
+            }
+            self.sidebar_widget.add_manual_project(project_name, info)
+            debug_print(f"MainWindow added text folder: {text_folder}")
+            return
         last = self._settings.value("last_vtk_folder", "")
         folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing VTK Files", last)
         if not folder:

@@ -33,7 +33,7 @@ QAbstractItemView {{
     border: 1px solid #ced8e8;
 }}
 QWidget#headerBar {{
-    background: #0d2b55;
+    background: #252526;
     border: none;
 }}
 QLabel#brandBadge {{
@@ -58,18 +58,30 @@ QLabel#brandSubtitle {{
     font-size: 14px;
 }}
 QPushButton#headerDocButton {{
+    background: #5f6062;
+    color: #ffffff;
+    border: 1px solid #77787a;
     min-height: 32px;
     padding: 0 18px;
     border-radius: 18px;
+    font-weight: 700;
+}}
+QPushButton#headerDocButton:hover {{
+    background: #6f7072;
+    border-color: #8a8b8d;
+}}
+QPushButton#headerDocButton:pressed {{
+    background: #4c4d4f;
+    border-color: #666769;
 }}
 QPushButton#headerSidebarToggleButton {{
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
-    min-width: 34px;
-    max-width: 34px;
-    min-height: 34px;
-    max-height: 34px;
+    border-radius: 6px;
+    min-width: 42px;
+    max-width: 42px;
+    min-height: 42px;
+    max-height: 42px;
     padding: 0px;
     margin: 0px 8px 0px 0px;
 }}
@@ -81,7 +93,7 @@ QPushButton#headerSidebarToggleButton:pressed {{
     background: rgba(255, 255, 255, 0.18);
 }}
 QWidget#sidebarShell {{
-    background: #0d2b55;
+    background: #252526;
     border: none;
 }}
 QWidget#sidebarShell * {{
@@ -92,11 +104,11 @@ QWidget#sidebarShell QGroupBox {{
     color: #ffffff;
 }}
 QGroupBox#sidebarCard {{
-    background: #0d2b55;
+    background: #252526;
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
-    margin-top: 12px;
-    padding-top: 16px;
+    margin-top: 8px;
+    padding-top: 10px;
     font-weight: 800;
     letter-spacing: 2px;
     color: #d8e2f2;
@@ -124,9 +136,20 @@ QComboBox#sidebarCombo::drop-down {{
     background: transparent;
 }}
 QComboBox#sidebarCombo QAbstractItemView {{
-    background: #173763;
+    background: #252526;
     color: #ffffff;
-    border: 1px solid rgba(255, 255, 255, 0.18);
+    border: 1px solid #3c3c3c;
+    selection-background-color: #3c3c3c;
+    selection-color: #ffffff;
+}}
+QComboBox#sidebarCombo QAbstractItemView::item {{
+    background: #252526;
+    color: #ffffff;
+}}
+QComboBox#sidebarCombo QAbstractItemView::item:hover,
+QComboBox#sidebarCombo QAbstractItemView::item:selected {{
+    background: #3c3c3c;
+    color: #ffffff;
 }}
 QLineEdit#sidebarLineEdit {{
     background: rgba(255, 255, 255, 0.08);
@@ -140,24 +163,28 @@ QLineEdit#sidebarLineEdit::placeholder {{
     color: #c9d5e7;
 }}
 QListWidget#projectList,
+QListWidget#datasetList,
 QListWidget#textFileList {{
     background: rgba(255, 255, 255, 0.06);
     color: #ffffff;
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 10px;
-    padding: 4px;
+    padding: 2px;
     outline: none;
 }}
 QListWidget#projectList::item,
+QListWidget#datasetList::item,
 QListWidget#textFileList::item {{
-    padding: 5px 8px;
+    padding: 3px 6px;
     border-radius: 6px;
 }}
 QListWidget#projectList::item:hover,
+QListWidget#datasetList::item:hover,
 QListWidget#textFileList::item:hover {{
     background: rgba(255, 255, 255, 0.08);
 }}
 QListWidget#projectList::item:selected,
+QListWidget#datasetList::item:selected,
 QListWidget#textFileList::item:selected {{
     background: rgba(255, 255, 255, 0.12);
     color: #ffffff;
@@ -344,7 +371,26 @@ QPushButton[subtle="true"] {{
     border-radius: 10px;
     padding: 6px 12px;
     font-weight: 700;
-}}QSlider::groove:horizontal {{
+}}
+QPushButton#playbackTransportButton {{
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 0px;
+}}
+QPushButton#playbackTransportButton:hover {{
+    background: rgba(16, 42, 82, 0.08);
+    border-color: rgba(16, 42, 82, 0.12);
+}}
+QPushButton#playbackTransportButton:pressed {{
+    background: rgba(16, 42, 82, 0.14);
+    border-color: rgba(16, 42, 82, 0.18);
+}}
+QPushButton#playbackTransportButton:disabled {{
+    background: transparent;
+    border-color: transparent;
+}}
+QSlider::groove:horizontal {{
     height: 6px;
     background: #d8dde6;
     border-radius: 3px;
@@ -584,7 +630,7 @@ QPushButton#panelTabCloseButton:pressed {{
     background: rgba(197, 6, 35, 0.18);
 }}
 QMenuBar {{
-    background: #0d2b55;
+    background: #252526;
     color: #ffffff;
     font-size: 15px;
     padding: 2px 4px;

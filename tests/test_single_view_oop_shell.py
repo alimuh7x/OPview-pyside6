@@ -4,7 +4,7 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QSizePolicy, QWidget
 
 from app.application_bootstrap import ApplicationBootstrap
 from app.main_window import MainWindow
@@ -73,6 +73,8 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertEqual(window.tab_widget.objectName(), "mainTabs")
         self.assertEqual(window.sidebar_widget.objectName(), "sidebarShell")
         self.assertEqual(window.documentation_button.property("accent"), True)
+        self.assertIsNone(window.header_bar.findChild(QLabel, "brandLogo"))
+        self.assertFalse(window.windowIcon().isNull())
 
     def test_main_tabs_live_inside_header_bar(self):
         window = MainWindow()
@@ -88,6 +90,7 @@ class SingleViewOOPShellTests(unittest.TestCase):
         header_layout = window.header_bar.layout()
 
         self.assertIs(toggle_button.parentWidget(), window.header_bar)
+        self.assertEqual(header_layout.indexOf(toggle_button), 0)
         self.assertLess(header_layout.indexOf(toggle_button), header_layout.indexOf(window.tab_widget))
         self.assertFalse(toggle_button.icon().isNull())
         self.assertTrue(window.sidebar_widget.isVisible())
@@ -123,6 +126,37 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertEqual(tab.panel_count(), 1)
         self.assertIsInstance(panel, PanelWidget)
+
+    def test_single_view_tab_and_panel_attach_to_upper_tabs(self):
+        tab = SingleViewTab()
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        margins = panel.layout().contentsMargins()
+
+        self.assertEqual(tab.layout().spacing(), 0)
+        self.assertEqual(margins.left(), 0)
+        self.assertEqual(margins.top(), 0)
+        self.assertEqual(margins.right(), 8)
+        self.assertEqual(margins.bottom(), 8)
+
+    def test_panel_analysis_card_has_separate_line_scan_and_histogram_headings(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        section_titles = [
+            label.text()
+            for label in panel.findChildren(QLabel, "sectionTitle")
+        ]
+
+        self.assertIn("Analysis", section_titles)
+        self.assertIn("Line Scan", section_titles)
+        self.assertIn("Histogram", section_titles)
+        self.assertNotIn("Line Scan & Histogram Analysis", section_titles)
+
+    def test_panel_show_line_defaults_off(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        self.assertFalse(panel.show_line_check.isChecked())
+        self.assertFalse(panel.controller.state.line_overlay_visible)
 
     def test_single_view_tab_uses_custom_tab_header_with_close_button(self):
         tab = SingleViewTab()
@@ -380,6 +414,10 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIs(panel.left_column_layout.itemAt(0).widget(), panel.controls_widget)
         self.assertIs(panel.left_column_layout.itemAt(1).widget(), panel.heatmap_card)
         self.assertIs(panel.right_column_layout.itemAt(0).widget(), panel.analysis_card)
+        self.assertEqual(
+            panel.analysis_card.sizePolicy().verticalPolicy(),
+            QSizePolicy.Policy.Expanding,
+        )
 
     def test_sidebar_buttons_and_cards_expose_visual_properties(self):
         window = MainWindow()

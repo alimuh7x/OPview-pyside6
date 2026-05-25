@@ -147,11 +147,23 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
-        self.rotate_check = ToggleSwitchWidget("Rotate", checked=False)
+
+        # ------------------------------------------------------------------------------------------------
+        # Rotation in single view
+        # ------------------------------------------------------------------------------------------------
+        self.rotation_combo = QComboBox()
+        self.rotation_combo.setObjectName("viewerCombo")
+        self._configure_compact_combo(self.rotation_combo, 8)
+        self.rotation_combo.addItem("0 deg", 0)
+        self.rotation_combo.addItem("90 deg", 90)
+        self.rotation_combo.addItem("180 deg", 180)
+        self.rotation_combo.addItem("270 deg", 270)
+        update_combo_popup_width(self.rotation_combo)
+
         palette_row_layout.addWidget(self.palette_combo, 1)
         palette_row_layout.addWidget(self.range_slider, 4)
         palette_row_layout.addWidget(self.full_scale_check)
-        palette_row_layout.addWidget(self.rotate_check)
+        palette_row_layout.addWidget(self.rotation_combo)
         layout.addWidget(self.palette_row)
         self._apply_layout_mode("wide", force=True)
         # ------------------------------------------------------------------------------------------------
@@ -295,6 +307,7 @@ class PanelControlsWidget(QWidget):
         self.click_mode_range_check.toggled.connect(lambda *_: self._emit_refresh_requested("click-mode"))
         self.palette_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("palette"))
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
+        self.rotation_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("rotation"))
         self.plot_type_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("plot-type"))
         debug_print("PanelControlsWidget signals connected")
 
@@ -313,6 +326,7 @@ class PanelControlsWidget(QWidget):
             self.range_min_spin,
             self.range_max_spin,
             self.palette_combo,
+            self.rotation_combo,
             self.range_slider,
             self.axis_combo,
             self.slice_slider,
@@ -447,6 +461,10 @@ class PanelControlsWidget(QWidget):
     def current_palette(self) -> str:
         debug_print("PanelControlsWidget.current_palette called")
         return self.palette_combo.currentData() or "aqua-fire"
+
+    def current_rotation_degrees(self) -> int:
+        debug_print("PanelControlsWidget.current_rotation_degrees called")
+        return int(self.rotation_combo.currentData() or 0)
 
     def current_range(self) -> tuple[float, float]:
         debug_print("PanelControlsWidget.current_range called")

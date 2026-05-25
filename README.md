@@ -1,14 +1,13 @@
-# VTK Previewer (PySide6)
+# OPView PySide6
 
-A desktop application for viewing VTK files using PySide6 and VTK.
+A desktop post-processing application for inspecting OpenPhase simulation output through heatmaps, side-by-side comparison, and custom text-data graphs.
 
 ## Features
 
-- Load and visualize VTK files (.vti, .vts, .vtu, .vtk)
-- Interactive 3D rendering with mouse controls
-- Display dataset information (type, points, cells, arrays)
-- Reset camera view
-- Clear scene functionality
+- Single View heatmaps with range controls, rotation, overlays, line scans, and histogram analysis.
+- Multi View comparison across selected VTK files with shared orientation/range controls.
+- Custom Graph panels for plotting `TextData` files with per-series colors, conversions, Y-axis routing, markers, and legend placement.
+- Local in-app documentation from **Help > Documentation** or the header **Documentation** button.
 
 ## Setup
 
@@ -38,16 +37,14 @@ deactivate
 - PySide6 (Qt for Python)
 - VTK (Visualization Toolkit)
 - NumPy
+- Plotly
 
 ## Usage
 
-1. Click "Load VTK File" to open a VTK file
-2. Use mouse to interact with the 3D view:
-   - Left click + drag: Rotate
-   - Middle click + drag: Pan
-   - Scroll: Zoom
-3. Click "Reset Camera" to reset the view
-4. Click "Clear Scene" to clear the current visualization
+1. Start the app with `python main.py`.
+2. Select or add a project in the sidebar.
+3. Choose **Single View**, **Multi View**, or **Custom Graph** from the top tabs.
+4. Use **Help > Documentation** for the complete local guide.
 
 ## Supported File Formats
 

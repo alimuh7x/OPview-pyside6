@@ -35,6 +35,7 @@ class MultiViewTab(QWidget):
         self._tabs.currentChanged.connect(self._refresh_header_states)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(9, 9, 9, 9)
+        layout.setSpacing(0)
         layout.addWidget(self._tabs)
 
     # ── Public API ────────────────────────────────────────────────────────────

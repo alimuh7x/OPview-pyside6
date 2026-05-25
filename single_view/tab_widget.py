@@ -37,6 +37,7 @@ class SingleViewTab(QWidget):
         self._panel_tabs.currentChanged.connect(self._refresh_tab_header_states)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(0)
         layout.addWidget(self._panel_tabs)
 
     def set_projects(self, projects: dict[str, dict]) -> None:

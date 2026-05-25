@@ -19,6 +19,9 @@ from PySide6.QtWidgets import (
 )
 
 _ASSETS = Path(__file__).parent.parent / "assets"
+_SIDEBAR_LIST_ROW_HEIGHT = 32
+_SIDEBAR_LIST_FRAME_PADDING = 8
+_DATASET_LIST_MIN_ROWS = 8
 
 from app.debug import debug_print
 from config.constants import ALLOWED_TEXTDATA_EXTENSIONS
@@ -33,6 +36,7 @@ class SidebarWidget(QWidget):
 
     add_panel_requested = Signal(dict)
     projects_changed = Signal(dict)
+    custom_graph_project_scope_changed = Signal(list)
     reload_requested = Signal()
     add_folder_requested = Signal()
     text_files_add_requested = Signal(list)
@@ -44,6 +48,10 @@ class SidebarWidget(QWidget):
         self._manual_projects: dict[str, dict] = {}
         self._dataset_registry: DatasetRegistry | None = None
         self._mode = "vtk"
+        self._project_check_state_by_mode: dict[str, dict[str, Qt.CheckState]] = {
+            "vtk": {},
+            "custom_graph": {},
+        }
         self._build_ui()
         self._connect_signals()
         debug_print("SidebarWidget.__init__ complete")
@@ -69,11 +77,14 @@ class SidebarWidget(QWidget):
 
         self.project_list = QListWidget()
         self.project_list.setObjectName("projectList")
-        self.project_list.setMaximumHeight(160)
+        self.project_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.project_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._resize_project_list()
         projects_layout.addWidget(self.project_list)
 
         btn_row = QHBoxLayout()
-        self.add_folder_button = QPushButton("+ Add Folder")
+        self.add_folder_button = QPushButton(QIcon(str(_ASSETS / "folder.png")), "Add Folder")
+        self.add_folder_button.setIconSize(QSize(22, 22))
         self.add_folder_button.setProperty("accent", True)
         btn_row.addWidget(self.add_folder_button)
         self.reload_projects_button = QPushButton("Reload")
@@ -87,11 +98,20 @@ class SidebarWidget(QWidget):
         self.panel_group.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         panel_layout = QVBoxLayout(self.panel_group)
+        self.dataset_filter = QLineEdit()
+        self.dataset_filter.setObjectName("sidebarLineEdit")
+        self.dataset_filter.setPlaceholderText("Filter data types")
+        panel_layout.addWidget(self.dataset_filter)
+        self.dataset_list = QListWidget()
+        self.dataset_list.setObjectName("datasetList")
+        self.dataset_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.dataset_list.setMinimumHeight(self._list_height_for_rows(_DATASET_LIST_MIN_ROWS))
+        panel_layout.addWidget(self.dataset_list)
         self.dataset_combo = QComboBox()
         self.dataset_combo.setObjectName("sidebarCombo")
         self.dataset_combo.addItem("Select a data type", None)
         update_combo_popup_width(self.dataset_combo)
-        panel_layout.addWidget(self.dataset_combo)
+        self.dataset_combo.hide()
         self.add_panel_button = QPushButton(
             QIcon(str(_ASSETS / "plus.png")), "Add Panel"
         )
@@ -137,7 +157,11 @@ class SidebarWidget(QWidget):
     def _connect_signals(self) -> None:
         debug_print("SidebarWidget._connect_signals called")
         self.add_panel_button.clicked.connect(self._emit_add_panel_request)
+        self.dataset_filter.textChanged.connect(self._apply_dataset_filter)
+        self.dataset_list.currentItemChanged.connect(self._sync_dataset_combo_to_list)
+        self.dataset_list.itemDoubleClicked.connect(lambda *_: self._emit_add_panel_request())
         self.project_list.itemChanged.connect(self._on_project_check_changed)
+        self.project_list.itemClicked.connect(self._toggle_project_item_from_row_click)
         self.reload_projects_button.clicked.connect(self.reload_from_cwd)
         self.add_folder_button.clicked.connect(self.add_folder_requested.emit)
         self.text_file_filter.textChanged.connect(self._refresh_text_file_list)
@@ -151,9 +175,10 @@ class SidebarWidget(QWidget):
 
     def set_mode(self, mode: str) -> None:
         debug_print(f"SidebarWidget.set_mode mode={mode}")
+        self._save_project_check_state()
         self._mode = "custom_graph" if mode == "custom_graph" else "vtk"
         self.panel_group.setVisible(self._mode != "custom_graph")
-        self.text_files_group.setVisible(self._mode == "custom_graph")
+        self.text_files_group.hide()
         self._populate_project_list()
         debug_print(f"SidebarWidget.set_mode complete mode={self._mode}")
 
@@ -187,7 +212,8 @@ class SidebarWidget(QWidget):
 
     def _emit_add_panel_request(self) -> None:
         debug_print("SidebarWidget._emit_add_panel_request called")
-        dataset_info = self.dataset_combo.currentData()
+        current_item = self.dataset_list.currentItem()
+        dataset_info = current_item.data(Qt.ItemDataRole.UserRole) if current_item else self.dataset_combo.currentData()
         debug_print(f"Current dataset_info present={dataset_info is not None}")
         if not dataset_info:
             debug_print("No dataset selected, aborting add panel emit")
@@ -195,10 +221,39 @@ class SidebarWidget(QWidget):
         self.add_panel_requested.emit(dataset_info)
         debug_print(f"SidebarWidget emitted add_panel_requested for {dataset_info.get('label')}")
 
+    def _apply_dataset_filter(self) -> None:
+        debug_print("SidebarWidget._apply_dataset_filter called")
+        filter_text = self.dataset_filter.text().strip().lower()
+        visible_count = 0
+        first_visible = None
+        for i in range(self.dataset_list.count()):
+            item = self.dataset_list.item(i)
+            haystack = f"{item.text()} {item.toolTip()}".lower()
+            hidden = bool(filter_text and filter_text not in haystack)
+            item.setHidden(hidden)
+            if not hidden:
+                visible_count += 1
+                if first_visible is None:
+                    first_visible = item
+        if first_visible is not None and (self.dataset_list.currentItem() is None or self.dataset_list.currentItem().isHidden()):
+            self.dataset_list.setCurrentItem(first_visible)
+        debug_print(f"SidebarWidget dataset visible count={visible_count}")
+
+    def _sync_dataset_combo_to_list(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None = None) -> None:
+        if current is None:
+            return
+        dataset_info = current.data(Qt.ItemDataRole.UserRole)
+        for i in range(self.dataset_combo.count()):
+            if self.dataset_combo.itemData(i) is dataset_info:
+                self.dataset_combo.setCurrentIndex(i)
+                return
+
     def _populate_project_list(self) -> None:
         debug_print("SidebarWidget._populate_project_list called")
+        self._save_project_check_state()
         self.project_list.blockSignals(True)
         self.project_list.clear()
+        mode_state = self._project_check_state_by_mode.setdefault(self._mode, {})
         for project_name, project_info in sorted(self._projects.items()):
             if self._mode == "custom_graph":
                 if not self._is_text_project(project_info):
@@ -211,21 +266,45 @@ class SidebarWidget(QWidget):
             item = QListWidgetItem(project_name)
             item.setData(Qt.ItemDataRole.UserRole, project_name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
+            item.setCheckState(mode_state.get(project_name, Qt.CheckState.Unchecked))
             self.project_list.addItem(item)
         self.project_list.blockSignals(False)
+        self._resize_project_list()
         debug_print(f"SidebarWidget project list count={self.project_list.count()}")
         if self._mode == "custom_graph":
-            self._refresh_text_file_list()
+            self._emit_custom_graph_project_scope()
         else:
             self._refresh_dataset_combo()
 
     def _on_project_check_changed(self, item: QListWidgetItem) -> None:
         debug_print(f"SidebarWidget project check changed: {item.text()} -> {item.checkState()}")
+        self._project_check_state_by_mode.setdefault(self._mode, {})[
+            item.data(Qt.ItemDataRole.UserRole)
+        ] = item.checkState()
         if self._mode == "custom_graph":
-            self._refresh_text_file_list()
+            self._emit_custom_graph_project_scope()
         else:
             self._refresh_dataset_combo()
+
+    def _toggle_project_item_from_row_click(self, item: QListWidgetItem) -> None:
+        if item is None:
+            return
+        current = item.checkState()
+        item.setCheckState(
+            Qt.CheckState.Unchecked
+            if current == Qt.CheckState.Checked
+            else Qt.CheckState.Checked
+        )
+
+    def _save_project_check_state(self) -> None:
+        if not hasattr(self, "project_list"):
+            return
+        mode_state = self._project_check_state_by_mode.setdefault(self._mode, {})
+        for i in range(self.project_list.count()):
+            item = self.project_list.item(i)
+            project_name = item.data(Qt.ItemDataRole.UserRole)
+            if project_name:
+                mode_state[project_name] = item.checkState()
 
     def _refresh_dataset_combo(self) -> None:
         """Rebuild dataset combo — one entry per unique dataset type across all checked projects."""
@@ -233,6 +312,7 @@ class SidebarWidget(QWidget):
         self.dataset_combo.blockSignals(True)
         self.dataset_combo.clear()
         self.dataset_combo.addItem("Select a data type", None)
+        self.dataset_list.clear()
 
         # Group by dataset_id so same dataset type from multiple folders merges into one entry
         dataset_groups: dict[str, dict] = {}
@@ -271,16 +351,33 @@ class SidebarWidget(QWidget):
         for group in dataset_groups.values():
             label = f"{group['module_label']}: {group['label']}"
             self.dataset_combo.addItem(label, group)
+            item = QListWidgetItem(label)
+            item.setToolTip(self._dataset_tooltip(group))
+            item.setData(Qt.ItemDataRole.UserRole, group)
+            self.dataset_list.addItem(item)
 
         total_datasets = len(dataset_groups)
         self.dataset_combo.blockSignals(False)
         update_combo_popup_width(self.dataset_combo)
+        if self.dataset_list.count() > 0:
+            self.dataset_list.setCurrentRow(0)
+        self.dataset_list.setMinimumHeight(self._list_height_for_rows(_DATASET_LIST_MIN_ROWS))
+        self._apply_dataset_filter()
 
         if total_datasets > 0:
             self.dataset_status_label.setText(f"{total_datasets} dataset(s) detected")
         else:
             self.dataset_status_label.setText("Check a project to load datasets")
         debug_print(f"SidebarWidget dataset combo rebuilt with {total_datasets} options")
+
+    def _dataset_tooltip(self, group: dict) -> str:
+        projects = [
+            project.get("project_name", "")
+            for project in group.get("available_projects", [])
+            if project.get("project_name")
+        ]
+        project_text = ", ".join(projects)
+        return f"{group.get('module_label', '')}: {group.get('label', '')}\n{project_text}".strip()
 
     def _is_text_project(self, project_info: dict) -> bool:
         debug_print("SidebarWidget._is_text_project called")
@@ -301,6 +398,13 @@ class SidebarWidget(QWidget):
         ]
         debug_print(f"SidebarWidget._checked_project_names names={names}")
         return names
+
+    def _emit_custom_graph_project_scope(self) -> None:
+        if self._mode != "custom_graph":
+            return
+        names = self._checked_project_names()
+        self.custom_graph_project_scope_changed.emit(names)
+        debug_print(f"SidebarWidget emitted custom_graph_project_scope_changed count={len(names)}")
 
     def _refresh_text_file_list(self) -> None:
         debug_print("SidebarWidget._refresh_text_file_list called")
@@ -362,3 +466,20 @@ class SidebarWidget(QWidget):
             1 for i in range(self.project_list.count())
             if self.project_list.item(i).checkState() == Qt.CheckState.Checked
         )
+
+    def _resize_project_list(self) -> None:
+        if not hasattr(self, "project_list"):
+            return
+        row_count = self.project_list.count()
+        if row_count <= 0:
+            height = self._list_height_for_rows(1)
+        else:
+            row_height = 0
+            for row in range(row_count):
+                row_height += max(_SIDEBAR_LIST_ROW_HEIGHT, self.project_list.sizeHintForRow(row))
+            height = row_height + _SIDEBAR_LIST_FRAME_PADDING
+        self.project_list.setMinimumHeight(height)
+        self.project_list.setMaximumHeight(height)
+
+    def _list_height_for_rows(self, rows: int) -> int:
+        return int(rows) * _SIDEBAR_LIST_ROW_HEIGHT + _SIDEBAR_LIST_FRAME_PADDING

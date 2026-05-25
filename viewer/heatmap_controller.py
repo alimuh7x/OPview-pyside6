@@ -13,6 +13,7 @@ from config.constants import DEFAULTS
 from utils.vtk_utils import get_reader
 from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
+from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.state import ViewerState, initial_state
 
 
@@ -55,6 +56,7 @@ class HeatmapController:
         self.reader = None
         self.scalar_defs: list[dict] = []
         self._last_grids = None
+        self._last_display_grids = None
         self._last_scaled_grid = None
         self._histogram_cache: dict | None = None
         self.state = ViewerState(
@@ -86,7 +88,6 @@ class HeatmapController:
         self.controls_widget.scalar_combo.currentIndexChanged.connect(self.refresh_view)
         self.histogram_bins_slider.valueChanged.connect(self.refresh_view)
         self.interfaces_check.toggled.connect(self.refresh_view)
-        self.controls_widget.rotate_check.toggled.connect(self._on_rotate_toggled)
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
         self.colorbar_label_edit.editingFinished.connect(self.refresh_view)
@@ -153,6 +154,7 @@ class HeatmapController:
         self.state.slice_index                = slice_index
         self.state.file_path                  = file_path
         self.state.palette                    = palette
+        self.state.rotation_degrees           = self.controls_widget.current_rotation_degrees()
         self.state.scale                      = scalar_def.get("scale", 1.0) or 1.0
         self.state.units                      = scalar_def.get("units")
         self.state.colorscale_mode            = "dynamic" if self.controls_widget.full_scale_enabled() else "normal"
@@ -160,6 +162,11 @@ class HeatmapController:
         self.state.line_scan_direction        = self.direction_combo.currentData() or "horizontal"
         self.state.interfaces_overlay_visible = self.interfaces_check.isChecked()
         self.state.click_mode                 = "linescan" if self.line_mode_check.isChecked() else "range"
+        if previous_state.rotation_degrees != self.state.rotation_degrees:
+            self.state.line_scan_x = None
+            self.state.line_scan_y = None
+            self.state.click_count = 0
+            self.state.first_click = None
 
         x_grid, y_grid, z_grid, stats = self.reader.get_interpolated_slice(
             axis=axis,
@@ -220,9 +227,10 @@ class HeatmapController:
         fallback_state   = self._build_state(self.reader, file_path, first_scalar["value"], axis)
         self.state       = fallback_state
         self.controls_widget.set_axis(axis)
-        max_slice_index = self.reader.get_max_slice_index(axis)
+        is_effective_2d = Heatmap2DOrientation.is_2d(self.reader.dimensions)
+        max_slice_index = 0 if is_effective_2d else self.reader.get_max_slice_index(axis)
         self.controls_widget.set_slice_range(0, max_slice_index)
-        self.controls_widget.set_slice_controls_visible(max_slice_index > 0)
+        self.controls_widget.set_slice_controls_visible(not is_effective_2d and max_slice_index > 0)
         prev_scalar_key = self.controls_widget.current_scalar_key()
         self.controls_widget.set_scalar_options(self.scalar_defs)
         restored = self.controls_widget.scalar_combo.findData(prev_scalar_key)
@@ -297,23 +305,16 @@ class HeatmapController:
         return self.scalar_defs[0] if self.scalar_defs else None
 
     def _detect_axis(self) -> str:
-        """Choose the slice axis by finding which dimension of the dataset is flat (size <= 1)."""
+        """Choose the slice axis by finding which dimension of the dataset is flat enough."""
         debug_print("HeatmapController._detect_axis called")
         assert self.reader is not None
-        dx, dy, dz = self.reader.dimensions
-        if dz <= 1:
-            return "z"
-        if dy <= 1:
-            return "y"
-        if dx <= 1:
-            return "x"
-        return "y"
+        return Heatmap2DOrientation.detect_axis(self.reader.dimensions)
 
     def _build_state(self, reader, file_path: str, scalar_key: str, axis: str) -> ViewerState:
         """Read an initial data slice and construct a ViewerState with real min/max statistics."""
         debug_print("HeatmapController._build_state called")
         descriptor = self._get_scalar_def(scalar_key) or self.scalar_defs[0]
-        slice_index = 0 if not reader.is_3d else reader.get_max_slice_index(axis) // 2
+        slice_index = 0 if Heatmap2DOrientation.is_2d(reader.dimensions) else reader.get_max_slice_index(axis) // 2
         x_grid, y_grid, z_grid, stats = reader.get_interpolated_slice(
             axis=axis,
             index=slice_index,
@@ -352,7 +353,7 @@ class HeatmapController:
         if self.reader is None or not self.reader.dimensions:
             return 1, 1
         dx, dy, dz = self.reader.dimensions
-        axis = (axis or "y").lower()
+        axis = Heatmap2DOrientation.detect_axis(self.reader.dimensions) if Heatmap2DOrientation.is_2d(self.reader.dimensions) else (axis or "y").lower()
         if axis == "x":
             return max(dy, 1), max(dz, 1)
         if axis == "y":
@@ -395,25 +396,26 @@ class HeatmapController:
         debug_print(f"Controller render vmin={vmin}")
         debug_print(f"Controller render vmax={vmax}")
 
-        overlay_grid = self._build_overlay_grid()
+        orientation = self._orientation()
+        overlay_grid = orientation.apply_overlay(self._build_overlay_grid())
+        display = orientation.apply_grid(x_grid, y_grid, z_grid)
+        x_grid, y_grid, z_grid = display.x, display.y, display.z
+        self._last_display_grids = (x_grid, y_grid, z_grid)
+
         line_overlay = None
         if self.state.line_overlay_visible:
-            if self.state.line_scan_direction == "horizontal":
-                y_val = self.state.line_scan_y if self.state.line_scan_y is not None \
-                    else float(np.nanmean(y_grid))
-                line_overlay = ("horizontal", y_val)
-            else:
-                x_val = self.state.line_scan_x if self.state.line_scan_x is not None \
-                    else float(np.nanmean(x_grid))
-                line_overlay = ("vertical", x_val)
+            line_overlay = Heatmap2DOrientation.line_overlay(
+                self.state.line_scan_direction,
+                self.state.line_scan_x,
+                self.state.line_scan_y,
+            )
+            if line_overlay is None:
+                if self.state.line_scan_direction == "horizontal":
+                    line_overlay = ("horizontal", float(np.nanmean(y_grid)))
+                else:
+                    line_overlay = ("vertical", float(np.nanmean(x_grid)))
 
-        if self.state.rotated:
-            x_grid, y_grid, z_grid = y_grid, x_grid, np.transpose(z_grid)
-
-        nx, ny = self._slice_dimensions(self.state.axis)
-        if self.state.rotated:
-            nx, ny = ny, nx
-        fig_width = max(100, min(1200, int(_CANVAS_HEIGHT * nx / ny)))
+        fig_width = orientation.plot_width_for_height(x_grid, y_grid, _CANVAS_HEIGHT)
         self.heatmap_canvas.set_canvas_width(fig_width)
 
         if extra_scale != 1.0:
@@ -426,6 +428,7 @@ class HeatmapController:
         if plot_type == "difference":
             diff = self._compute_difference_grid()
             if diff is not None:
+                diff = orientation.apply_grid(self._last_grids[0], self._last_grids[1], diff).z
                 if extra_scale != 1.0:
                     diff = diff * extra_scale
                 abs_max        = max(abs(float(np.nanmin(diff))), abs(float(np.nanmax(diff))), 1e-12)
@@ -477,32 +480,15 @@ class HeatmapController:
     def _render_line_scan(self, x_grid, y_grid, z_grid, extra_scale: float, display_label: str) -> None:
         """Extract a 1-D row or column from the slice grid and draw it on the line-scan canvas."""
         debug_print("HeatmapController._render_line_scan called")
-        if self.state.line_scan_direction == "horizontal":
-            if self.state.line_scan_y is not None:
-                y_values = y_grid[:, 0]
-                y_idx = int(np.argmin(np.abs(y_values - self.state.line_scan_y)))
-                x_data = x_grid[y_idx, :]
-                z_data = z_grid[y_idx, :]
-                title = f"Horizontal Scan at Y={self.state.line_scan_y:.2f}"
-            else:
-                y_idx = z_grid.shape[0] // 2
-                x_data = x_grid[y_idx, :]
-                z_data = z_grid[y_idx, :]
-                title = "Horizontal Scan (click heatmap to set position)"
-            x_label = "X Position"
-        else:
-            if self.state.line_scan_x is not None:
-                x_values = x_grid[0, :]
-                x_idx = int(np.argmin(np.abs(x_values - self.state.line_scan_x)))
-                x_data = y_grid[:, x_idx]
-                z_data = z_grid[:, x_idx]
-                title = f"Vertical Scan at X={self.state.line_scan_x:.2f}"
-            else:
-                x_idx = z_grid.shape[1] // 2
-                x_data = y_grid[:, x_idx]
-                z_data = z_grid[:, x_idx]
-                title = "Vertical Scan (click heatmap to set position)"
-            x_label = "Y Position"
+        display = self._orientation().apply_grid(x_grid, y_grid, z_grid)
+        position = self.state.line_scan_y if self.state.line_scan_direction == "horizontal" else self.state.line_scan_x
+        x_data, z_data, title, x_label = Heatmap2DOrientation.extract_line_scan(
+            display.x,
+            display.y,
+            display.z,
+            self.state.line_scan_direction,
+            position,
+        )
         if extra_scale != 1.0:
             z_data = z_data * extra_scale
         self.line_scan_canvas.render_line(
@@ -555,10 +541,12 @@ class HeatmapController:
         debug_print("HeatmapController._handle_heatmap_click called")
         if not self._last_grids:
             return
-        x_grid, y_grid, z_grid, _ = self._last_grids
-        distance = (x_grid - x_value) ** 2 + (y_grid - y_value) ** 2
-        idx = np.unravel_index(np.nanargmin(distance), distance.shape)
-        clicked_value = float(z_grid[idx])
+        x_grid, y_grid, z_grid = self._last_display_grids or self._last_grids[:3]
+        try:
+            clicked_value = Heatmap2DOrientation.nearest_value(x_grid, y_grid, z_grid, x_value, y_value)
+        except ValueError:
+            self.controls_widget.set_status_text("Click ignored: no valid value")
+            return
         debug_print(f"Heatmap click nearest value={clicked_value}")
         if self.state.click_mode == "range":
             if self.state.click_count == 0:
@@ -598,10 +586,6 @@ class HeatmapController:
         self.line_mode_check.blockSignals(False)
         self.refresh_view()
 
-    def _on_rotate_toggled(self, checked: bool) -> None:
-        self.state.rotated = checked
-        self.refresh_view()
-
     def _sync_line_mode(self) -> None:
         """Keep the range-mode checkbox inverse-synced with the line-scan-mode checkbox."""
         debug_print("HeatmapController._sync_line_mode called")
@@ -634,6 +618,9 @@ class HeatmapController:
         except Exception as exc:
             debug_print(f"Overlay build failed: {exc}")
             return None
+
+    def _orientation(self) -> Heatmap2DOrientation:
+        return Heatmap2DOrientation(getattr(self.state, "rotation_degrees", 0))
 
     def _phase_overlay_file(self, file_path: str):
         """Resolve the PhaseField_*.vts file that corresponds to the currently loaded data file."""
