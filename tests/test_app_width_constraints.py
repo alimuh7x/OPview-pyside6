@@ -73,6 +73,24 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertLessEqual(panel.line_toolbar.height(), 44)
         self.assertEqual(panel.line_card.layout().stretch(1), 0)
 
+    def test_panel_widget_keeps_heatmap_logo_visible_when_narrow(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        panel.set_available_width(374)
+        panel.resize(374, 1000)
+        panel.show()
+        QApplication.processEvents()
+
+        logo_widget = panel.heatmap_row._logo_widget
+        self.assertGreaterEqual(logo_widget.x(), 0)
+        self.assertIsNotNone(panel.logo_label.pixmap())
+        self.assertFalse(panel.logo_label.pixmap().isNull())
+
+    def test_panel_widget_exports_full_heatmap_row_with_logo(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        self.assertIs(panel.controller.export_widget, panel.heatmap_row)
+
     def test_multiview_panel_area_does_not_force_more_than_available_width(self):
         panel = MultiViewPanel({"label": "PhaseField", "available_projects": []})
 

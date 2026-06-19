@@ -56,7 +56,47 @@ class MultiViewImprovementTests(unittest.TestCase):
     def test_multiview_colorbar_is_wide_enough_for_title(self):
         from multi_view.colorbar_canvas import _W
 
-        self.assertGreaterEqual(_W, 140)
+        self.assertGreaterEqual(_W, 220)
+
+    def test_multiview_colorbar_uses_uncut_bar_thickness(self):
+        from multi_view.colorbar_canvas import _BAR_THICKNESS, _build_colorbar_figure
+
+        figure = _build_colorbar_figure(
+            [[0.0, "#000000"], [1.0, "#ffffff"]],
+            0.0,
+            1.0,
+            "Shared Label",
+        )
+
+        self.assertGreaterEqual(_BAR_THICKNESS, 30)
+        self.assertEqual(figure.data[0].colorbar.thickness, _BAR_THICKNESS)
+
+    def test_multiview_colorbar_figure_uses_full_widget_width(self):
+        from multi_view.colorbar_canvas import _W, _build_colorbar_figure
+
+        figure = _build_colorbar_figure(
+            [[0.0, "#000000"], [1.0, "#ffffff"]],
+            0.0,
+            1.0,
+            "Shared Label",
+        )
+
+        self.assertEqual(figure.layout.width, _W)
+
+    def test_multiview_colorbar_uses_single_view_font_style(self):
+        from multi_view.colorbar_canvas import _build_colorbar_figure
+        from viewer.plot_style import PlotStyle
+
+        figure = _build_colorbar_figure(
+            [[0.0, "#000000"], [1.0, "#ffffff"]],
+            0.0,
+            1.0,
+            "Shared Label",
+        )
+        colorbar = figure.data[0].colorbar
+
+        self.assertEqual(colorbar.title.font.to_plotly_json(), PlotStyle.colorbar_title_font())
+        self.assertEqual(colorbar.tickfont.to_plotly_json(), PlotStyle.colorbar_tick_font())
 
     def test_export_size_includes_headers_and_colorbar(self):
         size = MultiViewPanel._export_image_size(

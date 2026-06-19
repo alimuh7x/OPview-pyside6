@@ -10,6 +10,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
 
 _W = 600
@@ -26,6 +27,11 @@ class HistogramCanvas(QWidget):
         self._canvas_width = _W
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
+        install_save_dialog_download_handler(
+            self._web_view,
+            self,
+            fallback_name="histogram.png",
+        )
         self._web_view.setFixedSize(_W, _H)
         self._web_view.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)

@@ -81,13 +81,21 @@ class HeatmapAlignmentRow(QWidget):
         heatmap_height = self._heatmap_widget.height()
         logo_width = self._logo_widget.width()
         logo_height = self._logo_widget.height()
-        heatmap_x = max(0, int((self.width() - heatmap_width) / 2))
+        required_width = logo_width + self._gap + heatmap_width
+        centered_heatmap_x = int((self.width() - heatmap_width) / 2)
+        min_heatmap_x = logo_width + self._gap
+        heatmap_x = max(min_heatmap_x, centered_heatmap_x)
         heatmap_y = row_height - heatmap_height
         logo_x = heatmap_x - self._gap - logo_width
         logo_y = max(0, row_height - logo_height - 12)
         debug_print(f"HeatmapAlignmentRow row_height={row_height}")
+        debug_print(f"HeatmapAlignmentRow available_width={self.width()}")
+        debug_print(f"HeatmapAlignmentRow required_width={required_width}")
+        debug_print(f"HeatmapAlignmentRow centered_heatmap_x={centered_heatmap_x}")
+        debug_print(f"HeatmapAlignmentRow min_heatmap_x={min_heatmap_x}")
         debug_print(f"HeatmapAlignmentRow heatmap_x={heatmap_x}")
         debug_print(f"HeatmapAlignmentRow logo_x={logo_x}")
+        debug_print(f"HeatmapAlignmentRow logo_visible={logo_x >= 0}")
         self._heatmap_widget.setGeometry(heatmap_x, heatmap_y, heatmap_width, heatmap_height)
         self._logo_widget.setGeometry(logo_x, logo_y, logo_width, logo_height)
         self.setMinimumHeight(row_height)
@@ -181,6 +189,7 @@ class PanelWidget(QWidget):
             colorbar_label_edit=self.colorbar_label_edit,
             unit_scale_combo=self.unit_scale_combo,
             dataset_info=dataset_info,
+            export_widget=self.heatmap_row,
         )
         self.controller._file_loaded_callback = self.file_loaded.emit
         self.controller.connect_signals()
@@ -400,11 +409,17 @@ class PanelWidget(QWidget):
         # heatmap-row: [logo] [centered heatmap], bottom aligned by canvas height
         logo_card = QWidget()
         logo_path = HEATMAP_LOGO_PATH
+        debug_print(f"PanelWidget heatmap logo path={logo_path}")
+        debug_print(f"PanelWidget heatmap logo exists={logo_path.exists()}")
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path)).scaledToWidth(
                 52, Qt.TransformationMode.SmoothTransformation
             )
+            debug_print(f"PanelWidget heatmap logo pixmap isNull={pixmap.isNull()}")
             self.logo_label.setPixmap(pixmap)
+            debug_print("PanelWidget heatmap logo pixmap applied")
+        else:
+            debug_print("PanelWidget heatmap logo missing; pixmap not applied")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
         self.logo_label.setParent(logo_card)
         logo_card.setFixedWidth(58)
@@ -412,6 +427,9 @@ class PanelWidget(QWidget):
         logo_width = logo_card.width()
         logo_height = self.logo_label.sizeHint().height()
         logo_y = max(0, logo_card.height() - logo_height - 12)
+        debug_print(f"PanelWidget heatmap logo card width={logo_width}")
+        debug_print(f"PanelWidget heatmap logo label height={logo_height}")
+        debug_print(f"PanelWidget heatmap logo label y={logo_y}")
         self.logo_label.setGeometry(0, logo_y, logo_width, logo_height)
         self.logo_label.setFixedWidth(logo_width)
         self.heatmap_row = HeatmapAlignmentRow(

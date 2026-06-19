@@ -11,10 +11,86 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from app.debug import debug_print
 from viewer.colorscale import cmap_to_plotly_scale
+from viewer.plot_style import PlotStyle
 
 _PLOTLY_JS = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
-_W = 140
+_W = 220
 _H = 420
+_BAR_THICKNESS = 30
+
+
+def _format_tick(v: float) -> str:
+    debug_print("MultiView ColorbarCanvas._format_tick called")
+    debug_print(f"MultiView ColorbarCanvas tick value={v}")
+    import math
+    if v == 0:
+        debug_print("MultiView ColorbarCanvas tick formatted=0")
+        return "0"
+    try:
+        mag = math.floor(math.log10(abs(v)))
+    except ValueError:
+        debug_print("MultiView ColorbarCanvas tick format fallback=0")
+        return "0"
+    if -3 <= mag <= 4:
+        formatted = f"{v:.{max(0, 3 - int(mag))}f}"
+        debug_print(f"MultiView ColorbarCanvas tick formatted={formatted}")
+        return formatted
+    formatted = f"{v:.2e}"
+    debug_print(f"MultiView ColorbarCanvas tick formatted={formatted}")
+    return formatted
+
+
+def _build_colorbar_figure(colorscale, vmin: float, vmax: float, label: str) -> go.Figure:
+    debug_print("MultiView ColorbarCanvas._build_colorbar_figure called")
+    debug_print(f"MultiView ColorbarCanvas width={_W}")
+    debug_print(f"MultiView ColorbarCanvas height={_H}")
+    debug_print(f"MultiView ColorbarCanvas thickness={_BAR_THICKNESS}")
+    debug_print(f"MultiView ColorbarCanvas title font={PlotStyle.colorbar_title_font()}")
+    debug_print(f"MultiView ColorbarCanvas tick font={PlotStyle.colorbar_tick_font()}")
+    tick_vals = [
+        vmin,
+        vmin + (vmax - vmin) * 0.25,
+        vmin + (vmax - vmin) * 0.5,
+        vmin + (vmax - vmin) * 0.75,
+        vmax,
+    ]
+    debug_print(f"MultiView ColorbarCanvas tick count={len(tick_vals)}")
+    figure = go.Figure()
+    figure.add_trace(go.Heatmap(
+        z=[[vmin, vmax]],
+        colorscale=colorscale,
+        zmin=vmin,
+        zmax=vmax,
+        showscale=True,
+        opacity=0.0,
+        colorbar=dict(
+            x=0.02,
+            xanchor="left",
+            y=0.5,
+            yanchor="middle",
+            len=0.82,
+            lenmode="fraction",
+            thickness=_BAR_THICKNESS,
+            thicknessmode="pixels",
+            outlinewidth=0,
+            title=dict(text=label, side="right", font=PlotStyle.colorbar_title_font()),
+            tickfont=PlotStyle.colorbar_tick_font(),
+            tickmode="array",
+            tickvals=tick_vals,
+            ticktext=[_format_tick(v) for v in tick_vals],
+        ),
+    ))
+    figure.update_layout(
+        width=_W,
+        height=_H,
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+    )
+    figure.update_xaxes(visible=False)
+    figure.update_yaxes(visible=False)
+    debug_print("MultiView ColorbarCanvas figure built")
+    return figure
 
 
 class ColorbarCanvas(QWidget):
@@ -53,61 +129,7 @@ class ColorbarCanvas(QWidget):
         colorscale = cmap_to_plotly_scale(cmap)
         debug_print(f"MultiView ColorbarCanvas colorscale stops={len(colorscale)}")
 
-        def fmt(v: float) -> str:
-            import math
-            if v == 0:
-                return "0"
-            try:
-                mag = math.floor(math.log10(abs(v)))
-            except ValueError:
-                return "0"
-            if -3 <= mag <= 4:
-                return f"{v:.{max(0, 3 - int(mag))}f}"
-            return f"{v:.2e}"
-
-        tick_vals = [
-            vmin,
-            vmin + (vmax - vmin) * 0.25,
-            vmin + (vmax - vmin) * 0.5,
-            vmin + (vmax - vmin) * 0.75,
-            vmax,
-        ]
-
-        figure = go.Figure()
-        debug_print("MultiView ColorbarCanvas adding invisible scale trace")
-        figure.add_trace(go.Heatmap(
-            z=[[vmin, vmax]],
-            colorscale=colorscale,
-            zmin=vmin,
-            zmax=vmax,
-            showscale=True,
-            opacity=0.0,
-            colorbar=dict(
-                x=0.04,
-                xanchor="left",
-                y=0.5,
-                yanchor="middle",
-                len=0.82,
-                lenmode="fraction",
-                thickness=24,
-                thicknessmode="pixels",
-                outlinewidth=0,
-                title=dict(text=label, side="right", font=dict(size=18)),
-                tickfont=dict(size=15),
-                tickmode="array",
-                tickvals=tick_vals,
-                ticktext=[fmt(v) for v in tick_vals],
-            ),
-        ))
-        figure.update_layout(
-            width=_W,
-            height=_H,
-            margin=dict(l=0, r=0, t=0, b=0),
-            paper_bgcolor="white",
-            plot_bgcolor="white",
-        )
-        figure.update_xaxes(visible=False)
-        figure.update_yaxes(visible=False)
+        figure = _build_colorbar_figure(colorscale, vmin, vmax, label)
         debug_print("MultiView ColorbarCanvas layout ready")
 
         fig_json = figure.to_json()

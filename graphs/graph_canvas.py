@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
 from data.text_sources import GenericTextDataSource
+from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
 
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
@@ -32,6 +33,11 @@ class GraphCanvas(QWidget):
         self._graph_width = _GRAPH_WIDTH
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
+        install_save_dialog_download_handler(
+            self._web_view,
+            self,
+            fallback_name="custom_graph.png",
+        )
         debug_print(f"GraphCanvas.__init__ size width={_GRAPH_WIDTH} height={_GRAPH_HEIGHT}")
         self._web_view.setMinimumSize(_GRAPH_WIDTH, 0)
         debug_print(f"GraphCanvas.__init__ web view placeholder min_width={_GRAPH_WIDTH}")

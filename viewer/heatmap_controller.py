@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from matplotlib.colors import Normalize
+from PySide6.QtWidgets import QFileDialog
 
 from app.debug import debug_print
 from config.constants import DEFAULTS
@@ -36,6 +37,7 @@ class HeatmapController:
         colorbar_label_edit,
         unit_scale_combo,
         dataset_info: dict,
+        export_widget=None,
     ) -> None:
         """Store all widget references, initialise default state, and populate controls."""
         debug_print("HeatmapController.__init__ start")
@@ -51,6 +53,7 @@ class HeatmapController:
         self.export_button = export_button
         self.colorbar_label_edit = colorbar_label_edit
         self.unit_scale_combo    = unit_scale_combo
+        self.export_widget = export_widget
         self.dataset_info = dataset_info
         self._file_loaded_callback = None
         self.reader = None
@@ -637,11 +640,64 @@ class HeatmapController:
         return None
 
     def _export_png(self) -> None:
-        """Save the current heatmap canvas as a PNG file in the working directory."""
+        """Ask for a location and save the current heatmap row as a PNG file."""
         debug_print("HeatmapController._export_png called")
-        output_path = Path.cwd() / f"{self.dataset_info.get('label', 'panel').replace(' ', '_')}_heatmap.png"
-        self.heatmap_canvas.save_png(str(output_path))
-        self.controls_widget.set_status_text(f"PNG saved: {output_path.name}")
+        default_name = self._default_export_filename(self.dataset_info.get("label", "panel"))
+        debug_print(f"HeatmapController default export name={default_name}")
+        parent = self.export_widget or self.heatmap_canvas
+        debug_print(f"HeatmapController export dialog parent={parent.__class__.__name__}")
+        selected_path, _ = QFileDialog.getSaveFileName(
+            parent,
+            "Export PNG",
+            default_name,
+            "PNG (*.png);;All Files (*)",
+        )
+        debug_print(f"HeatmapController selected export path={selected_path}")
+        output_path = self._normalise_png_export_path(selected_path)
+        if output_path is None:
+            debug_print("HeatmapController export cancelled")
+            self.controls_widget.set_status_text("PNG export cancelled")
+            return
+        target = self.export_widget or self.heatmap_canvas
+        debug_print(f"HeatmapController export target={target.__class__.__name__}")
+        debug_print(f"HeatmapController export target size={target.size()}")
+        pixmap = target.grab()
+        debug_print(f"HeatmapController export pixmap size={pixmap.size()}")
+        saved = pixmap.save(str(output_path), "PNG")
+        debug_print(f"HeatmapController export saved={saved}")
+        debug_print(f"HeatmapController export output path={output_path}")
+        if saved:
+            self.controls_widget.set_status_text(f"PNG saved: {output_path.name}")
+        else:
+            self.controls_widget.set_status_text("PNG export failed")
+        debug_print("HeatmapController._export_png complete")
+
+    @staticmethod
+    def _default_export_filename(label: str) -> str:
+        debug_print("HeatmapController._default_export_filename called")
+        debug_print(f"HeatmapController export label={label}")
+        safe_label = "".join(
+            char if char.isalnum() or char in ("-", "_") else "_"
+            for char in (label or "panel")
+        ).strip("_")
+        safe_label = safe_label or "panel"
+        filename = f"{safe_label}_heatmap.png"
+        debug_print(f"HeatmapController export filename={filename}")
+        return filename
+
+    @staticmethod
+    def _normalise_png_export_path(path: str) -> Path | None:
+        debug_print("HeatmapController._normalise_png_export_path called")
+        debug_print(f"HeatmapController raw export path={path}")
+        if not path:
+            debug_print("HeatmapController normalised export path=None")
+            return None
+        output_path = Path(path)
+        if not output_path.suffix:
+            output_path = output_path.with_suffix(".png")
+            debug_print(f"HeatmapController appended png suffix={output_path}")
+        debug_print(f"HeatmapController normalised export path={output_path}")
+        return output_path
 
     def _handle_range_slider_signal(self, minimum: float, maximum: float) -> None:
         """Receive the range slider's min/max values emitted after the user drags the handles."""
