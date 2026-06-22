@@ -18,6 +18,9 @@ env/
 # Generated images / exports
 *.png
 *.jpg
+!assets/Single_View.png
+!assets/Multi-View.png
+!assets/Custom-Graph.png
 
 # OS
 .DS_Store
