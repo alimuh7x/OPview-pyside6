@@ -27,13 +27,19 @@ A desktop post-processing application for inspecting OpenPhase simulation output
 
 ### Windows
 
-Double-click `opview.bat`, or run it from Command Prompt:
+Use the normal GPU/default launcher:
 
 ```bat
 opview.bat
 ```
 
-The batch file checks for Python, creates the virtual environment if needed, installs dependencies from `requirements.txt`, prints setup and launch status messages, and starts OPView.
+For virtual machines or systems without working 3D acceleration, use the no-GPU software rendering launcher:
+
+```bat
+OPview-No-GPU.bat
+```
+
+Both launchers check for Python, create the Windows virtual environment `venv-windows` if needed, install dependencies from `requirements.txt`, print setup/debug status messages, and start OPView. The no-GPU launcher also disables GPU-accelerated QtWebEngine rendering before the application starts.
 
 ### First-time setup (Linux / macOS / WSL)
 
@@ -46,10 +52,16 @@ python main.py
 
 ### Running the application
 
-On Windows, use:
+On Windows, use the normal launcher:
 
 ```bat
 opview.bat
+```
+
+For no-GPU software rendering, use:
+
+```bat
+OPview-No-GPU.bat
 ```
 
 On Linux / macOS / WSL, use:
@@ -76,7 +88,7 @@ deactivate
 
 ## Usage
 
-1. Start the app with `opview.bat` on Windows or `python main.py` on Linux / macOS / WSL.
+1. Start the app with `opview.bat` on Windows, `OPview-No-GPU.bat` for software rendering, or `python main.py` on Linux / macOS / WSL.
 2. Select or add a project in the sidebar.
 3. Choose **Single View**, **Multi View**, or **Custom Graph** from the top tabs.
 4. Use **Help > Documentation** for the complete local guide.

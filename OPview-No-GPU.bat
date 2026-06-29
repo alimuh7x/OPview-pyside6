@@ -1,14 +1,30 @@
 @echo off
 setlocal enabledelayedexpansion
-title OPview - PySide6 VTK Viewer
+title OPview - No GPU / Software Rendering
 cd /d "%~dp0"
 
 echo ================================================
-echo   OPview - PySide6 VTK Viewer
+echo   OPview - No GPU / Software Rendering
 echo ================================================
 echo.
+echo [DEBUG] OPview-No-GPU.bat started
+echo [DEBUG] Working directory: %CD%
+
+rem --- Force software rendering before Python, Qt, and QtWebEngine start ---
+set QT_OPENGL=software
+echo [DEBUG] QT_OPENGL=%QT_OPENGL%
+
+set QT_QUICK_BACKEND=software
+echo [DEBUG] QT_QUICK_BACKEND=%QT_QUICK_BACKEND%
+
+set QTWEBENGINE_DISABLE_GPU=1
+echo [DEBUG] QTWEBENGINE_DISABLE_GPU=%QTWEBENGINE_DISABLE_GPU%
+
+set QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu --disable-gpu-compositing --disable-accelerated-2d-canvas --disable-accelerated-video-decode --disable-webgl --disable-3d-apis --disable-software-rasterizer=false --disable-features=VizDisplayCompositor --ignore-gpu-blocklist
+echo [DEBUG] QTWEBENGINE_CHROMIUM_FLAGS=%QTWEBENGINE_CHROMIUM_FLAGS%
 
 rem --- Locate Python ---
+echo [DEBUG] Locating Python
 set PYTHON=
 for %%P in (python python3) do (
     if not defined PYTHON (
@@ -28,8 +44,10 @@ if not defined PYTHON (
     start https://www.python.org/downloads/
     exit /b 1
 )
+echo [DEBUG] Python command: %PYTHON%
 
 rem --- Check Python version (VTK requires < 3.14) ---
+echo [DEBUG] Checking Python version
 for /f "tokens=2 delims= " %%V in ('"%PYTHON%" --version 2^>^&1') do set PY_VER=%%V
 echo [OK] Python %PY_VER% found
 
@@ -37,6 +55,9 @@ for /f "tokens=1,2 delims=." %%A in ("%PY_VER%") do (
     set PY_MAJOR=%%A
     set PY_MINOR=%%B
 )
+echo [DEBUG] Python major=%PY_MAJOR%
+echo [DEBUG] Python minor=%PY_MINOR%
+
 if %PY_MAJOR% LSS 3 (
     echo [ERROR] Python 3.8+ required.
     pause & exit /b 1
@@ -48,7 +69,10 @@ if %PY_MINOR% GTR 13 (
 )
 
 rem --- Create venv if missing ---
+echo [DEBUG] Checking virtual environment
 set VENV_DIR=%~dp0venv-windows
+echo [DEBUG] VENV_DIR=%VENV_DIR%
+
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo [..] Creating virtual environment...
     "%PYTHON%" -m venv "%VENV_DIR%"
@@ -82,11 +106,18 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
 )
 
 set VENV_PYTHON=%VENV_DIR%\Scripts\python.exe
+echo [DEBUG] VENV_PYTHON=%VENV_PYTHON%
+
 set VENV_PIP=%VENV_DIR%\Scripts\pip.exe
+echo [DEBUG] VENV_PIP=%VENV_PIP%
 
 rem --- Upgrade pip ---
 echo [..] Upgrading pip...
 "%VENV_PYTHON%" -m pip install --upgrade pip --quiet
+if errorlevel 1 (
+    echo [ERROR] pip upgrade failed.
+    pause & exit /b 1
+)
 echo [OK] pip up to date.
 
 rem --- Install dependencies ---
@@ -102,7 +133,8 @@ echo [OK] Dependencies installed.
 
 rem --- Launch app ---
 echo.
-echo [>>] Launching OPview...
+echo [>>] Launching OPview in no-GPU software rendering mode...
+echo [DEBUG] main.py path: %~dp0main.py
 echo.
 "%VENV_PYTHON%" "%~dp0main.py"
 
