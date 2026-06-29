@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -209,6 +210,113 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIn("slice=0", panel.heatmap_canvas.status_text())
         self.assertEqual(panel.heatmap_canvas._axes.get_aspect(), 1.0)
         self.assertGreater(panel.histogram_field_combo.count(), 0)
+
+    def test_panel_widget_has_no_resolution_dropdown(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        self.assertFalse(hasattr(panel, "resolution_combo"))
+        self.assertFalse(hasattr(panel, "resolution_label"))
+
+    def test_heatmap_uses_lightweight_live_resolution(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        grid = panel.heatmap_canvas._last_export_payload["z_grid"]
+
+        self.assertEqual(grid.shape, (160, 160))
+
+    def test_live_heatmap_keeps_visible_plotly_heatmap_and_colorbar(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        payload = panel.heatmap_canvas._last_export_payload
+
+        figure = panel.heatmap_canvas._build_figure(
+            x_grid=payload["x_grid"],
+            y_grid=payload["y_grid"],
+            z_grid=payload["z_grid"],
+            cmap=payload["cmap"],
+            vmin=payload["vmin"],
+            vmax=payload["vmax"],
+            line_overlay=payload["line_overlay"],
+            overlay_grid=payload["overlay_grid"],
+            title="",
+            colorbar_label=payload["colorbar_label"],
+            plot_type="heatmap",
+        )
+
+        self.assertEqual(tuple(figure.layout.images or ()), ())
+        self.assertEqual(figure.data[0].type, "heatmap")
+        self.assertNotEqual(figure.data[0].opacity, 0)
+        self.assertIsNotNone(figure.data[0].colorbar)
+
+    def test_png_export_uses_automatic_good_resolution(self):
+        from matplotlib import image as mpimg
+
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        output_path = Path(tempfile.gettempdir()) / "opview_auto_good_resolution_test.png"
+
+        self.assertTrue(panel.heatmap_canvas.save_high_resolution_png(str(output_path)))
+        image = mpimg.imread(output_path)
+
+        self.assertGreaterEqual(image.shape[0], 1000)
+        self.assertGreaterEqual(image.shape[1], 1000)
 
     def test_phase_field_defaults_to_phasefields_scalar(self):
         panel = PanelWidget(

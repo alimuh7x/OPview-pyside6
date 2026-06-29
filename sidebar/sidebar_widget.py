@@ -344,6 +344,8 @@ class SidebarWidget(QWidget):
                     "project_path": str(project_info.get("path")),
                     "vtk_folder": str(vtk_folder),
                     "files": option["value"]["files"],
+                    "file_count": option["value"].get("file_count", len(option["value"]["files"])),
+                    "files_limited": option["value"].get("files_limited", False),
                     "dataset_config": option["value"]["dataset_config"],
                     "module_id": option["value"]["module_id"],
                 })
@@ -377,7 +379,10 @@ class SidebarWidget(QWidget):
             if project.get("project_name")
         ]
         project_text = ", ".join(projects)
-        return f"{group.get('module_label', '')}: {group.get('label', '')}\n{project_text}".strip()
+        total_files = sum(project.get("file_count", len(project.get("files", []))) for project in group.get("available_projects", []))
+        shown_files = sum(len(project.get("files", [])) for project in group.get("available_projects", []))
+        limit_text = f"\nShowing first {shown_files} of {total_files} files" if shown_files < total_files else f"\n{total_files} files"
+        return f"{group.get('module_label', '')}: {group.get('label', '')}\n{project_text}{limit_text}".strip()
 
     def _is_text_project(self, project_info: dict) -> bool:
         debug_print("SidebarWidget._is_text_project called")

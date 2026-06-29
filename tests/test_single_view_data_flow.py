@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,21 @@ class SingleViewDataFlowTests(unittest.TestCase):
 
         self.assertIn("mechanics-elastic", detected_ids)
         self.assertIn("plasticity-crss", detected_ids)
+
+    def test_dataset_registry_limits_eager_file_lists_for_large_vtk_folders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp) / "VTK"
+            vtk_dir.mkdir()
+            for index in range(750):
+                (vtk_dir / f"PhaseField_{index:08d}.vts").touch()
+
+            registry = DatasetRegistry(vtk_dir, TAB_CONFIGS)
+            registry.detect(verbose=False)
+            phase = next(dataset for dataset in registry.all_datasets if dataset.dataset_id == "phase-field-phase")
+
+        self.assertEqual(phase.matched_count, 750)
+        self.assertLess(len(phase.matched_files), phase.matched_count)
+        self.assertGreater(len(phase.matched_files), 0)
 
     def test_vtk_reader_extracts_interpolated_slice(self):
         sample_file = Path("Project1/VTK/ElasticStrains_00000000.vts").resolve()

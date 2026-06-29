@@ -86,16 +86,24 @@ class HeatmapController:
         self.controls_widget.range_slider_changed.connect(self._handle_range_slider_signal)
         self.line_mode_check.toggled.connect(self._on_line_mode_toggled)
         self.controls_widget.click_mode_range_check.toggled.connect(self._on_range_mode_toggled)
-        self.show_line_check.toggled.connect(self.refresh_view)
-        self.direction_combo.currentIndexChanged.connect(self.refresh_view)
+        self.show_line_check.toggled.connect(lambda *_: self._refresh_from_toolbar("line-overlay"))
+        self.direction_combo.currentIndexChanged.connect(lambda *_: self._refresh_from_toolbar("line-direction"))
         self.controls_widget.scalar_combo.currentIndexChanged.connect(self.refresh_view)
-        self.histogram_bins_slider.valueChanged.connect(self.refresh_view)
-        self.interfaces_check.toggled.connect(self.refresh_view)
+        self.histogram_bins_slider.valueChanged.connect(lambda *_: self._refresh_from_toolbar("histogram-bins"))
+        self.interfaces_check.toggled.connect(lambda *_: self._refresh_from_toolbar("interfaces"))
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
-        self.colorbar_label_edit.editingFinished.connect(self.refresh_view)
-        self.unit_scale_combo.currentIndexChanged.connect(self.refresh_view)
+        self.colorbar_label_edit.editingFinished.connect(lambda *_: self._refresh_from_toolbar("colorbar-label"))
+        self.unit_scale_combo.currentIndexChanged.connect(lambda *_: self._refresh_from_toolbar("unit-scale"))
         debug_print("HeatmapController connected all signals")
+
+    def _refresh_from_toolbar(self, trigger: str) -> None:
+        """Refresh after toolbar widgets that are not owned by PanelControlsWidget change."""
+        debug_print("HeatmapController._refresh_from_toolbar called")
+        debug_print(f"HeatmapController toolbar trigger={trigger}")
+        self.controls_widget.set_last_trigger(trigger)
+        self.refresh_view()
+        debug_print("HeatmapController toolbar refresh complete")
 
     def _initialize_controls(self) -> None:
         """Populate project and file dropdowns, then load the first file."""
@@ -176,9 +184,12 @@ class HeatmapController:
             index=slice_index,
             scalar_name=scalar_def["array"],
             component=scalar_def.get("component"),
-            resolution=DEFAULTS["interpolation_resolution"],
+            resolution=self._selected_resolution(),
         )
         z_grid = z_grid * self.state.scale
+        grid_rows, grid_cols = np.asarray(z_grid).shape[:2]
+        debug_print(f"Controller heatmap grid rows={grid_rows}")
+        debug_print(f"Controller heatmap grid cols={grid_cols}")
         self._last_grids = (x_grid, y_grid, z_grid, stats)
         self._last_scaled_grid = z_grid
 
@@ -207,6 +218,7 @@ class HeatmapController:
             f"scalar={scalar_label or 'not-selected'} | "
             f"axis={axis} | "
             f"slice={slice_index} | "
+            f"grid={grid_cols}x{grid_rows} | "
             f"min={self.state.range_min:.4g} | "
             f"max={self.state.range_max:.4g}"
         )
@@ -323,7 +335,7 @@ class HeatmapController:
             index=slice_index,
             scalar_name=descriptor["array"],
             component=descriptor.get("component"),
-            resolution=DEFAULTS["interpolation_resolution"],
+            resolution=self._selected_resolution(),
         )
         scale = descriptor.get("scale", 1.0) or 1.0
         stats_scaled = {key: stats[key] * scale for key in stats}
@@ -376,6 +388,13 @@ class HeatmapController:
         else:
             label = name
         return extra_scale, label
+
+    def _selected_resolution(self):
+        """Return the automatic heatmap resolution used for live view and PNG export."""
+        debug_print("HeatmapController._selected_resolution called")
+        resolution = int(DEFAULTS["interpolation_resolution"])
+        debug_print(f"Heatmap automatic resolution value={resolution}")
+        return resolution
 
     def _render_heatmap(self, x_grid, y_grid, z_grid, extra_scale: float, display_label: str) -> None:
         """Build the colormap and pass all grid/overlay data to the heatmap canvas for drawing."""
@@ -474,7 +493,7 @@ class HeatmapController:
             index       = self.state.slice_index,
             scalar_name = scalar_def["array"],
             component   = scalar_def.get("component"),
-            resolution  = DEFAULTS["interpolation_resolution"],
+            resolution  = self._selected_resolution(),
         )
         z_next    = z_next * self.state.scale
         z_current = self._last_grids[2]
@@ -512,7 +531,13 @@ class HeatmapController:
         if scalar_def is None:
             return
         scale = scalar_def.get("scale", 1.0) or 1.0
-        cache_key = (scalar_key, self.state.axis, self.state.slice_index, self.state.file_path)
+        cache_key = (
+            scalar_key,
+            self.state.axis,
+            self.state.slice_index,
+            self.state.file_path,
+            self._selected_resolution(),
+        )
         is_same_field = scalar_key == self.state.scalar_key
         if is_same_field:
             z_grid = self._last_grids[2]
@@ -524,7 +549,7 @@ class HeatmapController:
                 index=self.state.slice_index,
                 scalar_name=scalar_def["array"],
                 component=scalar_def.get("component"),
-                resolution=DEFAULTS["interpolation_resolution"],
+                resolution=self._selected_resolution(),
             )
             z_grid = z_grid * scale
             self._histogram_cache = {"key": cache_key, "z_grid": z_grid}
@@ -577,6 +602,9 @@ class HeatmapController:
 
     def _on_line_mode_toggled(self, checked: bool) -> None:
         """Line Scan toggled — turn off Range Selection, refresh immediately."""
+        debug_print("HeatmapController._on_line_mode_toggled called")
+        debug_print(f"HeatmapController line mode checked={checked}")
+        self.controls_widget.set_last_trigger("line-mode")
         self.controls_widget.click_mode_range_check.blockSignals(True)
         self.controls_widget.click_mode_range_check.setChecked(not checked)
         self.controls_widget.click_mode_range_check.blockSignals(False)
@@ -584,6 +612,9 @@ class HeatmapController:
 
     def _on_range_mode_toggled(self, checked: bool) -> None:
         """Range Selection toggled — turn off Line Scan, refresh immediately."""
+        debug_print("HeatmapController._on_range_mode_toggled called")
+        debug_print(f"HeatmapController range mode checked={checked}")
+        self.controls_widget.set_last_trigger("range-mode")
         self.line_mode_check.blockSignals(True)
         self.line_mode_check.setChecked(not checked)
         self.line_mode_check.blockSignals(False)
@@ -611,7 +642,7 @@ class HeatmapController:
                 index=self.state.slice_index,
                 scalar_name="Interfaces",
                 component=None,
-                resolution=DEFAULTS["interpolation_resolution"],
+                resolution=self._selected_resolution(),
             )
             debug_print(f"Overlay band min={float(np.min(z_grid))}")
             debug_print(f"Overlay band max={float(np.max(z_grid))}")
@@ -658,12 +689,8 @@ class HeatmapController:
             debug_print("HeatmapController export cancelled")
             self.controls_widget.set_status_text("PNG export cancelled")
             return
-        target = self.export_widget or self.heatmap_canvas
-        debug_print(f"HeatmapController export target={target.__class__.__name__}")
-        debug_print(f"HeatmapController export target size={target.size()}")
-        pixmap = target.grab()
-        debug_print(f"HeatmapController export pixmap size={pixmap.size()}")
-        saved = pixmap.save(str(output_path), "PNG")
+        debug_print("HeatmapController exporting from heatmap data payload")
+        saved = self.heatmap_canvas.save_high_resolution_png(str(output_path))
         debug_print(f"HeatmapController export saved={saved}")
         debug_print(f"HeatmapController export output path={output_path}")
         if saved:

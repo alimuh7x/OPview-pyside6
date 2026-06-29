@@ -489,6 +489,12 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget.last_trigger called")
         return self._last_trigger
 
+    def set_last_trigger(self, trigger: str) -> None:
+        """Record a refresh trigger from controls that live outside this widget."""
+        debug_print("PanelControlsWidget.set_last_trigger called")
+        self._last_trigger = trigger
+        debug_print(f"PanelControlsWidget external trigger={trigger}")
+
     def _handle_range_slider_changed(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget._handle_range_slider_changed called")
         debug_print(f"PanelControlsWidget slider changed={minimum}..{maximum}")

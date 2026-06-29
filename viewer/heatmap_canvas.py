@@ -15,6 +15,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from config.constants import DEFAULTS
 from viewer.colorscale import cmap_to_plotly_scale
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.plot_style import PlotStyle
@@ -90,6 +91,7 @@ class HeatmapCanvas(QWidget):
         self._image = None
         self._last_z_grid = None
         self._last_extent = None
+        self._last_export_payload = None
         self._plot_width = _CANVAS_WIDTH
         self._colorbar_width = _COLORBAR_WIDTH
         self._colorbar_label = ""
@@ -209,6 +211,17 @@ class HeatmapCanvas(QWidget):
         self._status_text = status_message
         self._hover_text = ""
         self._image = _ImageCompat(vmin, vmax)
+        self._last_export_payload = {
+            "x_grid": np.asarray(x_grid),
+            "y_grid": np.asarray(y_grid),
+            "z_grid": np.asarray(z_grid),
+            "cmap": cmap,
+            "vmin": vmin,
+            "vmax": vmax,
+            "line_overlay": line_overlay,
+            "overlay_grid": overlay_grid,
+            "colorbar_label": colorbar_label,
+        }
         self._emit_status_changed()
         debug_print(f"HeatmapCanvas extent={self._last_extent}")
         debug_print(f"HeatmapCanvas colorbar_label={colorbar_label}")
@@ -236,6 +249,141 @@ class HeatmapCanvas(QWidget):
         pixmap = self._web_view.grab()
         pixmap.save(path, "PNG")
         debug_print(f"HeatmapCanvas saved {path}")
+
+    def save_high_resolution_png(self, path: str) -> bool:
+        """Export the current heatmap data as a high-pixel PNG without resizing the widget."""
+        debug_print("HeatmapCanvas.save_high_resolution_png called")
+        if not self._last_export_payload:
+            debug_print("HeatmapCanvas high-resolution export missing payload")
+            return False
+        try:
+            from matplotlib.backends.backend_agg import FigureCanvasAgg
+            from matplotlib.figure import Figure
+        except ModuleNotFoundError as exc:
+            debug_print(f"HeatmapCanvas high-resolution export unavailable missing={exc.name}")
+            return False
+
+        payload = self._export_payload_at_good_resolution(self._last_export_payload)
+        z_grid = np.asarray(payload["z_grid"])
+        x_grid = np.asarray(payload["x_grid"])
+        y_grid = np.asarray(payload["y_grid"])
+        rows, cols = z_grid.shape[:2]
+        dpi = 100
+        colorbar_pixels = max(120, int(cols * 0.18))
+        width_pixels = max(1, cols + colorbar_pixels)
+        height_pixels = max(1, rows)
+        debug_print(f"HeatmapCanvas export data pixels={cols}x{rows}")
+        debug_print(f"HeatmapCanvas export image pixels={width_pixels}x{height_pixels}")
+
+        fig = Figure(figsize=(width_pixels / dpi, height_pixels / dpi), dpi=dpi)
+        canvas = FigureCanvasAgg(fig)
+        ax = fig.add_axes([0.0, 0.0, cols / width_pixels, 1.0])
+        cax = fig.add_axes([(cols + 24) / width_pixels, 0.15, 28 / width_pixels, 0.7])
+        x_values, y_values = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+        image = ax.imshow(
+            z_grid,
+            origin="lower",
+            extent=[float(np.nanmin(x_values)), float(np.nanmax(x_values)), float(np.nanmin(y_values)), float(np.nanmax(y_values))],
+            cmap=payload["cmap"],
+            vmin=payload["vmin"],
+            vmax=payload["vmax"],
+            aspect="equal",
+            interpolation="bilinear",
+        )
+        overlay_grid = payload.get("overlay_grid")
+        if overlay_grid is not None:
+            overlay_z = np.asarray(overlay_grid["z"])
+            overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
+                overlay_grid["x"],
+                overlay_grid["y"],
+                overlay_z,
+            )
+            ax.contourf(
+                overlay_x,
+                overlay_y,
+                overlay_z,
+                levels=[1.5, 3.5],
+                colors=["black"],
+                alpha=0.82,
+            )
+        line_overlay = payload.get("line_overlay")
+        if line_overlay:
+            orientation, value = line_overlay
+            if orientation == "horizontal":
+                ax.axhline(value, color="#c50623", linewidth=2, linestyle="--")
+            else:
+                ax.axvline(value, color="#c50623", linewidth=2, linestyle="--")
+        ax.set_axis_off()
+        colorbar = fig.colorbar(image, cax=cax)
+        colorbar.ax.tick_params(labelsize=14)
+        if payload.get("colorbar_label"):
+            colorbar.set_label(payload["colorbar_label"], fontsize=16)
+        canvas.draw()
+        fig.savefig(path, dpi=dpi, facecolor="white")
+        debug_print(f"HeatmapCanvas high-resolution export saved={path}")
+        return True
+
+    def _export_payload_at_good_resolution(self, payload: dict) -> dict:
+        """Return a copy of payload resampled to the configured PNG export resolution."""
+        debug_print("HeatmapCanvas._export_payload_at_good_resolution called")
+        target = int(DEFAULTS.get("export_resolution", 1000))
+        debug_print(f"HeatmapCanvas export target resolution={target}")
+        z_grid = np.asarray(payload["z_grid"], dtype=float)
+        x_grid = np.asarray(payload["x_grid"], dtype=float)
+        y_grid = np.asarray(payload["y_grid"], dtype=float)
+        rows, cols = z_grid.shape[:2]
+        debug_print(f"HeatmapCanvas export source grid={cols}x{rows}")
+        if max(rows, cols) >= target:
+            debug_print("HeatmapCanvas export resample skipped")
+            return payload
+        scale = target / max(rows, cols)
+        target_rows = max(1, int(round(rows * scale)))
+        target_cols = max(1, int(round(cols * scale)))
+        debug_print(f"HeatmapCanvas export resample target={target_cols}x{target_rows}")
+        export_payload = dict(payload)
+        export_payload["z_grid"] = self._resample_array(z_grid, target_rows, target_cols)
+        export_payload["x_grid"] = self._resample_array(x_grid, target_rows, target_cols)
+        export_payload["y_grid"] = self._resample_array(y_grid, target_rows, target_cols)
+        overlay_grid = payload.get("overlay_grid")
+        if overlay_grid is not None:
+            debug_print("HeatmapCanvas export resampling overlay")
+            export_payload["overlay_grid"] = {
+                "x": self._resample_array(np.asarray(overlay_grid["x"], dtype=float), target_rows, target_cols),
+                "y": self._resample_array(np.asarray(overlay_grid["y"], dtype=float), target_rows, target_cols),
+                "z": self._resample_array(np.asarray(overlay_grid["z"], dtype=float), target_rows, target_cols),
+            }
+        debug_print("HeatmapCanvas export payload resampled")
+        return export_payload
+
+    def _resample_array(self, array, target_rows: int, target_cols: int):
+        """Linearly resample a 2D array to target rows/columns."""
+        debug_print("HeatmapCanvas._resample_array called")
+        source = np.asarray(array, dtype=float)
+        rows, cols = source.shape[:2]
+        debug_print(f"HeatmapCanvas resample array from={cols}x{rows} to={target_cols}x{target_rows}")
+        if rows == target_rows and cols == target_cols:
+            debug_print("HeatmapCanvas resample array skipped")
+            return source
+        source_cols = np.arange(cols)
+        source_rows = np.arange(rows)
+        target_col_positions = np.linspace(0, cols - 1, target_cols)
+        target_row_positions = np.linspace(0, rows - 1, target_rows)
+        resampled_cols = np.empty((rows, target_cols), dtype=float)
+        for row_index in range(rows):
+            resampled_cols[row_index] = np.interp(
+                target_col_positions,
+                source_cols,
+                source[row_index],
+            )
+        resampled = np.empty((target_rows, target_cols), dtype=float)
+        for col_index in range(target_cols):
+            resampled[:, col_index] = np.interp(
+                target_row_positions,
+                source_rows,
+                resampled_cols[:, col_index],
+            )
+        debug_print("HeatmapCanvas resample array complete")
+        return resampled
 
     def render_status(self, message: str) -> None:
         debug_print("HeatmapCanvas.render_status called")
@@ -337,6 +485,8 @@ class HeatmapCanvas(QWidget):
         figure = go.Figure()
         renderer = PLOT_TYPE_MAP.get(plot_type, PLOT_TYPE_MAP["heatmap"])
         hovertemplate = "x=%{x:.4f}<br>y=%{y:.4f}<br>value=%{z:.4f}<extra></extra>"
+        debug_print(f"HeatmapCanvas live Plotly heatmap data pixels={cols}x{rows}")
+        debug_print(f"HeatmapCanvas live Plotly fixed widget pixels={self.width()}x{_CANVAS_HEIGHT}")
         for trace in renderer.build_traces(
             x_values, y_values, z_grid, vmin, vmax, colorscale, colorbar_cfg, hovertemplate
         ):

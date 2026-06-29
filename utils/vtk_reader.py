@@ -1,8 +1,11 @@
 """VTK reader and slice interpolation helpers."""
 
+from time import perf_counter
+
 import numpy as np
 
 from app.debug import debug_print
+from config.constants import DEFAULTS
 
 
 class VTKReader:
@@ -21,10 +24,11 @@ class VTKReader:
 
     def load_file(self) -> None:
         debug_print("VTKReader.load_file called")
+        start = perf_counter()
         import pyvista as pv
 
         self.mesh = pv.read(self.file_path)
-        debug_print(f"VTKReader loaded file={self.file_path}")
+        debug_print(f"VTKReader loaded file={self.file_path} seconds={perf_counter() - start:.3f}")
         if self.mesh.n_arrays <= 0:
             raise ValueError(f"No scalar arrays found in {self.file_path}")
         self.scalar_name = self.mesh.array_names[0]
@@ -67,30 +71,124 @@ class VTKReader:
         debug_print(f"VTKReader created slice axis={axis} index={index}")
         return self._process_slice(slice_mesh, axis, scalar_name, component)
 
-    def get_interpolated_slice(self, axis: str = "y", index: int | None = None, scalar_name: str | None = None, component: int | None = None, resolution: int = 160):
+    def get_interpolated_slice(self, axis: str = "y", index: int | None = None, scalar_name: str | None = None, component: int | None = None, resolution: int | None = 160):
         debug_print("VTKReader.get_interpolated_slice called")
         scalar_name = scalar_name or self.scalar_name
-        cache_key = (scalar_name, component, axis.lower(), -1 if index is None else index, resolution)
+        resolution_key = "native" if resolution is None else int(resolution)
+        cache_key = (scalar_name, component, axis.lower(), -1 if index is None else index, resolution_key)
         if cache_key in self._interpolation_cache:
             debug_print("VTKReader cache hit")
             return self._interpolation_cache[cache_key]
-        x_coords, y_coords, scalars, stats = self.get_slice(axis=axis, index=index, scalar_name=scalar_name, component=component)
-        x_grid, y_grid, z_grid = self.interpolate_to_grid(x_coords, y_coords, scalars, resolution)
-        result = (x_grid, y_grid, z_grid, stats)
+        if not self.is_3d and self._can_use_structured_2d_grid():
+            debug_print("VTKReader using structured 2D grid fast path")
+            result = self._structured_2d_grid(scalar_name, component, resolution)
+        else:
+            if resolution is None:
+                resolution = DEFAULTS["native_fallback_resolution"]
+                debug_print(f"VTKReader native requested for unstructured path; fallback resolution={resolution}")
+            x_coords, y_coords, scalars, stats = self.get_slice(axis=axis, index=index, scalar_name=scalar_name, component=component)
+            x_grid, y_grid, z_grid = self.interpolate_to_grid(x_coords, y_coords, scalars, resolution)
+            result = (x_grid, y_grid, z_grid, stats)
         self._interpolation_cache[cache_key] = result
         debug_print("VTKReader cached interpolated slice")
         return result
 
     def interpolate_to_grid(self, x_coords, y_coords, scalars, resolution: int = 160):
         debug_print("VTKReader.interpolate_to_grid called")
+        start = perf_counter()
         from scipy.interpolate import griddata
 
         xi = np.linspace(np.min(x_coords), np.max(x_coords), resolution)
         yi = np.linspace(np.min(y_coords), np.max(y_coords), resolution)
         x_grid, y_grid = np.meshgrid(xi, yi)
         z_grid = griddata((x_coords, y_coords), scalars, (x_grid, y_grid), method="linear", fill_value=np.nan)
-        debug_print(f"VTKReader grid shape={z_grid.shape}")
+        debug_print(f"VTKReader grid shape={z_grid.shape} seconds={perf_counter() - start:.3f}")
         return x_grid, y_grid, z_grid
+
+    def _can_use_structured_2d_grid(self) -> bool:
+        debug_print("VTKReader._can_use_structured_2d_grid called")
+        if not self.dimensions or len(self.dimensions) != 3:
+            return False
+        if sum(1 for value in self.dimensions if value > 1) != 2:
+            return False
+        return int(np.prod(self.dimensions)) == len(self.mesh.points)
+
+    def _structured_2d_grid(self, scalar_name: str, component: int | None, resolution: int | None):
+        debug_print("VTKReader._structured_2d_grid called")
+        start = perf_counter()
+        scalars = self._select_component(self.mesh[scalar_name], component)
+        nx, ny, nz = (int(value) for value in self.dimensions)
+        if scalars.size != nx * ny * nz:
+            debug_print("VTKReader structured fast path size mismatch; falling back to interpolation")
+            if resolution is None:
+                resolution = DEFAULTS["native_fallback_resolution"]
+                debug_print(f"VTKReader structured mismatch native fallback resolution={resolution}")
+            x_coords, y_coords, scalars, stats = self._extract_2d_data(scalar_name, component)
+            x_grid, y_grid, z_grid = self.interpolate_to_grid(x_coords, y_coords, scalars, resolution)
+            return x_grid, y_grid, z_grid, stats
+
+        data3 = np.asarray(scalars).reshape((nz, ny, nx))
+        active_axes = [axis for axis, dim in enumerate((nx, ny, nz)) if dim > 1]
+        inactive_axis = next(axis for axis, dim in enumerate((nx, ny, nz)) if dim <= 1)
+        if inactive_axis == 0:
+            z_grid = data3[:, :, 0]
+        elif inactive_axis == 1:
+            z_grid = data3[:, 0, :]
+        else:
+            z_grid = data3[0, :, :]
+
+        bounds = self.mesh.bounds
+        axis_values = {
+            0: np.linspace(bounds[0], bounds[1], nx),
+            1: np.linspace(bounds[2], bounds[3], ny),
+            2: np.linspace(bounds[4], bounds[5], nz),
+        }
+        x_values = axis_values[active_axes[0]]
+        y_values = axis_values[active_axes[1]]
+        z_grid, x_values, y_values = self._resample_grid(z_grid, x_values, y_values, resolution)
+        x_grid, y_grid = np.meshgrid(x_values, y_values)
+        stats = {
+            "min": float(np.nanmin(scalars)),
+            "max": float(np.nanmax(scalars)),
+            "mean": float(np.nanmean(scalars)),
+            "std": float(np.nanstd(scalars)),
+        }
+        debug_print(f"VTKReader structured grid shape={z_grid.shape} seconds={perf_counter() - start:.3f}")
+        return x_grid, y_grid, z_grid, stats
+
+    def _resample_grid(self, z_grid, x_values, y_values, resolution: int | None):
+        debug_print("VTKReader._resample_grid called")
+        if resolution is None or resolution <= 0:
+            debug_print("VTKReader native resolution selected")
+            return z_grid, x_values, y_values
+        row_count, col_count = z_grid.shape
+        target_rows = int(resolution)
+        target_cols = int(resolution)
+        if target_rows == row_count and target_cols == col_count:
+            debug_print("VTKReader resample skipped")
+            return z_grid, x_values, y_values
+        source_cols = np.arange(col_count)
+        source_rows = np.arange(row_count)
+        target_col_positions = np.linspace(0, col_count - 1, target_cols)
+        target_row_positions = np.linspace(0, row_count - 1, target_rows)
+        resampled_cols = np.empty((row_count, target_cols), dtype=float)
+        for row_index in range(row_count):
+            resampled_cols[row_index] = np.interp(
+                target_col_positions,
+                source_cols,
+                z_grid[row_index],
+            )
+        resampled = np.empty((target_rows, target_cols), dtype=float)
+        for col_index in range(target_cols):
+            resampled[:, col_index] = np.interp(
+                target_row_positions,
+                source_rows,
+                resampled_cols[:, col_index],
+            )
+        x_resampled = np.interp(target_col_positions, source_cols, x_values)
+        y_resampled = np.interp(target_row_positions, source_rows, y_values)
+        debug_print(f"VTKReader resample rows={row_count}->{target_rows} cols={col_count}->{target_cols}")
+        return resampled, x_resampled, y_resampled
 
     def _extract_2d_data(self, scalar_name: str, component: int | None):
         debug_print("VTKReader._extract_2d_data called")

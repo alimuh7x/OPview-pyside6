@@ -1,6 +1,7 @@
 """Registry of detected datasets for a selected project."""
 
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 from app.debug import debug_print
@@ -22,6 +23,7 @@ class DatasetRegistry:
     def detect(self, verbose: bool = True) -> None:
         """Populate the registry from configured and unconfigured files."""
         debug_print("DatasetRegistry.detect called")
+        start = perf_counter()
         self._datasets = detect_available_datasets(self.vtk_folder, self.tab_configs)
         unconfigured_files = detect_unconfigured_vtk_files(self.vtk_folder, self.tab_configs)
         grouped: Dict[str, List[Path]] = {}
@@ -38,11 +40,13 @@ class DatasetRegistry:
                     module_label="Other Files",
                     module_icon="•",
                     file_glob=f"{base_name}_*{files[0].suffix}",
-                    matched_files=sorted(files),
+                    matched_files=files,
+                    matched_count=len(files),
                     dataset_config={"id": dataset_id, "label": base_name, "scalars": None},
                 )
             )
         self._by_id = {dataset.dataset_id: dataset for dataset in self._datasets}
+        debug_print(f"DatasetRegistry.detect complete datasets={len(self._datasets)} seconds={perf_counter() - start:.3f}")
         if verbose:
             debug_print(f"DatasetRegistry detected {len(self._datasets)} datasets")
 
@@ -65,6 +69,8 @@ class DatasetRegistry:
                 "id": dataset.dataset_id,
                 "label": dataset.label,
                 "files": [str(path.resolve()) for path in dataset.matched_files],
+                "file_count": dataset.matched_count,
+                "files_limited": dataset.files_limited,
                 "dataset_config": dataset.dataset_config,
                 "module_id": dataset.module_id,
                 "module_label": dataset.module_label,
