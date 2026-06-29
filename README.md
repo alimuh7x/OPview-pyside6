@@ -44,10 +44,8 @@ Both launchers check for Python, create the Windows virtual environment `venv-wi
 ### First-time setup (Linux / macOS / WSL)
 
 ```bash
-chmod +x setup.sh
-./setup.sh
-source venv/bin/activate
-python main.py
+chmod +x opview.sh
+./opview.sh
 ```
 
 ### Running the application
@@ -64,11 +62,32 @@ For no-GPU software rendering, use:
 OPview-No-GPU.bat
 ```
 
+To scan a specific project folder, or a folder containing projects, pass the path from PowerShell or Command Prompt:
+
+```powershell
+.\opview.bat E:\RUB\OpenPhase\MyProject
+.\OPview-No-GPU.bat E:\RUB\OpenPhase\MyProject
+```
+
+If the path contains spaces, wrap it in quotes:
+
+```powershell
+.\opview.bat "E:\RUB\OpenPhase\My Project"
+.\OPview-No-GPU.bat "E:\RUB\OpenPhase\My Project"
+```
+
+Double-clicking a launcher scans the OPView folder itself. Use PowerShell or a shortcut argument when you want to pass a different project path.
+
 On Linux / macOS / WSL, use:
 
 ```bash
-source venv/bin/activate
-python main.py
+./opview.sh
+```
+
+To scan a specific project folder, or a folder containing projects, pass the path:
+
+```bash
+./opview.sh /path/to/project-or-projects-folder
 ```
 
 When done, deactivate the virtual environment:
@@ -88,7 +107,7 @@ deactivate
 
 ## Usage
 
-1. Start the app with `opview.bat` on Windows, `OPview-No-GPU.bat` for software rendering, or `python main.py` on Linux / macOS / WSL.
+1. Start the app with `opview.bat` on Windows, `OPview-No-GPU.bat` for software rendering, or `./opview.sh` on Linux / macOS / WSL.
 2. Select or add a project in the sidebar.
 3. Choose **Single View**, **Multi View**, or **Custom Graph** from the top tabs.
 4. Use **Help > Documentation** for the complete local guide.

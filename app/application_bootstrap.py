@@ -15,9 +15,11 @@ _FONTS_DIR = Path(__file__).parent.parent / "assets" / "fonts"
 class ApplicationBootstrap:
     """Create and launch the QApplication and main window."""
 
-    def __init__(self) -> None:
+    def __init__(self, project_path: Path | None = None) -> None:
         debug_print("ApplicationBootstrap.__init__ start")
         self._application: QApplication | None = None
+        self._project_path = Path(project_path).expanduser() if project_path else None
+        debug_print(f"ApplicationBootstrap project_path={self._project_path}")
         self._style_name = "windows11"
         debug_print("ApplicationBootstrap.__init__ complete")
 
@@ -49,7 +51,7 @@ class ApplicationBootstrap:
     def build_main_window(self) -> MainWindow:
         debug_print("ApplicationBootstrap.build_main_window called")
         self.get_application()
-        window = MainWindow()
+        window = MainWindow(project_path=self._project_path)
         debug_print("MainWindow instance created")
         return window
 

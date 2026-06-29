@@ -31,7 +31,7 @@ from utils.project_scanner import scan_project_folders
 class MainWindow(QMainWindow):
     """Top-level window that coordinates the sidebar and content tabs."""
 
-    def __init__(self) -> None:
+    def __init__(self, project_path: Path | None = None) -> None:
         debug_print("MainWindow.__init__ start")
         super().__init__()
         self.sidebar_widget: SidebarWidget | None = None
@@ -43,6 +43,8 @@ class MainWindow(QMainWindow):
         self.file_watcher: FileWatcherService | None = None
         self.sidebar_toggle_button: QPushButton | None = None
         self._settings = QSettings("OPview", "OPview")
+        self._project_path = Path(project_path).expanduser() if project_path else None
+        debug_print(f"MainWindow project_path={self._project_path}")
         self._build_window()
         self._connect_signals()
         self._load_initial_projects()
@@ -497,5 +499,5 @@ class MainWindow(QMainWindow):
     def _load_initial_projects(self) -> None:
         debug_print("MainWindow._load_initial_projects called")
         assert self.sidebar_widget is not None
-        self.sidebar_widget.set_projects(scan_project_folders())
+        self.sidebar_widget.set_projects(scan_project_folders(self._project_path))
         debug_print("MainWindow initial projects loaded")

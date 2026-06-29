@@ -8,6 +8,18 @@ echo   OPview - PySide6 VTK Viewer
 echo ================================================
 echo.
 
+rem --- Optional project path argument ---
+set PROJECT_PATH=%~1
+if defined PROJECT_PATH (
+    echo [DEBUG] Project path argument: "%PROJECT_PATH%"
+    if not exist "%PROJECT_PATH%\" (
+        echo [ERROR] Project path does not exist or is not a directory: "%PROJECT_PATH%"
+        pause & exit /b 1
+    )
+) else (
+    echo [DEBUG] No project path argument provided; OPView will scan the launcher directory.
+)
+
 rem --- Locate Python ---
 set PYTHON=
 for %%P in (python python3) do (
@@ -103,8 +115,13 @@ echo [OK] Dependencies installed.
 rem --- Launch app ---
 echo.
 echo [>>] Launching OPview...
-echo.
-"%VENV_PYTHON%" "%~dp0main.py"
+if defined PROJECT_PATH (
+    echo [DEBUG] Running: "%VENV_PYTHON%" "%~dp0main.py" "%PROJECT_PATH%"
+    "%VENV_PYTHON%" "%~dp0main.py" "%PROJECT_PATH%"
+) else (
+    echo [DEBUG] Running: "%VENV_PYTHON%" "%~dp0main.py"
+    "%VENV_PYTHON%" "%~dp0main.py"
+)
 
 if errorlevel 1 (
     echo.

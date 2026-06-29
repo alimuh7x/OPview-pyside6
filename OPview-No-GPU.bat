@@ -10,6 +10,18 @@ echo.
 echo [DEBUG] OPview-No-GPU.bat started
 echo [DEBUG] Working directory: %CD%
 
+rem --- Optional project path argument ---
+set PROJECT_PATH=%~1
+if defined PROJECT_PATH (
+    echo [DEBUG] Project path argument: "%PROJECT_PATH%"
+    if not exist "%PROJECT_PATH%\" (
+        echo [ERROR] Project path does not exist or is not a directory: "%PROJECT_PATH%"
+        pause & exit /b 1
+    )
+) else (
+    echo [DEBUG] No project path argument provided; OPView will scan the launcher directory.
+)
+
 rem --- Force software rendering before Python, Qt, and QtWebEngine start ---
 set QT_OPENGL=software
 echo [DEBUG] QT_OPENGL=%QT_OPENGL%
@@ -135,8 +147,13 @@ rem --- Launch app ---
 echo.
 echo [>>] Launching OPview in no-GPU software rendering mode...
 echo [DEBUG] main.py path: %~dp0main.py
-echo.
-"%VENV_PYTHON%" "%~dp0main.py"
+if defined PROJECT_PATH (
+    echo [DEBUG] Running: "%VENV_PYTHON%" "%~dp0main.py" "%PROJECT_PATH%"
+    "%VENV_PYTHON%" "%~dp0main.py" "%PROJECT_PATH%"
+) else (
+    echo [DEBUG] Running: "%VENV_PYTHON%" "%~dp0main.py"
+    "%VENV_PYTHON%" "%~dp0main.py"
+)
 
 if errorlevel 1 (
     echo.
