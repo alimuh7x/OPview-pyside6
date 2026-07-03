@@ -6,6 +6,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **OPView** is a PySide6 desktop application for post-processing OpenPhase simulation output: VTK heatmaps (Single View), side-by-side VTK comparison (Multi View), and plots of tabular `TextData` files (Custom Graph). It is a standalone git repository, even though it sits inside the OPStudio checkout at `external/OPview-pyside6`.
 
+## Packaging Status — NEXT STEP: Windows NSIS installer (untested)
+
+Branch `feature/packaging-installers` (2026-07-03) added CMake/CPack packaging:
+PyInstaller onedir freeze → Linux `.deb` + AppImage + Windows NSIS installer.
+See `packaging/README.md` for the full build documentation.
+
+**Done and verified (Linux):** `.deb` and AppImage built via
+`docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_packages.sh`
+install and launch on clean ubuntu:22.04 (GL path) and ubuntu:24.04
+(`OPVIEW_NO_GPU=1` software-rendering path). Linux release builds MUST happen in
+the 22.04 container — a freeze from a newer distro carries that distro's glibc
+requirement and fails on older targets.
+
+**Not done — continue here on Windows:**
+
+1. Prerequisites: CMake >= 3.22, NSIS (`makensis` on PATH), Python 3.10–3.14
+   (3.14 needs vtk >= 9.6.2), all on PATH.
+2. Build and package (from the repo root, PowerShell or cmd):
+   ```bat
+   cmake -S . -B build
+   cmake --build build          :: venv -> pip -> PyInstaller freeze
+   ctest --test-dir build -R opview_frozen_version --output-on-failure
+   cpack --config build\CPackConfig.cmake -B build\packages
+   ```
+   Expected artifact: `build\packages\OPView-2.1.0-win64.exe`.
+3. Verify the freeze before packaging: `build\dist\OPView\OPView.exe --version`
+   exits 0 but prints nothing (windowed exe, no console — expected); check
+   `build\dist\OPView\_internal\` contains `assets\`, `doc\`, `version.txt`,
+   `plotly\package_data\plotly.min.js`, and `PySide6\QtWebEngineProcess.exe`.
+4. Verify the installer: install → Start-menu shortcut "OPView" launches; open
+   `Project1\` and confirm the Single View heatmap renders (exercises the
+   bundled plotly.min.js + QtWebEngine end to end); install-over-install
+   upgrades cleanly; uninstall removes `%ProgramFiles%\OPView` + shortcut.
+5. If the frozen app fails to start, run `OPView.exe` from a console anyway —
+   PyInstaller shows missing-module/DLL errors in a dialog; also consider
+   temporarily setting `console=True` in `packaging/opview.spec` to debug.
+
+**Known caveats:**
+- 16 of 144 unit tests fail on `main` and the branch alike — the tests are
+  stale relative to the code (e.g. expect `HistogramCanvas._axes`, removed when
+  canvases moved off matplotlib). Pre-existing; not a packaging regression. The
+  packaging gate is the `opview_frozen_version` ctest, not `opview_unittests`.
+- Long-term follow-up (not started): build OPView into the OPStudio installer —
+  `add_subdirectory(OPview-pyside6)` from opstudio's `external/CMakeLists.txt`,
+  add component `opview` to the parent `CPACK_COMPONENTS_ALL`, switch the
+  Windows install DESTINATION from `.` to `opview/` (see the CPack section at
+  the bottom of `CMakeLists.txt`).
+- No LICENSE file in this repo yet, so the NSIS license page is skipped
+  (`CPACK_RESOURCE_FILE_LICENSE` deliberately unset).
+
 ## Setup and Running
 
 ```bash
@@ -19,7 +69,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 venv/bin/python main.py [project_path]
 ```
 
-Windows uses `opview.bat` (venv dir `venv-windows`) or `OPview-No-GPU.bat` (disables GPU-accelerated QtWebEngine rendering for VMs). Python 3.8+ required; Python 3.14 is incompatible with VTK.
+Windows uses `opview.bat` (venv dir `venv-windows`) or `OPview-No-GPU.bat` (disables GPU-accelerated QtWebEngine rendering for VMs). Python 3.8+ required; Python 3.14 needs vtk >= 9.6.2 (first release with cp314 wheels).
 
 Pyright is configured (`pyrightconfig.json`) to resolve imports against `./venv`.
 
