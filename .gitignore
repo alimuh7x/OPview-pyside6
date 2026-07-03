@@ -9,6 +9,10 @@ venv-windows/
 .venv/
 env/
 
+# CMake / packaging build trees
+build/
+build-*/
+
 # Claude / editor internals
 .claude/
 .codex

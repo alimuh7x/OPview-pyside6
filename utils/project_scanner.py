@@ -21,7 +21,7 @@ def scan_project_folders(base_path: Path | None = None, quick_scan: bool = True)
 
     candidates = [base_path] if _is_project_folder(base_path) else [
         item for item in base_path.iterdir()
-        if item.is_dir() and item.name not in SKIP_FOLDERS and not item.name.startswith(".")
+        if _safe_is_dir(item) and item.name not in SKIP_FOLDERS and not item.name.startswith(".")
     ]
     debug_print(f"scan_project_folders candidate count={len(candidates)}")
     for item in candidates:
@@ -30,9 +30,18 @@ def scan_project_folders(base_path: Path | None = None, quick_scan: bool = True)
     return projects
 
 
+def _safe_is_dir(path: Path) -> bool:
+    """is_dir() that treats unreadable paths as absent instead of raising."""
+    try:
+        return path.is_dir()
+    except OSError as exc:
+        debug_print(f"_safe_is_dir error path={path} error={exc}")
+        return False
+
+
 def _is_project_folder(project_dir: Path) -> bool:
     debug_print(f"_is_project_folder called path={project_dir}")
-    has_vtk = (project_dir / "VTK").is_dir()
+    has_vtk = _safe_is_dir(project_dir / "VTK")
     has_textdata = _find_textdata_path(project_dir) is not None
     debug_print(f"_is_project_folder has_vtk={has_vtk} has_textdata={has_textdata}")
     return has_vtk or has_textdata
@@ -41,7 +50,7 @@ def _is_project_folder(project_dir: Path) -> bool:
 def _add_project_if_supported(projects: Dict[str, Dict[str, Any]], item: Path, quick_scan: bool) -> None:
     vtk_path = item / "VTK"
     textdata_path = _find_textdata_path(item)
-    has_vtk = vtk_path.is_dir()
+    has_vtk = _safe_is_dir(vtk_path)
     has_textdata = textdata_path is not None
     if not has_vtk and not has_textdata:
         debug_print(f"Skipping folder without VTK/TextData: {item}")
@@ -151,7 +160,7 @@ def _scan_vtk_dir(directory: Path) -> List[str]:
 def _find_textdata_path(project_dir: Path) -> Path | None:
     for variant in ("TextData", "Textdata", "textdata", "TEXTDATA"):
         candidate = project_dir / variant
-        if candidate.is_dir():
+        if _safe_is_dir(candidate):
             return candidate
     return None
 

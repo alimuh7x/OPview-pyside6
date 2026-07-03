@@ -1,0 +1,254 @@
+# 3.22 = Ubuntu 22.04's apt cmake; needed features: file(CHMOD) 3.19,
+# find_package version ranges 3.19, DEB zstd compression 3.22
+cmake_minimum_required(VERSION 3.22)
+
+#-----------------------------------------------------------------------------
+# Standalone vs. embedded in the OPStudio superproject
+#-----------------------------------------------------------------------------
+if(NOT DEFINED PROJECT_NAME)
+    set(OPVIEW_STANDALONE TRUE)
+endif()
+
+set(OPVIEW_VERSION "" CACHE STRING "OPView package version (default 2.1.0, or inherited from OPStudio)")
+if(NOT OPVIEW_VERSION)
+    if(DEFINED OPStudio_VERSION)
+        set(OPVIEW_VERSION ${OPStudio_VERSION})
+    else()
+        set(OPVIEW_VERSION "2.1.0")
+    endif()
+endif()
+
+project(OPView VERSION ${OPVIEW_VERSION} LANGUAGES NONE)
+
+#-----------------------------------------------------------------------------
+# Python discovery (Python 3.14 needs vtk >= 9.6.2 for cp314 wheels)
+#-----------------------------------------------------------------------------
+set(OPVIEW_PYTHON_EXECUTABLE "" CACHE FILEPATH "Python interpreter used to create the freeze venv")
+if(NOT OPVIEW_PYTHON_EXECUTABLE)
+    find_package(Python3 3.10...<3.15 COMPONENTS Interpreter REQUIRED)
+    set(OPVIEW_PYTHON_EXECUTABLE ${Python3_EXECUTABLE})
+endif()
+message(STATUS "OPView freeze Python: ${OPVIEW_PYTHON_EXECUTABLE}")
+
+set(OPVIEW_VENV ${CMAKE_CURRENT_BINARY_DIR}/pyi-venv)
+if(WIN32)
+    set(OPVIEW_VENV_PY ${OPVIEW_VENV}/Scripts/python.exe)
+else()
+    set(OPVIEW_VENV_PY ${OPVIEW_VENV}/bin/python)
+endif()
+
+#-----------------------------------------------------------------------------
+# 1) Virtual environment
+#-----------------------------------------------------------------------------
+add_custom_command(OUTPUT ${OPVIEW_VENV_PY}
+    COMMAND ${OPVIEW_PYTHON_EXECUTABLE} -m venv ${OPVIEW_VENV}
+    COMMENT "Creating PyInstaller venv"
+)
+
+#-----------------------------------------------------------------------------
+# 2) Python dependencies (re-runs when requirements.txt changes)
+#-----------------------------------------------------------------------------
+set(PIP_STAMP ${CMAKE_CURRENT_BINARY_DIR}/pip-install.stamp)
+add_custom_command(OUTPUT ${PIP_STAMP}
+    COMMAND ${OPVIEW_VENV_PY} -m pip install --upgrade pip
+    COMMAND ${OPVIEW_VENV_PY} -m pip install -r ${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt
+            "pyinstaller>=6.10" "pyinstaller-hooks-contrib>=2025.0"
+    COMMAND ${CMAKE_COMMAND} -E touch ${PIP_STAMP}
+    DEPENDS ${OPVIEW_VENV_PY} ${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt
+    COMMENT "Installing Python dependencies + PyInstaller"
+)
+
+#-----------------------------------------------------------------------------
+# 3) version.txt baked into the bundle (read by app/version.py)
+#-----------------------------------------------------------------------------
+set(OPVIEW_VERSION_FILE ${CMAKE_CURRENT_BINARY_DIR}/version.txt)
+file(WRITE ${OPVIEW_VERSION_FILE} "${OPVIEW_VERSION}\n")
+
+#-----------------------------------------------------------------------------
+# 4) PyInstaller freeze (onedir)
+#-----------------------------------------------------------------------------
+file(GLOB_RECURSE OPVIEW_PY_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/main.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/app/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/config/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/data/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/graphs/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/multi_view/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/sidebar/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/single_view/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/utils/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/viewer/*.py
+)
+set(OPVIEW_DIST ${CMAKE_CURRENT_BINARY_DIR}/dist/OPView)
+if(WIN32)
+    set(OPVIEW_EXE ${OPVIEW_DIST}/OPView.exe)
+else()
+    set(OPVIEW_EXE ${OPVIEW_DIST}/OPView)
+endif()
+add_custom_command(OUTPUT ${OPVIEW_EXE}
+    COMMAND ${CMAKE_COMMAND} -E env OPVIEW_VERSION_FILE=${OPVIEW_VERSION_FILE}
+            ${OPVIEW_VENV_PY} -m PyInstaller --noconfirm --clean
+            --distpath ${CMAKE_CURRENT_BINARY_DIR}/dist
+            --workpath ${CMAKE_CURRENT_BINARY_DIR}/pyi-build
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/opview.spec
+    DEPENDS ${PIP_STAMP} ${OPVIEW_PY_SOURCES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/packaging/opview.spec
+            ${OPVIEW_VERSION_FILE}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Freezing OPView with PyInstaller (onedir)"
+)
+add_custom_target(opview_freeze ALL DEPENDS ${OPVIEW_EXE})
+
+#-----------------------------------------------------------------------------
+# Install rules (component 'opview' everywhere for superproject reuse)
+#-----------------------------------------------------------------------------
+if(WIN32)
+    install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION .
+        USE_SOURCE_PERMISSIONS COMPONENT opview)
+else()
+    install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION lib/opview
+        USE_SOURCE_PERMISSIONS COMPONENT opview)
+    install(PROGRAMS packaging/linux/opview DESTINATION bin COMPONENT opview)
+    install(FILES packaging/linux/opview.desktop
+        DESTINATION share/applications COMPONENT opview)
+    install(FILES assets/OP_Logo.png
+        DESTINATION share/pixmaps RENAME opview.png COMPONENT opview)
+endif()
+
+#-----------------------------------------------------------------------------
+# Tests
+#-----------------------------------------------------------------------------
+enable_testing()
+add_test(NAME opview_frozen_version COMMAND ${OPVIEW_EXE} --version)
+set_tests_properties(opview_frozen_version PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 120
+)
+add_test(NAME opview_unittests
+    COMMAND ${OPVIEW_VENV_PY} -m unittest discover tests
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+)
+set_tests_properties(opview_unittests PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 600
+)
+
+#-----------------------------------------------------------------------------
+# AppImage (Linux, explicit target — mirrors OPStudio's 'appimage' target;
+# uses appimagetool, NOT linuxdeployqt: the PyInstaller bundle already ships
+# its own Qt and must not be re-deployed/patched)
+#-----------------------------------------------------------------------------
+if(UNIX AND NOT APPLE)
+    set(OPVIEW_APPIMAGETOOL "" CACHE FILEPATH "Path to appimagetool (downloaded automatically if empty)")
+    if(NOT OPVIEW_APPIMAGETOOL)
+        find_program(_APPIMAGETOOL_ON_PATH appimagetool)
+        if(_APPIMAGETOOL_ON_PATH)
+            set(OPVIEW_APPIMAGETOOL ${_APPIMAGETOOL_ON_PATH})
+        else()
+            set(OPVIEW_APPIMAGETOOL ${CMAKE_CURRENT_BINARY_DIR}/appimagetool-x86_64.AppImage)
+            if(NOT EXISTS ${OPVIEW_APPIMAGETOOL})
+                message(STATUS "Downloading appimagetool")
+                file(DOWNLOAD
+                    https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+                    ${OPVIEW_APPIMAGETOOL}
+                    SHOW_PROGRESS STATUS _dl_status
+                )
+                list(GET _dl_status 0 _dl_code)
+                if(NOT _dl_code EQUAL 0)
+                    file(REMOVE ${OPVIEW_APPIMAGETOOL})
+                    message(WARNING "appimagetool download failed; the opview_appimage target will not work until -DOPVIEW_APPIMAGETOOL is provided")
+                endif()
+            endif()
+            if(EXISTS ${OPVIEW_APPIMAGETOOL})
+                file(CHMOD ${OPVIEW_APPIMAGETOOL} PERMISSIONS
+                    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                    GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+            endif()
+        endif()
+    endif()
+
+    set(PACKAGES_DIR ${CMAKE_CURRENT_BINARY_DIR}/packages)
+    set(OPVIEW_APPDIR ${CMAKE_CURRENT_BINARY_DIR}/AppDir)
+    set(OPVIEW_APPIMAGE_NAME OPView-${OPVIEW_VERSION}-x86_64.AppImage)
+    add_custom_target(opview_appimage
+        COMMAND ${CMAKE_COMMAND} -E echo "=== [appimage] Staging AppDir ==="
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${OPVIEW_APPDIR}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${OPVIEW_APPDIR}/usr/lib
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${OPVIEW_DIST} ${OPVIEW_APPDIR}/usr/lib/opview
+        # copy_directory does not preserve exec bits -> restore them
+        COMMAND chmod +x ${OPVIEW_APPDIR}/usr/lib/opview/OPView
+        COMMAND chmod +x ${OPVIEW_APPDIR}/usr/lib/opview/_internal/PySide6/Qt/libexec/QtWebEngineProcess
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/AppRun ${OPVIEW_APPDIR}/AppRun
+        COMMAND chmod +x ${OPVIEW_APPDIR}/AppRun
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/opview.desktop ${OPVIEW_APPDIR}/opview.desktop
+        COMMAND ${CMAKE_COMMAND} -E copy
+                ${CMAKE_CURRENT_SOURCE_DIR}/assets/OP_Logo.png ${OPVIEW_APPDIR}/opview.png
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${PACKAGES_DIR}
+        COMMAND ${CMAKE_COMMAND} -E echo "=== [appimage] Running appimagetool ==="
+        COMMAND ${CMAKE_COMMAND} -E env VERSION=${OPVIEW_VERSION} ARCH=x86_64
+                ${OPVIEW_APPIMAGETOOL} --appimage-extract-and-run
+                ${OPVIEW_APPDIR} ${PACKAGES_DIR}/${OPVIEW_APPIMAGE_NAME}
+        COMMAND ${CMAKE_COMMAND} -E echo "=== [appimage] Done: ${PACKAGES_DIR}/${OPVIEW_APPIMAGE_NAME} ==="
+        DEPENDS ${OPVIEW_EXE}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
+endif()
+
+#-----------------------------------------------------------------------------
+# CPack (standalone builds only; the superproject provides its own)
+#-----------------------------------------------------------------------------
+if(OPVIEW_STANDALONE)
+    if(WIN32)
+        set(CPACK_GENERATOR "NSIS")
+    else()
+        set(CPACK_GENERATOR "DEB")
+    endif()
+    set(CPACK_PACKAGE_NAME "OPView")
+    set(CPACK_PACKAGE_VENDOR "OpenPhase Solutions GmbH")
+    set(CPACK_PACKAGE_CONTACT "office@openphase-solutions.com")
+    set(CPACK_PACKAGE_VERSION ${OPVIEW_VERSION})
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY "OPView")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Viewer for OpenPhase simulation results")
+
+    # Debian package
+    set(CPACK_DEBIAN_PACKAGE_NAME "opview")
+    set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+    set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "amd64")
+    # dpkg-shlibdeps cannot process a PyInstaller tree (private bundled libs,
+    # $ORIGIN rpaths) -> dependencies are listed by hand below
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+    set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+    set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "OpenPhase Solutions GmbH <office@openphase-solutions.com>")
+    set(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://www.openphase-solutions.com")
+    # ~1 GB payload: zstd keeps packaging time reasonable (xz takes minutes)
+    set(CPACK_DEBIAN_COMPRESSION_TYPE "zstd")
+    # System libraries the PySide6/QtWebEngine + VTK bundle does not ship
+    # (X11/xcb stack, Chromium NSS/GL/cups); '| t64' alternatives cover
+    # Ubuntu 24.04's time_t transition
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS
+        "libc6, libstdc++6, libgl1, libegl1, libopengl0, libglib2.0-0 | libglib2.0-0t64, libfontconfig1, libfreetype6, libdbus-1-3, libnss3, libnspr4, libasound2 | libasound2t64, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render0, libxcb-render-util0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xkb1, libxext6, libxcomposite1, libxdamage1, libxfixes3, libxrandr2, libxrender1, libxtst6, libxi6, libsm6, libice6, libdrm2, libgbm1, libcups2 | libcups2t64, libwayland-server0, libwayland-client0, libwayland-cursor0, libwayland-egl1")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "fonts-liberation | fonts-dejavu-core")
+
+    # NSIS installer
+    set(CPACK_NSIS_DISPLAY_NAME "OPView")
+    set(CPACK_NSIS_PACKAGE_NAME "OPView")
+    set(CPACK_NSIS_CONTACT "office@openphase-solutions.com")
+    set(CPACK_NSIS_URL_INFO_ABOUT "https://www.openphase-solutions.com")
+    set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/OPView.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/OPView.ico")
+    set(CPACK_NSIS_INSTALLED_ICON_NAME "OPView.exe")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_CREATE_ICONS_EXTRA
+        "CreateShortCut \\\"$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\OPView.lnk\\\" \\\"$INSTDIR\\\\OPView.exe\\\""
+    )
+    set(CPACK_NSIS_DELETE_ICONS_EXTRA
+        "Delete \\\"$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\OPView.lnk\\\""
+    )
+
+    include(CPack)
+    set(CPACK_COMPONENTS_ALL opview)
+    set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
+endif()

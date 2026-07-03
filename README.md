@@ -121,4 +121,9 @@ deactivate
 
 ## Python Version
 
-Requires Python 3.8 or higher (Python 3.14 is not compatible with VTK).
+Requires Python 3.8 or higher (Python 3.14 requires VTK >= 9.6.2, the first release with Python 3.14 wheels).
+
+## Packaging / Installers
+
+See [packaging/README.md](packaging/README.md) for building the Linux `.deb`,
+the Linux AppImage, and the Windows NSIS installer via CMake.

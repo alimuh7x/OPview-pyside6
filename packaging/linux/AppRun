@@ -1,0 +1,10 @@
+#!/bin/sh
+APPDIR="$(dirname "$(readlink -f "$0")")"
+# GPU opt-out for VMs / GL-less X servers (mirrors OPview-No-GPU.bat):
+# disables Chromium GPU compositing and Qt's GLX/EGL integration
+if [ -n "$OPVIEW_NO_GPU" ]; then
+    export QTWEBENGINE_CHROMIUM_FLAGS="${QTWEBENGINE_CHROMIUM_FLAGS} --disable-gpu"
+    export QT_XCB_GL_INTEGRATION=none
+    export QT_OPENGL=software
+fi
+exec "$APPDIR/usr/lib/opview/OPView" "$@"
