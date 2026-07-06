@@ -3,13 +3,16 @@
 # target — so the PyInstaller bundle carries no newer-glibc requirements.
 #
 # Usage (from the repo root):
-#   docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_packages.sh
+#   docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_packages.sh [build_dir] [version]
 #
-# Artifacts land in build-linux/packages/.
+# Artifacts land in <build_dir>/packages/ (default build-linux/). The
+# optional version arg overrides OPVIEW_VERSION (default 2.1.0, see
+# CMakeLists.txt); leave empty to keep the default.
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
 BUILD_DIR=${1:-build-linux}
+VERSION=${2:-}
 
 echo "=== Installing build prerequisites ==="
 apt-get update -q
@@ -37,7 +40,7 @@ apt-get install -y -q libglib2.0-0 \
 python3 -m pip install --quiet "cmake>=3.22"
 
 echo "=== Configure + freeze ==="
-cmake -S . -B "$BUILD_DIR"
+cmake -S . -B "$BUILD_DIR" -DOPVIEW_VERSION="$VERSION"
 cmake --build "$BUILD_DIR"
 
 echo "=== Smoke test ==="

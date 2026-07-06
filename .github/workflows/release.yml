@@ -1,0 +1,93 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch: {}
+
+jobs:
+  compute-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Derive package version from tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-linux:
+    needs: compute-version
+    runs-on: ubuntu-latest
+    container: ubuntu:22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build .deb + AppImage
+        run: bash packaging/build_linux_packages.sh build-linux "${{ needs.compute-version.outputs.version }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opview-linux
+          path: |
+            build-linux/packages/*.deb
+            build-linux/packages/*.AppImage
+          if-no-files-found: error
+
+  build-windows:
+    needs: compute-version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install NSIS
+        run: choco install nsis -y
+
+      - name: Configure
+        run: cmake -S . -B build -DOPVIEW_VERSION="${{ needs.compute-version.outputs.version }}"
+
+      - name: Build (venv + pip + PyInstaller freeze)
+        run: cmake --build build
+
+      - name: Smoke test frozen exe
+        run: ctest --test-dir build -R opview_frozen_version --output-on-failure
+
+      - name: Package NSIS installer
+        run: cpack --config build\CPackConfig.cmake -B build\packages
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: opview-windows
+          path: build\packages\*.exe
+          if-no-files-found: error
+
+  release:
+    needs: [build-linux, build-windows]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: opview-linux
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: opview-windows
+          path: dist/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: dist/*

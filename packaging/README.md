@@ -24,8 +24,8 @@ at runtime and fails on older targets with errors like
 A containerized build does this reproducibly:
 
 ```bash
-docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_packages.sh
-# artifacts land in build-linux/packages/
+docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_packages.sh [build_dir] [version]
+# artifacts land in <build_dir>/packages/ (default build-linux/)
 ```
 
 Manual build (on a suitably old machine):
@@ -49,6 +49,13 @@ cpack --config build\CPackConfig.cmake -B build\packages   :: -> OPView-<version
 
 Note: on Windows the app is built windowed (no console), so `OPView --version`
 prints nothing but still exits 0 — the ctest smoke test relies on the exit code.
+
+## CI (GitHub Actions)
+
+`.github/workflows/release.yml` runs both platforms above and uploads the
+resulting `.deb`, AppImage, and `.exe` as downloadable run artifacts on
+every manual trigger (Actions tab → "Run workflow"), and additionally
+publishes them to a GitHub Release when triggered by a `vX.Y.Z` tag push.
 
 ## Version
 

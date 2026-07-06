@@ -19,6 +19,14 @@ install and launch on clean ubuntu:22.04 (GL path) and ubuntu:24.04
 the 22.04 container — a freeze from a newer distro carries that distro's glibc
 requirement and fails on older targets.
 
+**Added:** `.github/workflows/release.yml` — GitHub Actions pipeline that
+builds both platforms (Linux in an `ubuntu:22.04` container via the script
+above, Windows via the steps below) and uploads them as run artifacts on
+`workflow_dispatch`, or as GitHub Release assets on a `vX.Y.Z` tag push. This
+gives the Windows NSIS job its first automated run — trigger it manually
+from the Actions tab before cutting a real tag, since that path is still
+unverified on real hardware/CI.
+
 **Not done — continue here on Windows:**
 
 1. Prerequisites: CMake >= 3.22, NSIS (`makensis` on PATH), Python 3.10–3.14
