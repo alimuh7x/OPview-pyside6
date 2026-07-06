@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 from app.debug import debug_print
+from app.version import get_version
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -18,6 +19,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         nargs="?",
         type=Path,
         help="Optional project folder or folder containing OpenPhase projects to scan at startup.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"OPView {get_version()}",
     )
     args = parser.parse_args(argv)
     debug_print(f"parse_args project_path={args.project_path}")

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OPView
+Comment=Viewer for OpenPhase simulation results
+Exec=opview %f
+Icon=opview
+Terminal=false
+Categories=Science;Physics;DataVisualization;

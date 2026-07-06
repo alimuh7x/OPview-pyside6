@@ -23,7 +23,33 @@ A desktop post-processing application for inspecting OpenPhase simulation output
 
 ![OPView Custom Graph](assets/Custom-Graph.png)
 
+## Installing a Release Build
+
+For most users this is simpler than the from-source setup below: download a
+prebuilt, self-contained package (no Python/pip/venv required) from the
+[Releases page](https://github.com/schiedung/opview/releases).
+
+- **Windows**: download and run `OPView-<version>-win64.exe`. It installs to
+  Program Files and adds a Start Menu "OPView" shortcut. To uninstall, use
+  Windows Settings > Apps, or the shortcut in the Start Menu folder.
+- **Linux, `.deb` (Ubuntu 22.04+)**:
+  ```bash
+  sudo dpkg -i opview_<version>_amd64.deb
+  ```
+  then launch from the applications menu or run `opview` in a terminal. On a
+  VM or machine without working 3D acceleration, use
+  `OPVIEW_NO_GPU=1 opview` instead.
+- **Linux, AppImage (any distro)**:
+  ```bash
+  chmod +x OPView-<version>-x86_64.AppImage
+  ./OPView-<version>-x86_64.AppImage
+  ```
+  For no-GPU environments: `OPVIEW_NO_GPU=1 ./OPView-<version>-x86_64.AppImage`.
+
 ## Setup
+
+The rest of this section covers running OPView from source (for development
+or contributing) — skip it if you just installed a release build above.
 
 ### Windows
 
@@ -121,4 +147,12 @@ deactivate
 
 ## Python Version
 
-Requires Python 3.8 or higher (Python 3.14 is not compatible with VTK).
+Requires Python 3.8 or higher (Python 3.14 requires VTK >= 9.6.2, the first release with Python 3.14 wheels).
+
+## Packaging / Installers
+
+Looking to download a package rather than build one? See
+[Installing a Release Build](#installing-a-release-build) above.
+
+See [packaging/README.md](packaging/README.md) for building the Linux `.deb`,
+the Linux AppImage, and the Windows NSIS installer via CMake.
