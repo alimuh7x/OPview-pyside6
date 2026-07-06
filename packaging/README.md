@@ -41,11 +41,18 @@ cmake --build build --target opview_appimage               # -> build/packages/O
 ## Windows
 
 ```bat
-cmake -S . -B build
+cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build
 cpack --config build\CPackConfig.cmake -B build\packages   :: -> OPView-<version>-win64.exe
 ```
+
+`-G Ninja` matters: this project has `LANGUAGES NONE` (no compiler, just
+venv/pip/PyInstaller/CPack orchestration), so the default multi-config Visual
+Studio generator adds nothing but friction — `ctest` then fails with "Test
+not available without configuration" unless every downstream `ctest`/`cpack`
+call also gets an explicit `-C <config>`. Ninja needs to be on `PATH`
+(`choco install ninja`).
 
 Note: on Windows the app is built windowed (no console), so `OPView --version`
 prints nothing but still exits 0 — the ctest smoke test relies on the exit code.

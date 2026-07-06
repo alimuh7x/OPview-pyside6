@@ -29,11 +29,13 @@ unverified on real hardware/CI.
 
 **Not done — continue here on Windows:**
 
-1. Prerequisites: CMake >= 3.22, NSIS (`makensis` on PATH), Python 3.10–3.14
+1. Prerequisites: CMake >= 3.22, NSIS (`makensis` on PATH), Ninja
+   (`ninja` on PATH — the default multi-config VS generator breaks
+   `ctest`/`cpack` for this `LANGUAGES NONE` project), Python 3.10–3.14
    (3.14 needs vtk >= 9.6.2), all on PATH.
 2. Build and package (from the repo root, PowerShell or cmd):
    ```bat
-   cmake -S . -B build
+   cmake -S . -B build -G Ninja
    cmake --build build          :: venv -> pip -> PyInstaller freeze
    ctest --test-dir build -R opview_frozen_version --output-on-failure
    cpack --config build\CPackConfig.cmake -B build\packages

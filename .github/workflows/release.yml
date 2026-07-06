@@ -49,11 +49,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install NSIS
-        run: choco install nsis -y
+      - name: Install NSIS + Ninja
+        run: choco install nsis ninja -y
 
       - name: Configure
-        run: cmake -S . -B build -DOPVIEW_VERSION="${{ needs.compute-version.outputs.version }}"
+        # -G Ninja: this project has LANGUAGES NONE (no compiler needed, just
+        # venv/pip/PyInstaller/CPack orchestration), so the default multi-config
+        # Visual Studio generator only adds friction — ctest and cpack then
+        # require an explicit -C <config> they otherwise fail without.
+        run: cmake -S . -B build -G Ninja -DOPVIEW_VERSION="${{ needs.compute-version.outputs.version }}"
 
       - name: Build (venv + pip + PyInstaller freeze)
         run: cmake --build build
