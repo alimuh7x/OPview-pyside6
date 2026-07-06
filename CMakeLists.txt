@@ -202,6 +202,10 @@ endif()
 if(OPVIEW_STANDALONE)
     if(WIN32)
         set(CPACK_GENERATOR "NSIS")
+        # LANGUAGES NONE means no compiler ever sets CMAKE_SIZEOF_VOID_P, so
+        # CPack's own arch detection defaults to win32 even though the
+        # bundled Python/PySide6/VTK are 64-bit.
+        set(CPACK_SYSTEM_NAME "win64")
     else()
         set(CPACK_GENERATOR "DEB")
     endif()
