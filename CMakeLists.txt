@@ -103,7 +103,15 @@ add_custom_target(opview_freeze ALL DEPENDS ${OPVIEW_EXE})
 # Install rules (component 'opview' everywhere for superproject reuse)
 #-----------------------------------------------------------------------------
 if(WIN32)
-    install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION .
+    # Standalone: flat layout so CPACK_NSIS_INSTALLED_ICON_NAME (OPView.exe at
+    # $INSTDIR root) resolves. Embedded: nest under opview/ so OPView's bundled
+    # DLL closet (Qt6, VTK, Python runtime) can't collide with OPStudio's own.
+    if(OPVIEW_STANDALONE)
+        set(OPVIEW_WIN_INSTALL_DESTINATION .)
+    else()
+        set(OPVIEW_WIN_INSTALL_DESTINATION opview)
+    endif()
+    install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION ${OPVIEW_WIN_INSTALL_DESTINATION}
         USE_SOURCE_PERMISSIONS COMPONENT opview)
 else()
     install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION lib/opview
