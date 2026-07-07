@@ -137,7 +137,9 @@ add_test(NAME opview_unittests
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 set_tests_properties(opview_unittests PROPERTIES
-    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    # QTWEBENGINE_DISABLE_SANDBOX: CI runners execute tests as root, and
+    # Chromium's sandbox refuses to initialize under root without it.
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QTWEBENGINE_DISABLE_SANDBOX=1"
     TIMEOUT 600
 )
 
