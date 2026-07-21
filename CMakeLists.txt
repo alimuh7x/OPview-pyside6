@@ -20,6 +20,12 @@ endif()
 
 project(OPView VERSION ${OPVIEW_VERSION} LANGUAGES NONE)
 
+# Embedded: already included (and cached) by the OPStudio superproject before
+# add_subdirectory(external) - this is then a no-op. Standalone: this is the
+# only place CMAKE_INSTALL_BINDIR/LIBDIR/DATAROOTDIR get defined for the
+# install() rules below.
+include(GNUInstallDirs)
+
 #-----------------------------------------------------------------------------
 # Python discovery (Python 3.14 needs vtk >= 9.6.2 for cp314 wheels)
 #-----------------------------------------------------------------------------
@@ -80,6 +86,9 @@ file(GLOB_RECURSE OPVIEW_PY_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/viewer/*.py
 )
 set(OPVIEW_DIST ${CMAKE_CURRENT_BINARY_DIR}/dist/OPView)
+# Promote to the top-level scope: opview_dll_collision_check (top-level
+# CMakeLists.txt) needs this path but sits outside this directory's scope.
+set(OPVIEW_DIST ${OPVIEW_DIST} CACHE INTERNAL "OPView PyInstaller onedir dist directory")
 if(WIN32)
     set(OPVIEW_EXE ${OPVIEW_DIST}/OPView.exe)
 else()
@@ -104,23 +113,29 @@ add_custom_target(opview_freeze ALL DEPENDS ${OPVIEW_EXE})
 #-----------------------------------------------------------------------------
 if(WIN32)
     # Standalone: flat layout so CPACK_NSIS_INSTALLED_ICON_NAME (OPView.exe at
-    # $INSTDIR root) resolves. Embedded: nest under opview/ so OPView's bundled
-    # DLL closet (Qt6, VTK, Python runtime) can't collide with OPStudio's own.
+    # $INSTDIR root) resolves. Embedded: install into OPStudio's own
+    # ${CMAKE_INSTALL_BINDIR} (GNUInstallDirs, set by the superproject) so
+    # OPView.exe sits alongside OPStudio.exe like every other installed
+    # binary in this codebase. This merges OPView's bundled DLL closet (Qt6,
+    # VTK, Python runtime) into the same directory as OPStudio's own
+    # (Qt5, oneAPI) - a deliberate tradeoff for GNUInstallDirs consistency;
+    # see the opview_dll_collision_check target in the top-level
+    # CMakeLists.txt for the safety net against filename collisions.
     if(OPVIEW_STANDALONE)
         set(OPVIEW_WIN_INSTALL_DESTINATION .)
     else()
-        set(OPVIEW_WIN_INSTALL_DESTINATION opview)
+        set(OPVIEW_WIN_INSTALL_DESTINATION ${CMAKE_INSTALL_BINDIR})
     endif()
     install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION ${OPVIEW_WIN_INSTALL_DESTINATION}
         USE_SOURCE_PERMISSIONS COMPONENT opview)
 else()
-    install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION lib/opview
+    install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION ${CMAKE_INSTALL_LIBDIR}/opview
         USE_SOURCE_PERMISSIONS COMPONENT opview)
-    install(PROGRAMS packaging/linux/opview DESTINATION bin COMPONENT opview)
+    install(PROGRAMS packaging/linux/opview DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT opview)
     install(FILES packaging/linux/opview.desktop
-        DESTINATION share/applications COMPONENT opview)
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications COMPONENT opview)
     install(FILES assets/OP_Logo.png
-        DESTINATION share/pixmaps RENAME opview.png COMPONENT opview)
+        DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/pixmaps RENAME opview.png COMPONENT opview)
 endif()
 
 #-----------------------------------------------------------------------------
