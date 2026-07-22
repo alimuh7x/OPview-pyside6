@@ -231,6 +231,11 @@ if(OPVIEW_STANDALONE)
         # CPack's own arch detection defaults to win32 even though the
         # bundled Python/PySide6/VTK are 64-bit.
         set(CPACK_SYSTEM_NAME "win64")
+        # Same LANGUAGES NONE gap: CPack.cmake only defaults
+        # CPACK_NSIS_INSTALL_ROOT to $PROGRAMFILES64 when CMAKE_SIZEOF_VOID_P
+        # EQUAL 8, which never happens here - without this override the
+        # installer silently targets Program Files (x86).
+        set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
     else()
         set(CPACK_GENERATOR "DEB")
     endif()
