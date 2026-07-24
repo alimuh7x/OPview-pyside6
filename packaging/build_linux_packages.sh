@@ -16,7 +16,7 @@ VERSION=${2:-}
 
 echo "=== Installing build prerequisites ==="
 apt-get update -q
-apt-get install -y -q python3 python3-venv python3-pip binutils ca-certificates file >/dev/null
+apt-get install -y -q python3 python3-venv python3-pip binutils ca-certificates file patchelf >/dev/null
 # System libs that must be present BEFORE freezing: PyInstaller bundles the
 # dependency closure of the Qt/VTK libraries from this environment (e.g.
 # libglib-2.0, libxkbfile, the GTK theme + audio stacks) and deliberately
@@ -24,6 +24,17 @@ apt-get install -y -q python3 python3-venv python3-pip binutils ca-certificates 
 # frozen-app smoke test below still needs to import Qt. Missing bundleable
 # libs surface only at runtime on machines that lack them — keep this list
 # in sync with what the desktop dev machines have.
+#
+# libtiff5/libpcre3/libmpdec3 specifically: these carry sonames
+# (libtiff.so.5, libpcre.so.3, libmpdec.so.3) that PySide6's manylinux wheels
+# and Python's stdlib _decimal module were built against, but that Ubuntu
+# dropped or ABI-bumped starting with 24.04 (no `libtiff5`/`libpcre3` package
+# exists there at all; `libmpdec3` is absent on 24.04 and ABI-bumped to
+# `libmpdec4` on 26.04). No CPack Depends string can satisfy all supported
+# Ubuntu targets for these three, so they must travel bundled with the app
+# instead — installing them here lets PyInstaller's own dependency collector
+# pick up plain-named copies at freeze time on this (22.04) host, the only
+# place these old sonames still exist.
 apt-get install -y -q libglib2.0-0 \
     libgl1 libegl1 libopengl0 libfontconfig1 libdbus-1-3 \
     libnss3 libnspr4 libasound2 libxkbcommon0 libxkbcommon-x11-0 \
@@ -35,7 +46,8 @@ apt-get install -y -q libglib2.0-0 \
     libgtk-3-0 liblcms2-2 \
     libpulse0 libsndfile1 libflac8 libopus0 libvorbisenc2 libogg0 \
     libmpg123-0 libmp3lame0 \
-    libseccomp2 libunistring2 libatomic1 libapparmor1 >/dev/null
+    libseccomp2 libunistring2 libatomic1 libapparmor1 \
+    libtiff5 libpcre3 libmpdec3 >/dev/null
 # Ubuntu 22.04's apt cmake is 3.22 which works, but pip provides a current one
 python3 -m pip install --quiet "cmake>=3.22"
 
@@ -44,7 +56,7 @@ cmake -S . -B "$BUILD_DIR" -DOPVIEW_VERSION="$VERSION"
 cmake --build "$BUILD_DIR"
 
 echo "=== Smoke test ==="
-ctest --test-dir "$BUILD_DIR" -R opview_frozen_version --output-on-failure
+ctest --test-dir "$BUILD_DIR" -R opview_frozen --output-on-failure
 
 echo "=== .deb ==="
 cpack --config "$BUILD_DIR/CPackConfig.cmake" -B "$(pwd)/$BUILD_DIR/packages"

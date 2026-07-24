@@ -94,15 +94,34 @@ if(WIN32)
 else()
     set(OPVIEW_EXE ${OPVIEW_DIST}/OPView)
 endif()
+set(OPVIEW_FREEZE_EXTRA_COMMAND "")
+if(UNIX AND NOT APPLE)
+    # PyInstaller's own dependency analysis doesn't reach every private
+    # vendored .so (e.g. numpy.libs/scipy.libs copies, or libs only reachable
+    # through a dlopen'd Qt plugin like libqtiff.so) - a bare `ldd` (as
+    # OPStudio's deb-install CI check runs) can't resolve those, since it
+    # doesn't see the bootloader's runtime-injected LD_LIBRARY_PATH. Patch an
+    # additive $ORIGIN rpath onto every frozen file after the freeze so they
+    # resolve without relying on that env var.
+    find_program(PATCHELF patchelf)
+    if(NOT PATCHELF)
+        message(FATAL_ERROR "patchelf not found - required to fix rpaths in the frozen OPView bundle (see packaging/linux/fix_rpaths.sh)")
+    endif()
+    set(OPVIEW_FIX_RPATHS_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/fix_rpaths.sh)
+    set(OPVIEW_FREEZE_EXTRA_COMMAND
+        COMMAND bash ${OPVIEW_FIX_RPATHS_SCRIPT} ${OPVIEW_DIST})
+endif()
 add_custom_command(OUTPUT ${OPVIEW_EXE}
     COMMAND ${CMAKE_COMMAND} -E env OPVIEW_VERSION_FILE=${OPVIEW_VERSION_FILE}
             ${OPVIEW_VENV_PY} -m PyInstaller --noconfirm --clean
             --distpath ${CMAKE_CURRENT_BINARY_DIR}/dist
             --workpath ${CMAKE_CURRENT_BINARY_DIR}/pyi-build
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging/opview.spec
+    ${OPVIEW_FREEZE_EXTRA_COMMAND}
     DEPENDS ${PIP_STAMP} ${OPVIEW_PY_SOURCES}
             ${CMAKE_CURRENT_SOURCE_DIR}/packaging/opview.spec
             ${OPVIEW_VERSION_FILE}
+            ${OPVIEW_FIX_RPATHS_SCRIPT}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "Freezing OPView with PyInstaller (onedir)"
 )
@@ -157,6 +176,22 @@ set_tests_properties(opview_unittests PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QTWEBENGINE_DISABLE_SANDBOX=1"
     TIMEOUT 600
 )
+if(UNIX AND NOT APPLE)
+    # Catches missing-shared-library regressions (private vendored libs with
+    # no rpath, or a system lib PyInstaller's collector didn't bundle) right
+    # here at freeze time, on the one platform (ubuntu:22.04) these builds
+    # happen on - instead of only downstream, several build cycles later, in
+    # OPStudio's cross-distro `test:deb-install` CI matrix. Deliberately runs
+    # `ldd` with no LD_LIBRARY_PATH set, matching how that downstream check
+    # inspects the installed tree (a plain `ldd <file>`, not an app launch).
+    # NOTE: `find -exec cmd \;`'s own exit status does NOT reflect cmd's exit
+    # status, so failure detection must go through captured output (grep),
+    # not the exec'd command's exit code - the same idiom OPStudio's
+    # test:deb-install CI job uses for the equivalent installed-tree check.
+    add_test(NAME opview_frozen_no_missing_libs
+        COMMAND bash -c "MISSING=$(find '${OPVIEW_DIST}' -type f -exec ldd {} \\; 2>/dev/null | grep -i 'not found' | sort -u || true); if [ -n \"$MISSING\" ]; then echo \"$MISSING\"; exit 1; fi"
+    )
+endif()
 
 #-----------------------------------------------------------------------------
 # AppImage (Linux, explicit target — mirrors OPStudio's 'appimage' target;
@@ -260,10 +295,21 @@ if(OPVIEW_STANDALONE)
     # ~1 GB payload: zstd keeps packaging time reasonable (xz takes minutes)
     set(CPACK_DEBIAN_COMPRESSION_TYPE "zstd")
     # System libraries the PySide6/QtWebEngine + VTK bundle does not ship
-    # (X11/xcb stack, Chromium NSS/GL/cups); '| t64' alternatives cover
-    # Ubuntu 24.04's time_t transition
+    # (X11/xcb stack, Chromium NSS/GL/cups, GTK theme + audio codec stack);
+    # '| t64' alternatives cover Ubuntu 24.04's time_t transition. Kept in
+    # sync with the equivalent block in the superproject's top-level
+    # CMakeLists.txt (opstudio/CMakeLists.txt, ENABLE_OPVIEW branch).
+    #
+    # libtiff.so.5/libpcre.so.3/libmpdec.so.3/libFLAC.so.8/libunistring.so.2
+    # are deliberately NOT listed here (they're absent or ABI-incompatible
+    # under those exact sonames on Ubuntu 24.04+, so no Depends string can
+    # satisfy every supported target) - they travel bundled with the frozen
+    # app instead (see packaging/build_linux_packages.sh and
+    # packaging/linux/fix_rpaths.sh).
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
         "libc6, libstdc++6, libgl1, libegl1, libopengl0, libglib2.0-0 | libglib2.0-0t64, libfontconfig1, libfreetype6, libdbus-1-3, libnss3, libnspr4, libasound2 | libasound2t64, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render0, libxcb-render-util0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xkb1, libxext6, libxcomposite1, libxdamage1, libxfixes3, libxrandr2, libxrender1, libxtst6, libxi6, libsm6, libice6, libdrm2, libgbm1, libcups2 | libcups2t64, libwayland-server0, libwayland-client0, libwayland-cursor0, libwayland-egl1")
+    string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS
+        ", libxkbfile1, libxcursor1, libxinerama1, libxres1, libgtk-3-0 | libgtk-3-0t64, liblcms2-2, libpulse0, libsndfile1, libopus0, libvorbisenc2, libogg0, libmpg123-0 | libmpg123-0t64, libmp3lame0, libseccomp2, libatomic1, libapparmor1, libwebp7, libjbig0, libdeflate0")
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "fonts-liberation | fonts-dejavu-core")
 
     # NSIS installer
