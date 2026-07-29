@@ -379,7 +379,8 @@ class MainWindow(QMainWindow):
                 return
             self._settings.setValue("last_text_folder", folder)
             text_folder = Path(folder)
-            project_name = f"[Folder] {text_folder.name}"
+            project_name = self._manual_folder_project_name(text_folder)
+            debug_print(f"MainWindow text folder project_name={project_name}")
             info = {
                 "path"               : text_folder,
                 "has_vtk"            : False,
@@ -400,7 +401,8 @@ class MainWindow(QMainWindow):
             return
         self._settings.setValue("last_vtk_folder", folder)
         vtk_folder = Path(folder)
-        project_name = f"[Folder] {vtk_folder.name}"
+        project_name = self._manual_folder_project_name(vtk_folder)
+        debug_print(f"MainWindow vtk folder project_name={project_name}")
         info = {
             "path"               : vtk_folder,
             "has_vtk"            : True,
@@ -414,6 +416,20 @@ class MainWindow(QMainWindow):
         }
         self.sidebar_widget.add_manual_project(project_name, info)
         debug_print(f"MainWindow added folder: {vtk_folder}")
+
+    def _manual_folder_project_name(self, folder: Path) -> str:
+        debug_print("MainWindow._manual_folder_project_name called")
+        debug_print(f"MainWindow manual folder path={folder}")
+        parent_name = folder.parent.name
+        debug_print(f"MainWindow manual folder parent_name={parent_name}")
+        folder_name = folder.name
+        debug_print(f"MainWindow manual folder folder_name={folder_name}")
+        if parent_name:
+            label = f"{parent_name}/{folder_name}"
+            debug_print(f"MainWindow manual folder label={label}")
+            return label
+        debug_print(f"MainWindow manual folder fallback label={folder_name}")
+        return folder_name
 
     def _on_add_vtk_files(self) -> None:
         """Open a file dialog and register selected VTK files as a custom project."""

@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QSize, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, Qt, QSize, QRect, Signal
+from PySide6.QtGui import QIcon, QPen
 from PySide6.QtWidgets import (
     QDialog,
     QComboBox,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSlider,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +27,34 @@ from viewer.range_slider_widget import RangeSliderWidget
 from viewer.toggle_switch_widget import ToggleSwitchWidget
 
 _ASSETS = Path(__file__).parent.parent / "assets"
+
+
+class _PhaseFractionRenameDelegate(QStyledItemDelegate):
+    """Draw the phase rename icon in a fixed right-side popup slot."""
+
+    def __init__(self, controls: "PanelControlsWidget") -> None:
+        debug_print("_PhaseFractionRenameDelegate.__init__ called")
+        super().__init__(controls.scalar_combo)
+        self._controls = controls
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        super().paint(painter, option, index)
+        key = index.data(Qt.ItemDataRole.UserRole)
+        if not self._controls.is_phase_fraction_key(key):
+            return
+        debug_print("_PhaseFractionRenameDelegate.paint phase fraction")
+        debug_print(f"_PhaseFractionRenameDelegate key={key}")
+        icon_rect = self._rename_icon_rect(option.rect)
+        debug_print(f"_PhaseFractionRenameDelegate icon_rect={icon_rect}")
+        painter.save()
+        painter.setPen(QPen(option.palette.text().color()))
+        painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "✎")
+        painter.restore()
+
+    @staticmethod
+    def _rename_icon_rect(row_rect: QRect) -> QRect:
+        width = 28
+        return QRect(row_rect.right() - width + 1, row_rect.top(), width, row_rect.height())
 
 
 class PanelControlsWidget(QWidget):
@@ -75,6 +104,8 @@ class PanelControlsWidget(QWidget):
         self.scalar_combo = QComboBox()
         self.scalar_combo.setObjectName("viewerCombo")
         self._configure_compact_combo(self.scalar_combo, 10)
+        self.scalar_combo.setItemDelegate(_PhaseFractionRenameDelegate(self))
+        debug_print("PanelControlsWidget scalar phase rename delegate installed")
         self.scalar_combo.addItem("Select scalar", "")
         update_combo_popup_width(self.scalar_combo)
         row1_layout.addWidget(self.project_combo, 2)
@@ -410,9 +441,8 @@ class PanelControlsWidget(QWidget):
     def _phase_fraction_combo_text(self, key: str, fallback: str | None = None) -> str:
         debug_print("PanelControlsWidget._phase_fraction_combo_text called")
         display = self.phase_fraction_display_label(key, fallback)
-        text = f"{display}  ✎"
-        debug_print(f"PanelControlsWidget phase fraction combo text={text}")
-        return text
+        debug_print(f"PanelControlsWidget phase fraction combo text={display}")
+        return display
 
     def phase_fraction_click_role(self, row: int, click_x: float, viewport_width: int) -> str:
         """Return checkbox, rename, or select for a phase-fraction popup click."""
@@ -423,11 +453,11 @@ class PanelControlsWidget(QWidget):
         if click_x <= 34:
             debug_print("PanelControlsWidget click role=checkbox")
             return "checkbox"
-        text = self.scalar_combo.itemText(row)
-        text_width = self.scalar_combo.view().fontMetrics().horizontalAdvance(text)
-        rename_start = max(35, min(max(35, viewport_width - 34), text_width - 24))
-        debug_print(f"PanelControlsWidget click role text_width={text_width}")
+        rename_width = 28
+        debug_print(f"PanelControlsWidget click role rename_width={rename_width}")
+        rename_start = max(35, viewport_width - rename_width)
         debug_print(f"PanelControlsWidget click role rename_start={rename_start}")
+        debug_print(f"PanelControlsWidget click role rename_end={viewport_width}")
         if click_x >= rename_start:
             debug_print("PanelControlsWidget click role=rename")
             return "rename"

@@ -6,10 +6,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     import numpy as np
     from PySide6.QtWidgets import QApplication
-    from viewer.animation_player import AnimationPlayer
+    from viewer.animation_player import AnimationPlayer, _MatplotlibCanvas
 except ModuleNotFoundError as exc:
     QApplication = None
     AnimationPlayer = None
+    _MatplotlibCanvas = None
     np = None
     MISSING_DEPENDENCY = exc.name
 else:
@@ -44,6 +45,12 @@ class AnimationPlayerTests(unittest.TestCase):
         player = AnimationPlayer([], {"array": "unused"}, "z", 0, "Aqua Fire", 0.0, 1.0)
         try:
             self.assertEqual(player.objectName(), "animationPlayer")
+            self.assertEqual(player._logo_label.objectName(), "animationLogo")
+            self.assertFalse(player._logo_label.pixmap().isNull())
+            self.assertEqual(player._canvas_row_widget.objectName(), "animationCanvasRow")
+            self.assertEqual(player._logo_label.width(), 76)
+            self.assertLessEqual(player._logo_label.pixmap().width(), player._logo_label.width())
+            self.assertIn("background: #ffffff", player.styleSheet())
             self.assertIn("QDialog#animationPlayer QLabel", player.styleSheet())
             self.assertFalse(player._playing)
             self.assertIsNone(player._thread)
@@ -65,6 +72,90 @@ class AnimationPlayerTests(unittest.TestCase):
 
             self.assertTrue(player._play_btn.isEnabled())
             self.assertEqual(player._frame_label.text(), "1 / 1")
+        finally:
+            player.close()
+
+    def test_player_keeps_phase_fraction_animation_specs(self):
+        specs = [
+            {
+                "label": "Austenite",
+                "array": "PhaseFraction_0",
+                "component": None,
+                "scale": 1.0,
+                "range": (0.2, 1.0),
+                "color": "#f0a202",
+            }
+        ]
+
+        player = AnimationPlayer(
+            [],
+            {"array": "PhaseFraction_0"},
+            "z",
+            0,
+            "Aqua Fire",
+            0.2,
+            1.0,
+            plot_type="threshold",
+            phase_fraction_specs=specs,
+        )
+        try:
+            self.assertEqual(player._plot_type, "threshold")
+            self.assertEqual(player._phase_fraction_specs, specs)
+        finally:
+            player.close()
+
+    def test_matplotlib_canvas_draws_phase_fraction_overlays_with_legend(self):
+        canvas = _MatplotlibCanvas()
+        try:
+            z = np.zeros((2, 2), dtype=np.float32)
+            overlays = [
+                {
+                    "label": "Austenite",
+                    "z": np.array([[0.0, 0.7], [0.8, 0.1]], dtype=np.float32),
+                    "range": (0.5, 1.0),
+                    "color": "#f0a202",
+                }
+            ]
+
+            canvas.show_frame(
+                z,
+                "viridis",
+                0.0,
+                1.0,
+                phase_fraction_overlays=overlays,
+                plot_type="threshold",
+            )
+
+            self.assertIsNone(canvas._cbar)
+            self.assertEqual(len(canvas._phase_overlays), 1)
+            self.assertIsNotNone(canvas._ax.get_legend())
+            self.assertGreater(canvas._ax.get_legend().get_bbox_to_anchor()._bbox.x0, 1.0)
+        finally:
+            canvas.deleteLater()
+
+    def test_matplotlib_canvas_masks_scalar_threshold_frames(self):
+        canvas = _MatplotlibCanvas()
+        try:
+            z = np.array([[0.1, 0.6], [0.8, 1.2]], dtype=np.float32)
+
+            canvas.show_frame(z, "viridis", 0.5, 1.0, plot_type="threshold")
+
+            rendered = np.asarray(canvas._im.get_array(), dtype=float)
+            self.assertTrue(np.isnan(rendered[0, 0]))
+            self.assertFalse(np.isnan(rendered[0, 1]))
+            self.assertFalse(np.isnan(rendered[1, 0]))
+            self.assertTrue(np.isnan(rendered[1, 1]))
+        finally:
+            canvas.deleteLater()
+
+    def test_export_figure_adds_logo_axes(self):
+        player = AnimationPlayer([], {"array": "unused"}, "z", 0, "Aqua Fire", 0.0, 1.0)
+        try:
+            fig = player._build_export_figure()
+
+            self.assertIsNotNone(player._export_logo_ax)
+            self.assertIn(player._export_logo_ax, fig.axes)
+            self.assertFalse(player._export_logo_ax.axison)
         finally:
             player.close()
 

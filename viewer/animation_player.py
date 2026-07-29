@@ -6,11 +6,13 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import matplotlib.image as mpimg
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.patches import Patch
 from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -26,7 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.resources import ASSETS_DIR
+from app.debug import debug_print
+from app.readable_dialogs import readable_information, readable_question, readable_warning
+from app.resources import ASSETS_DIR, HEATMAP_LOGO_PATH
 from viewer.colorscale import palette_to_cmap
 
 _TRANSPORT_ICON_SIZE = QSize(28, 28)
@@ -42,7 +46,17 @@ class _FrameFetcher(QObject):
     finished    = Signal()
     progress    = Signal(int)
 
-    def __init__(self, file_paths, scalar_def, axis, slice_index, resolution, interfaces_overlay=False):
+    def __init__(
+        self,
+        file_paths,
+        scalar_def,
+        axis,
+        slice_index,
+        resolution,
+        interfaces_overlay=False,
+        phase_fraction_specs=None,
+        plot_type="heatmap",
+    ):
         super().__init__()
         self._file_paths  = file_paths
         self._scalar_def  = scalar_def
@@ -50,6 +64,10 @@ class _FrameFetcher(QObject):
         self._slice_index = slice_index
         self._resolution  = resolution
         self._interfaces_overlay = interfaces_overlay
+        self._phase_fraction_specs = phase_fraction_specs or []
+        self._plot_type = plot_type
+        debug_print(f"FrameFetcher plot_type={self._plot_type}")
+        debug_print(f"FrameFetcher phase spec count={len(self._phase_fraction_specs)}")
         self._abort       = False
 
     def abort(self):
@@ -66,13 +84,27 @@ class _FrameFetcher(QObject):
         scale     = self._scalar_def.get("scale", 1.0) or 1.0
         array_key = self._scalar_def["array"]
         component = self._scalar_def.get("component")
+        debug_print(f"FrameFetcher scalar array={array_key}")
+        debug_print(f"FrameFetcher scalar component={component}")
         for i, path in enumerate(self._file_paths):
             if self._abort:
                 break
             try:
-                z = self._fast_load(pv.read(path), array_key, component, scale)
+                debug_print(f"FrameFetcher loading frame index={i}")
+                debug_print(f"FrameFetcher loading path={path}")
+                mesh = pv.read(path)
+                z = self._fast_load(mesh, array_key, component, scale)
                 overlay = self._load_overlay(path, pv) if self._interfaces_overlay else None
-                self.frame_ready.emit(i, (z, overlay))
+                phase_overlays = self._load_phase_fraction_overlays(mesh)
+                debug_print(f"FrameFetcher phase overlays loaded={len(phase_overlays)}")
+                self.frame_ready.emit(
+                    i,
+                    {
+                        "z": z,
+                        "overlay": overlay,
+                        "phase_fraction_overlays": phase_overlays,
+                    },
+                )
             except Exception as exc:
                 message = str(exc) or exc.__class__.__name__
                 self.frame_error.emit(i, message)
@@ -88,6 +120,40 @@ class _FrameFetcher(QObject):
         except Exception:
             return None
         return np.asarray(overlay)
+
+    def _load_phase_fraction_overlays(self, mesh):
+        debug_print("FrameFetcher._load_phase_fraction_overlays called")
+        if self._plot_type != "threshold":
+            debug_print("FrameFetcher phase overlays skipped non-threshold")
+            return []
+        if not self._phase_fraction_specs:
+            debug_print("FrameFetcher phase overlays skipped no specs")
+            return []
+        overlays = []
+        for spec in self._phase_fraction_specs:
+            debug_print(f"FrameFetcher loading phase array={spec.get('array')}")
+            debug_print(f"FrameFetcher loading phase label={spec.get('label')}")
+            try:
+                z = self._fast_load(
+                    mesh,
+                    spec["array"],
+                    spec.get("component"),
+                    spec.get("scale", 1.0) or 1.0,
+                )
+            except Exception:
+                debug_print("FrameFetcher phase overlay load failed")
+                continue
+            debug_print(f"FrameFetcher phase overlay range={spec.get('range')}")
+            debug_print(f"FrameFetcher phase overlay color={spec.get('color')}")
+            overlays.append(
+                {
+                    "label": spec.get("label", spec["array"]),
+                    "z": np.asarray(z, dtype=np.float32),
+                    "range": tuple(spec.get("range", (0.0, 1.0))),
+                    "color": spec.get("color", "#d62728"),
+                }
+            )
+        return overlays
 
     @staticmethod
     def _phase_overlay_file(file_path):
@@ -137,24 +203,64 @@ class _MatplotlibCanvas(QWidget):
         self._im     = None
         self._cbar   = None
         self._overlay = None
+        self._phase_overlays = []
+        self._legend = None
         self._canvas = FigureCanvasQTAgg(self._fig)
         self._canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self._canvas)
 
-    def show_frame(self, z, cmap, vmin, vmax, *, title="", colorbar_label="", overlay=None):
+    def show_frame(
+        self,
+        z,
+        cmap,
+        vmin,
+        vmax,
+        *,
+        title="",
+        colorbar_label="",
+        overlay=None,
+        phase_fraction_overlays=None,
+        plot_type="heatmap",
+    ):
+        phase_fraction_overlays = phase_fraction_overlays or []
+        show_phase_overlays = plot_type == "threshold" and bool(phase_fraction_overlays)
+        debug_print("MatplotlibAnimationCanvas.show_frame called")
+        debug_print(f"MatplotlibAnimationCanvas plot_type={plot_type}")
+        debug_print(f"MatplotlibAnimationCanvas phase overlay count={len(phase_fraction_overlays)}")
+        debug_print(f"MatplotlibAnimationCanvas show phase overlays={show_phase_overlays}")
+        display_z = np.asarray(z, dtype=float)
+        if plot_type == "threshold":
+            debug_print(f"MatplotlibAnimationCanvas scalar threshold range={vmin}..{vmax}")
+            threshold_mask = (display_z >= vmin) & (display_z <= vmax)
+            debug_print(f"MatplotlibAnimationCanvas scalar threshold visible count={int(np.count_nonzero(threshold_mask))}")
+            display_z = np.where(threshold_mask, display_z, np.nan)
         if self._im is None:
-            self._im   = self._ax.imshow(z, origin="lower", aspect="equal",
+            self._im   = self._ax.imshow(display_z, origin="lower", aspect="equal",
                                           cmap=cmap, vmin=vmin, vmax=vmax,
                                           interpolation="bilinear")
-            self._cbar = self._fig.colorbar(self._im, ax=self._ax,
-                                             fraction=0.046, pad=0.04,
-                                             shrink=0.78)
-            self._cbar.ax.tick_params(labelsize=11)
+            if not show_phase_overlays:
+                self._cbar = self._fig.colorbar(self._im, ax=self._ax,
+                                                 fraction=0.046, pad=0.04,
+                                                 shrink=0.78)
+                self._cbar.ax.tick_params(labelsize=11)
         else:
-            self._im.set_data(z)
+            self._im.set_data(display_z)
+        if show_phase_overlays:
+            debug_print("MatplotlibAnimationCanvas hiding scalar image for phase overlays")
+            self._im.set_alpha(0.0)
+            self._remove_colorbar()
+        else:
+            debug_print("MatplotlibAnimationCanvas showing scalar image/colorbar")
+            self._im.set_alpha(1.0)
+            if self._cbar is None:
+                self._cbar = self._fig.colorbar(self._im, ax=self._ax,
+                                                 fraction=0.046, pad=0.04,
+                                                 shrink=0.78)
+                self._cbar.ax.tick_params(labelsize=11)
         self._clear_overlay()
+        self._clear_phase_overlays()
         if overlay is not None:
             overlay_values = np.asarray(overlay, dtype=float)
             self._overlay = self._ax.contourf(
@@ -166,11 +272,53 @@ class _MatplotlibCanvas(QWidget):
                 antialiased=True,
                 zorder=3,
             )
+        if show_phase_overlays:
+            legend_handles = []
+            for phase_overlay in phase_fraction_overlays:
+                label = str(phase_overlay.get("label", "PhaseFraction"))
+                color = phase_overlay.get("color", "#d62728")
+                lo, hi = phase_overlay.get("range", (0.0, 1.0))
+                values = np.asarray(phase_overlay.get("z"), dtype=float)
+                mask = (values >= lo) & (values <= hi)
+                visible_count = int(np.count_nonzero(mask))
+                debug_print(f"MatplotlibAnimationCanvas phase label={label}")
+                debug_print(f"MatplotlibAnimationCanvas phase range={lo}..{hi}")
+                debug_print(f"MatplotlibAnimationCanvas phase color={color}")
+                debug_print(f"MatplotlibAnimationCanvas phase visible count={visible_count}")
+                masked = np.where(mask, 1.0, np.nan)
+                artist = self._ax.contourf(
+                    masked,
+                    levels=[0.5, 1.5],
+                    colors=[color],
+                    alpha=1.0,
+                    origin="lower",
+                    antialiased=True,
+                    zorder=4,
+                )
+                self._phase_overlays.append(artist)
+                legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
+            if legend_handles:
+                self._fig.subplots_adjust(right=0.76)
+                self._legend = self._ax.legend(
+                    handles=legend_handles,
+                    loc="upper left",
+                    bbox_to_anchor=(1.02, 1.0),
+                    fontsize=10,
+                    framealpha=0.86,
+                )
+        elif self._legend is None:
+            self._fig.subplots_adjust(right=0.92)
         if title:
             self._ax.set_title(title, fontsize=9, pad=4)
         if self._cbar is not None:
             self._cbar.set_label(colorbar_label or "", fontsize=14)
         self._canvas.draw_idle()
+
+    def _remove_colorbar(self):
+        if self._cbar is None:
+            return
+        self._cbar.remove()
+        self._cbar = None
 
     def _clear_overlay(self):
         if self._overlay is None:
@@ -182,10 +330,24 @@ class _MatplotlibCanvas(QWidget):
                 collection.remove()
         self._overlay = None
 
+    def _clear_phase_overlays(self):
+        for artist in self._phase_overlays:
+            try:
+                artist.remove()
+            except AttributeError:
+                for collection in getattr(artist, "collections", []):
+                    collection.remove()
+        self._phase_overlays = []
+        if self._legend is not None:
+            self._legend.remove()
+            self._legend = None
+
     def reset(self):
         self._ax.clear()
         self._ax.set_axis_off()
         self._im = self._cbar = self._overlay = None
+        self._phase_overlays = []
+        self._legend = None
         self._canvas.draw_idle()
 
 
@@ -198,7 +360,8 @@ class AnimationPlayer(QDialog):
 
     def __init__(self, file_paths, scalar_def, axis, slice_index,
                  palette, vmin, vmax, resolution=320, colorbar_label="",
-                 interfaces_overlay=False, parent=None):
+                 interfaces_overlay=False, parent=None, plot_type="heatmap",
+                 phase_fraction_specs=None):
         super().__init__(parent)
         self.setObjectName("animationPlayer")
         self.setWindowTitle("Animation Player")
@@ -214,10 +377,15 @@ class AnimationPlayer(QDialog):
         self._resolution  = resolution
         self._colorbar_label = colorbar_label
         self._interfaces_overlay = interfaces_overlay
+        self._plot_type = plot_type
+        self._phase_fraction_specs = phase_fraction_specs or []
+        debug_print(f"AnimationPlayer plot_type={self._plot_type}")
+        debug_print(f"AnimationPlayer phase spec count={len(self._phase_fraction_specs)}")
         self._cmap        = palette_to_cmap(palette)
 
         self._frames: list[np.ndarray | None] = [None] * len(file_paths)
         self._overlays: list[np.ndarray | None] = [None] * len(file_paths)
+        self._phase_fraction_overlays: list[list[dict]] = [[] for _ in file_paths]
         self._frame_errors: dict[int, str] = {}
         self._current       = 0
         self._playing       = False
@@ -238,21 +406,24 @@ class AnimationPlayer(QDialog):
     def _apply_dialog_styles(self):
         self.setStyleSheet("""
 QDialog#animationPlayer {
-    background: #1e1e1e;
-    color: #f3f6fb;
+    background: #ffffff;
+    color: #102a52;
 }
 QDialog#animationPlayer QLabel {
-    color: #f3f6fb;
+    color: #102a52;
     background: transparent;
 }
 QDialog#animationPlayer QLabel#mutedInfo {
-    color: #d7e2f2;
+    color: #506176;
+}
+QWidget#animationCanvasRow {
+    background: #ffffff;
 }
 QDialog#animationPlayer QComboBox {
     min-height: 28px;
-    background: #2d2d30;
-    color: #f3f6fb;
-    border: 1px solid #3e3e42;
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #d2dbea;
     border-radius: 6px;
     padding: 2px 24px 2px 8px;
 }
@@ -278,16 +449,16 @@ QDialog#animationPlayer QComboBox QAbstractItemView {
     selection-color: #ffffff;
 }
 QDialog#animationPlayer QPushButton {
-    background: #2d2d30;
-    color: #f3f6fb;
-    border: 1px solid #3e3e42;
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #d2dbea;
     border-radius: 6px;
     font-size: 17px;
     font-weight: 700;
     padding: 0px;
 }
 QDialog#animationPlayer QPushButton:hover {
-    background: #38383d;
+    background: #eef4ff;
     border-color: #5a7fb0;
 }
 QDialog#animationPlayer QPushButton:pressed,
@@ -325,9 +496,9 @@ QDialog#animationPlayer QSlider:disabled::handle:horizontal {
     border-color: #6f6f6f;
 }
 QDialog#animationPlayer QProgressBar {
-    background: #333333;
-    color: #ffffff;
-    border: 1px solid #454545;
+    background: #eef2f7;
+    color: #102a52;
+    border: 1px solid #d2dbea;
     border-radius: 3px;
     text-align: center;
 }
@@ -355,8 +526,28 @@ QDialog#animationPlayer QProgressBar::chunk {
         self._status_label.setWordWrap(True)
         root.addWidget(self._status_label)
 
+        self._canvas_row_widget = QWidget()
+        self._canvas_row_widget.setObjectName("animationCanvasRow")
+        self._canvas_row_widget.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        canvas_row = QHBoxLayout(self._canvas_row_widget)
+        canvas_row.setContentsMargins(0, 0, 0, 0)
+        canvas_row.setSpacing(2)
+        self._logo_label = QLabel()
+        self._logo_label.setObjectName("animationLogo")
+        self._logo_label.setPixmap(
+            QPixmap(str(HEATMAP_LOGO_PATH)).scaled(
+                72,
+                72,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        self._logo_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
+        self._logo_label.setFixedWidth(76)
+        canvas_row.addWidget(self._logo_label, 0, Qt.AlignmentFlag.AlignBottom)
         self._mpl_canvas = _MatplotlibCanvas()
-        root.addWidget(self._mpl_canvas, 1)
+        canvas_row.addWidget(self._mpl_canvas, 1)
+        root.addWidget(self._canvas_row_widget, 1)
 
         # Controls
         ctrl = QHBoxLayout()
@@ -447,6 +638,8 @@ QDialog#animationPlayer QProgressBar::chunk {
             self._file_paths, self._scalar_def,
             self._axis, self._slice_index, self._resolution,
             interfaces_overlay=self._interfaces_overlay,
+            phase_fraction_specs=self._phase_fraction_specs,
+            plot_type=self._plot_type,
         )
         self._thread = QThread(self)
         self._fetcher.moveToThread(self._thread)
@@ -461,17 +654,35 @@ QDialog#animationPlayer QProgressBar::chunk {
     def _on_frame_ready(self, index, payload):
         if self._closed or not (0 <= index < len(self._frames)):
             return
-        if isinstance(payload, tuple) and len(payload) == 2:
+        phase_fraction_overlays = []
+        if isinstance(payload, dict):
+            z = payload.get("z")
+            overlay = payload.get("overlay")
+            phase_fraction_overlays = payload.get("phase_fraction_overlays") or []
+        elif isinstance(payload, tuple) and len(payload) == 2:
             z, overlay = payload
         else:
             z, overlay = payload, None
+        self._ensure_frame_slots()
         self._frames[index] = z
         self._overlays[index] = overlay
+        self._phase_fraction_overlays[index] = phase_fraction_overlays
         self._frame_errors.pop(index, None)
         self._update_loading_status(index)
         if z is not None and not self._has_valid_frame_before(index):
             self._set_transport_enabled(True)
             self._show(index)
+
+    def _ensure_frame_slots(self):
+        debug_print("AnimationPlayer._ensure_frame_slots called")
+        target_count = len(self._frames)
+        debug_print(f"AnimationPlayer frame slot target count={target_count}")
+        while len(self._overlays) < target_count:
+            self._overlays.append(None)
+            debug_print("AnimationPlayer appended overlay slot")
+        while len(self._phase_fraction_overlays) < target_count:
+            self._phase_fraction_overlays.append([])
+            debug_print("AnimationPlayer appended phase overlay slot")
 
     def _on_frame_error(self, index, message):
         if self._closed or not (0 <= index < len(self._frames)):
@@ -579,6 +790,8 @@ QDialog#animationPlayer QProgressBar::chunk {
             title=Path(self._file_paths[index]).name,
             colorbar_label=self._colorbar_label,
             overlay=self._overlays[index],
+            phase_fraction_overlays=self._phase_fraction_overlays[index],
+            plot_type=self._plot_type,
         )
         self._set_status(self._summary_status(Path(self._file_paths[index]).name))
 
@@ -600,11 +813,7 @@ QDialog#animationPlayer QProgressBar::chunk {
             if self._offer_ffmpeg_install():
                 return
             self._set_status(encoder_error)
-            QMessageBox.warning(
-                self,
-                "MP4 Export Unavailable",
-                encoder_error,
-            )
+            readable_warning(self, "MP4 Export Unavailable", encoder_error)
             return
 
         default_name = self._default_export_name()
@@ -629,17 +838,17 @@ QDialog#animationPlayer QProgressBar::chunk {
         except FileNotFoundError:
             message = self._mp4_encoder_missing_message()
             self._set_status(message)
-            QMessageBox.warning(self, "MP4 Export Unavailable", message)
+            readable_warning(self, "MP4 Export Unavailable", message)
         except Exception as exc:
             self._set_status(f"MP4 export failed: {exc}")
-            QMessageBox.warning(
+            readable_warning(
                 self,
                 "MP4 Export Failed",
                 f"Could not export MP4.\n\n{exc}",
             )
         else:
             self._set_status(f"MP4 exported: {Path(path).name}")
-            QMessageBox.information(
+            readable_information(
                 self,
                 "MP4 Export Complete",
                 f"MP4 exported successfully.\n\n{path}",
@@ -662,7 +871,7 @@ QDialog#animationPlayer QProgressBar::chunk {
     def _offer_ffmpeg_install(self):
         if not self._is_windows_winget_available():
             return False
-        response = QMessageBox.question(
+        response = readable_question(
             self,
             "Install FFmpeg?",
             (
@@ -690,14 +899,14 @@ QDialog#animationPlayer QProgressBar::chunk {
             )
         except Exception as exc:
             self._set_status(f"Could not start FFmpeg installer: {exc}")
-            QMessageBox.warning(
+            readable_warning(
                 self,
                 "FFmpeg Install Failed",
                 f"Could not start the FFmpeg installer.\n\n{exc}",
             )
             return True
         self._set_status("FFmpeg installer started. Restart OPView after installation finishes.")
-        QMessageBox.information(
+        readable_information(
             self,
             "FFmpeg Installer Started",
             "The FFmpeg installer has started in a separate window.\n\nRestart OPView after installation finishes, then export MP4 again.",
@@ -719,13 +928,15 @@ QDialog#animationPlayer QProgressBar::chunk {
         from matplotlib.animation import FFMpegWriter
 
         writer = FFMpegWriter(fps=self._fps)
-        fig = Figure(figsize=(6, 6), tight_layout=True)
+        fig = self._build_export_figure()
         canvas = FigureCanvasQTAgg(fig)
-        ax = fig.add_subplot(111)
-        ax.set_axis_off()
+        ax = self._export_plot_ax
         first_index = frame_indices[0]
+        first_frame = self._threshold_display_frame(self._frames[first_index])
+        show_phase_overlays = self._plot_type == "threshold" and bool(self._phase_fraction_overlays[first_index])
+        debug_print(f"AnimationPlayer export show phase overlays={show_phase_overlays}")
         image = ax.imshow(
-            self._frames[first_index],
+            first_frame,
             origin="lower",
             aspect="equal",
             cmap=self._cmap,
@@ -733,18 +944,64 @@ QDialog#animationPlayer QProgressBar::chunk {
             vmax=self._vmax,
             interpolation="bilinear",
         )
-        cbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, shrink=0.78)
-        cbar.ax.tick_params(labelsize=11)
-        cbar.set_label(self._colorbar_label or "", fontsize=14)
+        image.set_alpha(0.0 if show_phase_overlays else 1.0)
+        cbar = None
+        if not show_phase_overlays:
+            cbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, shrink=0.78)
+            cbar.ax.tick_params(labelsize=11)
+            cbar.set_label(self._colorbar_label or "", fontsize=14)
+        else:
+            fig.subplots_adjust(right=0.76)
         overlay_artist = None
+        phase_artists = []
+        legend_artist = None
 
         with writer.saving(fig, str(path), dpi=150):
             for index in frame_indices:
-                image.set_data(self._frames[index])
+                phase_overlays = self._phase_fraction_overlays[index]
+                show_phase_overlays = self._plot_type == "threshold" and bool(phase_overlays)
+                debug_print(f"AnimationPlayer export frame index={index}")
+                debug_print(f"AnimationPlayer export phase overlay count={len(phase_overlays)}")
+                image.set_data(self._threshold_display_frame(self._frames[index]))
+                image.set_alpha(0.0 if show_phase_overlays else 1.0)
                 ax.set_title(Path(self._file_paths[index]).name, fontsize=9, pad=4)
                 overlay_artist = self._draw_export_overlay(ax, overlay_artist, self._overlays[index])
+                phase_artists, legend_artist = self._draw_export_phase_overlays(
+                    ax,
+                    phase_artists,
+                    legend_artist,
+                    phase_overlays,
+                )
                 canvas.draw()
                 writer.grab_frame()
+
+    def _build_export_figure(self):
+        debug_print("AnimationPlayer._build_export_figure called")
+        fig = Figure(figsize=(7.2, 6), tight_layout=False, facecolor="white")
+        logo_ax = fig.add_axes([0.02, 0.04, 0.10, 0.18])
+        logo_ax.set_axis_off()
+        plot_ax = fig.add_axes([0.12, 0.06, 0.66, 0.88])
+        plot_ax.set_axis_off()
+        try:
+            logo = mpimg.imread(str(HEATMAP_LOGO_PATH))
+            logo_ax.imshow(logo)
+            debug_print("AnimationPlayer export logo loaded")
+        except Exception as exc:
+            debug_print(f"AnimationPlayer export logo load failed={exc}")
+        self._export_logo_ax = logo_ax
+        self._export_plot_ax = plot_ax
+        debug_print("AnimationPlayer export axes created")
+        return fig
+
+    def _threshold_display_frame(self, frame):
+        debug_print("AnimationPlayer._threshold_display_frame called")
+        values = np.asarray(frame, dtype=float)
+        if self._plot_type != "threshold":
+            debug_print("AnimationPlayer threshold frame skipped non-threshold")
+            return values
+        mask = (values >= self._vmin) & (values <= self._vmax)
+        debug_print(f"AnimationPlayer threshold frame visible count={int(np.count_nonzero(mask))}")
+        return np.where(mask, values, np.nan)
 
     def _draw_export_overlay(self, ax, overlay_artist, overlay):
         self._remove_overlay_artist(overlay_artist)
@@ -759,6 +1016,48 @@ QDialog#animationPlayer QProgressBar::chunk {
             antialiased=True,
             zorder=3,
         )
+
+    def _draw_export_phase_overlays(self, ax, phase_artists, legend_artist, phase_overlays):
+        debug_print("AnimationPlayer._draw_export_phase_overlays called")
+        for artist in phase_artists:
+            self._remove_overlay_artist(artist)
+        if legend_artist is not None:
+            legend_artist.remove()
+        if self._plot_type != "threshold" or not phase_overlays:
+            debug_print("AnimationPlayer export phase overlays skipped")
+            return [], None
+        next_artists = []
+        legend_handles = []
+        for phase_overlay in phase_overlays:
+            label = str(phase_overlay.get("label", "PhaseFraction"))
+            color = phase_overlay.get("color", "#d62728")
+            lo, hi = phase_overlay.get("range", (0.0, 1.0))
+            values = np.asarray(phase_overlay.get("z"), dtype=float)
+            mask = (values >= lo) & (values <= hi)
+            debug_print(f"AnimationPlayer export phase label={label}")
+            debug_print(f"AnimationPlayer export phase range={lo}..{hi}")
+            debug_print(f"AnimationPlayer export phase visible count={int(np.count_nonzero(mask))}")
+            masked = np.where(mask, 1.0, np.nan)
+            next_artists.append(
+                ax.contourf(
+                    masked,
+                    levels=[0.5, 1.5],
+                    colors=[color],
+                    alpha=1.0,
+                    origin="lower",
+                    antialiased=True,
+                    zorder=4,
+                )
+            )
+            legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
+        legend = ax.legend(
+            handles=legend_handles,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            fontsize=10,
+            framealpha=0.86,
+        )
+        return next_artists, legend
 
     @staticmethod
     def _remove_overlay_artist(overlay_artist):

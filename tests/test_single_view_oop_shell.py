@@ -83,6 +83,12 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertFalse(hasattr(window, "file_watcher"))
 
+    def test_main_window_manual_folder_project_name_uses_parent_and_folder(self):
+        window = MainWindow()
+        folder = Path("/tmp/VTK_final/VTK_final")
+
+        self.assertEqual(window._manual_folder_project_name(folder), "VTK_final/VTK_final")
+
     def test_main_tabs_live_inside_header_bar(self):
         window = MainWindow()
 

@@ -20,6 +20,19 @@ from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.manual_point_dialog import ManualPointDialog
 from viewer.state import ViewerState, initial_state
 
+_PHASE_FRACTION_COLORS = [
+    "#d62728",
+    "#1f77b4",
+    "#2ca02c",
+    "#f0a202",
+    "#9467bd",
+    "#17becf",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#8c564b",
+]
+
 
 class HeatmapController:
     """Bridge between controls, state, and rendering."""
@@ -606,18 +619,6 @@ class HeatmapController:
             debug_print("HeatmapController phase overlays skipped non-threshold plot")
             return []
         overlays: list[dict] = []
-        colors = [
-            "#d62728",
-            "#1f77b4",
-            "#2ca02c",
-            "#f0a202",
-            "#9467bd",
-            "#17becf",
-            "#e377c2",
-            "#7f7f7f",
-            "#bcbd22",
-            "#8c564b",
-        ]
         for index, scalar_def in enumerate(self._selected_phase_fraction_defs()):
             key = scalar_def["value"]
             lo, hi = self._phase_fraction_ranges.get(
@@ -649,11 +650,43 @@ class HeatmapController:
                     "y": display.y,
                     "z": display.z,
                     "range": (lo, hi),
-                    "color": colors[index % len(colors)],
+                    "color": _PHASE_FRACTION_COLORS[index % len(_PHASE_FRACTION_COLORS)],
                 }
             )
         debug_print(f"HeatmapController phase overlay count={len(overlays)}")
         return overlays
+
+    def phase_fraction_animation_specs(self) -> list[dict]:
+        """Return selected PhaseFraction render settings for animation frames."""
+        debug_print("HeatmapController.phase_fraction_animation_specs called")
+        if self.controls_widget.current_plot_type() != "threshold":
+            debug_print("HeatmapController animation specs skipped non-threshold")
+            return []
+        specs: list[dict] = []
+        for index, scalar_def in enumerate(self._selected_phase_fraction_defs()):
+            key = scalar_def["value"]
+            lo, hi = self._phase_fraction_ranges.get(
+                key,
+                (float(self.state.range_min), float(self.state.range_max)),
+            )
+            label = self.controls_widget.phase_fraction_display_label(key, scalar_def["label"])
+            color = _PHASE_FRACTION_COLORS[index % len(_PHASE_FRACTION_COLORS)]
+            debug_print(f"HeatmapController animation phase key={key}")
+            debug_print(f"HeatmapController animation phase label={label}")
+            debug_print(f"HeatmapController animation phase range={lo}..{hi}")
+            debug_print(f"HeatmapController animation phase color={color}")
+            specs.append(
+                {
+                    "label": label,
+                    "array": scalar_def["array"],
+                    "component": scalar_def.get("component"),
+                    "scale": scalar_def.get("scale", 1.0) or 1.0,
+                    "range": (lo, hi),
+                    "color": color,
+                }
+            )
+        debug_print(f"HeatmapController animation phase spec count={len(specs)}")
+        return specs
 
     def _display_label_for_plot_type(self, display_label: str, plot_type: str) -> str:
         """Return the colorbar/analysis label for the selected map mode."""

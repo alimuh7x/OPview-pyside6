@@ -373,6 +373,14 @@ class PanelWidget(QWidget):
         _, colorbar_label = self.controller._get_display_params(
             self.controls_widget.current_scalar_label()
         )
+        plot_type = self.controls_widget.current_plot_type()
+        debug_print(f"PanelWidget animation plot_type={plot_type}")
+        phase_fraction_specs = self.controller.phase_fraction_animation_specs()
+        debug_print(f"PanelWidget animation phase spec count={len(phase_fraction_specs)}")
+        for spec in phase_fraction_specs:
+            debug_print(f"PanelWidget animation phase spec label={spec.get('label')}")
+            debug_print(f"PanelWidget animation phase spec range={spec.get('range')}")
+            debug_print(f"PanelWidget animation phase spec color={spec.get('color')}")
         dlg = AnimationPlayer(
             file_paths=file_paths,
             scalar_def=scalar_def,
@@ -383,6 +391,8 @@ class PanelWidget(QWidget):
             vmax=state.range_max,
             colorbar_label=colorbar_label,
             interfaces_overlay=self.interfaces_check.isChecked(),
+            plot_type=plot_type,
+            phase_fraction_specs=phase_fraction_specs,
             parent=self,
         )
         dlg.show()

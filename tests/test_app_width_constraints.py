@@ -1,5 +1,6 @@
 import os
 import unittest
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -11,6 +12,7 @@ from PySide6.QtWidgets import QApplication
 from app.main_window import MainWindow
 from multi_view.multi_view_panel import MultiViewPanel
 from viewer.heatmap_canvas import HeatmapCanvas
+from viewer.heatmap_controller import HeatmapController
 from viewer.panel_controls_widget import PanelControlsWidget
 from viewer.panel_widget import PanelWidget
 
@@ -99,7 +101,7 @@ class AppWidthConstraintTests(unittest.TestCase):
         controls.rename_phase_fraction("PhaseFraction_0", "Austenite")
         phase_index = controls.scalar_combo.findData("PhaseFraction_0")
 
-        self.assertEqual(controls.scalar_combo.itemText(phase_index), "Austenite  ✎")
+        self.assertEqual(controls.scalar_combo.itemText(phase_index), "Austenite")
         self.assertEqual(controls.scalar_combo.itemData(phase_index), "PhaseFraction_0")
         self.assertEqual(
             controls.phase_fraction_display_label("PhaseFraction_0"),
@@ -118,7 +120,7 @@ class AppWidthConstraintTests(unittest.TestCase):
 
         self.assertEqual(controls.current_scalar_label(), "Austenite")
 
-    def test_panel_controls_rename_hit_zone_tracks_pencil_text(self):
+    def test_panel_controls_rename_hit_zone_only_uses_far_right_icon_slot(self):
         controls = PanelControlsWidget({"label": "PhaseField"})
         controls.set_scalar_options(
             [
@@ -126,17 +128,24 @@ class AppWidthConstraintTests(unittest.TestCase):
             ]
         )
         phase_index = controls.scalar_combo.findData("PhaseFraction_0")
-        text_width = controls.scalar_combo.view().fontMetrics().horizontalAdvance(
-            controls.scalar_combo.itemText(phase_index)
-        )
-
-        role = controls.phase_fraction_click_role(
+        near_text_role = controls.phase_fraction_click_role(
             phase_index,
-            text_width - 8,
-            text_width + 80,
+            120,
+            200,
+        )
+        icon_role = controls.phase_fraction_click_role(
+            phase_index,
+            184,
+            200,
         )
 
-        self.assertEqual(role, "rename")
+        self.assertEqual(near_text_role, "select")
+        self.assertEqual(icon_role, "rename")
+
+    def test_panel_controls_scalar_combo_uses_phase_fraction_rename_delegate(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+
+        self.assertIs(controls.scalar_combo.itemDelegate()._controls, controls)
 
     def test_phase_fraction_rename_dialog_uses_readable_light_style(self):
         controls = PanelControlsWidget({"label": "PhaseField"})
@@ -171,6 +180,38 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertEqual(trace.name, "PhaseFraction_0")
         self.assertTrue(trace.showlegend)
         self.assertFalse(trace.showscale)
+
+    def test_phase_fraction_animation_specs_match_selected_threshold_settings(self):
+        class ControlsStub:
+            def current_plot_type(self):
+                return "threshold"
+
+            def is_phase_fraction_key(self, key):
+                return key.startswith("PhaseFraction_")
+
+            def selected_phase_fraction_keys(self):
+                return ["PhaseFraction_0", "PhaseFraction_3"]
+
+            def phase_fraction_display_label(self, key, fallback=None):
+                return {"PhaseFraction_0": "Alpha", "PhaseFraction_3": "Delta"}.get(key, fallback or key)
+
+        controller = HeatmapController.__new__(HeatmapController)
+        controller.controls_widget = ControlsStub()
+        controller.state = SimpleNamespace(scalar_key="PhaseFraction_0", range_min=0.0, range_max=1.0)
+        controller.scalar_defs = [
+            {"label": "PhaseFraction_0", "value": "PhaseFraction_0", "array": "PhaseFraction_0"},
+            {"label": "PhaseFraction_3", "value": "PhaseFraction_3", "array": "PhaseFraction_3"},
+        ]
+        controller._phase_fraction_ranges = {
+            "PhaseFraction_0": (0.4, 1.0),
+            "PhaseFraction_3": (0.2, 0.7),
+        }
+
+        specs = controller.phase_fraction_animation_specs()
+
+        self.assertEqual([spec["label"] for spec in specs], ["Alpha", "Delta"])
+        self.assertEqual([spec["range"] for spec in specs], [(0.4, 1.0), (0.2, 0.7)])
+        self.assertEqual([spec["color"] for spec in specs], ["#d62728", "#1f77b4"])
 
     def test_panel_widget_keeps_analysis_toolbar_compact(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})
