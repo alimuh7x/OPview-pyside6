@@ -2,12 +2,14 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import QEvent, Qt, QSize, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QDialog,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -32,6 +34,7 @@ class PanelControlsWidget(QWidget):
     refresh_requested = Signal()
     export_requested = Signal()
     range_slider_changed = Signal(float, float)
+    phase_fraction_selection_changed = Signal()
 
     def __init__(self, dataset_info: dict) -> None:
         debug_print("PanelControlsWidget.__init__ start")
@@ -39,8 +42,11 @@ class PanelControlsWidget(QWidget):
         self.dataset_info = dataset_info
         self._last_trigger = "init"
         self._layout_mode = ""
+        self._phase_fraction_keys: list[str] = []
+        self._phase_fraction_aliases: dict[str, str] = {}
         self._build_ui()
         self._connect_signals()
+        self.scalar_combo.view().viewport().installEventFilter(self)
         debug_print("PanelControlsWidget.__init__ complete")
 
     def _build_ui(self) -> None:
@@ -367,13 +373,238 @@ class PanelControlsWidget(QWidget):
 
     def set_scalar_options(self, scalar_defs: list[dict]) -> None:
         debug_print("PanelControlsWidget.set_scalar_options called")
+        previous_checked = set(self.selected_phase_fraction_keys())
+        debug_print(f"PanelControlsWidget previous checked phase fractions={sorted(previous_checked)}")
         self.scalar_combo.blockSignals(True)
         self.scalar_combo.clear()
+        self._phase_fraction_keys = []
         for scalar_def in scalar_defs:
-            self.scalar_combo.addItem(scalar_def["label"], scalar_def["value"])
+            key = scalar_def["value"]
+            is_phase_fraction = self._is_phase_fraction_scalar(scalar_def)
+            label = self._phase_fraction_combo_text(key, scalar_def["label"]) if is_phase_fraction else scalar_def["label"]
+            self.scalar_combo.addItem(label, key)
+            debug_print(f"PanelControlsWidget scalar option label={scalar_def['label']}")
+            debug_print(f"PanelControlsWidget scalar option value={key}")
+            debug_print(f"PanelControlsWidget scalar option is_phase_fraction={is_phase_fraction}")
+            if is_phase_fraction:
+                self._phase_fraction_keys.append(key)
+                index = self.scalar_combo.count() - 1
+                checked = key in previous_checked or not previous_checked
+                self.scalar_combo.setItemData(
+                    index,
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked,
+                    Qt.ItemDataRole.CheckStateRole,
+                )
+                self.scalar_combo.setItemData(
+                    index,
+                    Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled,
+                    Qt.ItemDataRole.UserRole + 1,
+                )
+                debug_print(f"PanelControlsWidget phase fraction check initialized key={key}")
+                debug_print(f"PanelControlsWidget phase fraction checked={checked}")
         self.scalar_combo.blockSignals(False)
         update_combo_popup_width(self.scalar_combo)
         debug_print(f"PanelControlsWidget scalar count={self.scalar_combo.count()}")
+        debug_print(f"PanelControlsWidget phase fraction count={len(self._phase_fraction_keys)}")
+
+    def _phase_fraction_combo_text(self, key: str, fallback: str | None = None) -> str:
+        debug_print("PanelControlsWidget._phase_fraction_combo_text called")
+        display = self.phase_fraction_display_label(key, fallback)
+        text = f"{display}  ✎"
+        debug_print(f"PanelControlsWidget phase fraction combo text={text}")
+        return text
+
+    def phase_fraction_click_role(self, row: int, click_x: float, viewport_width: int) -> str:
+        """Return checkbox, rename, or select for a phase-fraction popup click."""
+        debug_print("PanelControlsWidget.phase_fraction_click_role called")
+        debug_print(f"PanelControlsWidget click role row={row}")
+        debug_print(f"PanelControlsWidget click role x={click_x}")
+        debug_print(f"PanelControlsWidget click role viewport_width={viewport_width}")
+        if click_x <= 34:
+            debug_print("PanelControlsWidget click role=checkbox")
+            return "checkbox"
+        text = self.scalar_combo.itemText(row)
+        text_width = self.scalar_combo.view().fontMetrics().horizontalAdvance(text)
+        rename_start = max(35, min(max(35, viewport_width - 34), text_width - 24))
+        debug_print(f"PanelControlsWidget click role text_width={text_width}")
+        debug_print(f"PanelControlsWidget click role rename_start={rename_start}")
+        if click_x >= rename_start:
+            debug_print("PanelControlsWidget click role=rename")
+            return "rename"
+        debug_print("PanelControlsWidget click role=select")
+        return "select"
+
+    def _is_phase_fraction_scalar(self, scalar_def: dict) -> bool:
+        debug_print("PanelControlsWidget._is_phase_fraction_scalar called")
+        label = str(scalar_def.get("label", ""))
+        array = str(scalar_def.get("array", ""))
+        component = scalar_def.get("component")
+        result = component is None and (label.startswith("PhaseFraction_") or array.startswith("PhaseFraction_"))
+        debug_print(f"PanelControlsWidget phase fraction result={result}")
+        return result
+
+    def is_phase_fraction_key(self, key: str) -> bool:
+        debug_print("PanelControlsWidget.is_phase_fraction_key called")
+        debug_print(f"PanelControlsWidget phase fraction key query={key}")
+        return key in self._phase_fraction_keys
+
+    def phase_fraction_display_label(self, key: str, fallback: str | None = None) -> str:
+        debug_print("PanelControlsWidget.phase_fraction_display_label called")
+        debug_print(f"PanelControlsWidget display label key={key}")
+        label = self._phase_fraction_aliases.get(key) or fallback or key
+        debug_print(f"PanelControlsWidget display label={label}")
+        return label
+
+    def rename_phase_fraction(self, key: str, alias: str) -> None:
+        debug_print("PanelControlsWidget.rename_phase_fraction called")
+        debug_print(f"PanelControlsWidget rename key={key}")
+        old_label = self.phase_fraction_display_label(key)
+        alias = alias.strip()
+        debug_print(f"PanelControlsWidget rename old label={old_label}")
+        debug_print(f"PanelControlsWidget rename new label={alias}")
+        if key not in self._phase_fraction_keys:
+            debug_print("PanelControlsWidget rename skipped non phase fraction")
+            return
+        if alias:
+            self._phase_fraction_aliases[key] = alias
+        else:
+            self._phase_fraction_aliases.pop(key, None)
+        index = self.scalar_combo.findData(key)
+        if index >= 0:
+            self.scalar_combo.setItemText(index, self._phase_fraction_combo_text(key))
+            update_combo_popup_width(self.scalar_combo)
+        debug_print(f"PanelControlsWidget rename aliases={self._phase_fraction_aliases}")
+        self.phase_fraction_selection_changed.emit()
+        debug_print("PanelControlsWidget emitted phase_fraction_selection_changed after rename")
+
+    def _open_phase_fraction_rename_dialog(self, key: str) -> None:
+        debug_print("PanelControlsWidget._open_phase_fraction_rename_dialog called")
+        debug_print(f"PanelControlsWidget rename dialog key={key}")
+        current_label = self.phase_fraction_display_label(key)
+        dialog = self._build_phase_fraction_rename_dialog(key, current_label)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        new_label = dialog.textValue()
+        debug_print(f"PanelControlsWidget rename dialog accepted={accepted}")
+        debug_print(f"PanelControlsWidget rename dialog value={new_label}")
+        if accepted:
+            self.rename_phase_fraction(key, new_label)
+
+    def _build_phase_fraction_rename_dialog(self, key: str, current_label: str) -> QInputDialog:
+        debug_print("PanelControlsWidget._build_phase_fraction_rename_dialog called")
+        debug_print(f"PanelControlsWidget build rename dialog key={key}")
+        debug_print(f"PanelControlsWidget build rename dialog current_label={current_label}")
+        dialog = QInputDialog(self)
+        dialog.setObjectName("phaseRenameDialog")
+        dialog.setWindowTitle("Rename Phase")
+        dialog.setLabelText(f"{key}\nName:")
+        dialog.setTextValue(current_label)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        dialog.setMinimumWidth(360)
+        dialog.setStyleSheet(
+            """
+QInputDialog#phaseRenameDialog {
+    background: #f7f9fc;
+    color: #102a52;
+}
+QInputDialog#phaseRenameDialog QLabel {
+    color: #102a52;
+    background: transparent;
+}
+QInputDialog#phaseRenameDialog QLineEdit {
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #ccd7e8;
+    border-radius: 8px;
+    padding: 6px 8px;
+    selection-background-color: #d9e7ff;
+    selection-color: #102a52;
+}
+QInputDialog#phaseRenameDialog QPushButton {
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #d2dbea;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-weight: 700;
+}
+QInputDialog#phaseRenameDialog QPushButton:hover {
+    background: #eef4ff;
+    border-color: #9fb5d6;
+}
+"""
+        )
+        debug_print("PanelControlsWidget phase rename dialog styled")
+        return dialog
+
+    def selected_phase_fraction_keys(self) -> list[str]:
+        debug_print("PanelControlsWidget.selected_phase_fraction_keys called")
+        selected: list[str] = []
+        for index in range(self.scalar_combo.count()):
+            key = self.scalar_combo.itemData(index)
+            if key not in self._phase_fraction_keys:
+                continue
+            check_state = self.scalar_combo.itemData(index, Qt.ItemDataRole.CheckStateRole)
+            debug_print(f"PanelControlsWidget phase fraction key={key}")
+            debug_print(f"PanelControlsWidget phase fraction check_state={check_state}")
+            if check_state == Qt.CheckState.Checked:
+                selected.append(key)
+        debug_print(f"PanelControlsWidget selected phase fractions={selected}")
+        return selected
+
+    def set_phase_fraction_checked(self, key: str, checked: bool) -> None:
+        debug_print("PanelControlsWidget.set_phase_fraction_checked called")
+        debug_print(f"PanelControlsWidget set phase fraction key={key}")
+        debug_print(f"PanelControlsWidget set phase fraction checked={checked}")
+        index = self.scalar_combo.findData(key)
+        if index < 0 or key not in self._phase_fraction_keys:
+            debug_print("PanelControlsWidget phase fraction check skipped")
+            return
+        self.scalar_combo.setItemData(
+            index,
+            Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked,
+            Qt.ItemDataRole.CheckStateRole,
+        )
+        debug_print("PanelControlsWidget phase fraction check state updated")
+        self.phase_fraction_selection_changed.emit()
+        debug_print("PanelControlsWidget phase_fraction_selection_changed emitted")
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.scalar_combo.view().viewport() and event.type() == QEvent.Type.MouseButtonRelease:
+            index = self.scalar_combo.view().indexAt(event.position().toPoint())
+            if not index.isValid():
+                return super().eventFilter(watched, event)
+            key = self.scalar_combo.itemData(index.row())
+            if key not in self._phase_fraction_keys:
+                return super().eventFilter(watched, event)
+            click_x = event.position().x()
+            debug_print("PanelControlsWidget scalar popup phase fraction click")
+            debug_print(f"PanelControlsWidget clicked phase fraction key={key}")
+            debug_print(f"PanelControlsWidget click x={click_x}")
+            role = self.phase_fraction_click_role(
+                index.row(),
+                click_x,
+                self.scalar_combo.view().viewport().width(),
+            )
+            if role == "checkbox":
+                current = self.scalar_combo.itemData(index.row(), Qt.ItemDataRole.CheckStateRole)
+                next_checked = current != Qt.CheckState.Checked
+                debug_print(f"PanelControlsWidget checkbox click next_checked={next_checked}")
+                self.set_phase_fraction_checked(key, next_checked)
+                self.scalar_combo.showPopup()
+                return True
+            if role == "rename":
+                debug_print("PanelControlsWidget pencil click opening rename")
+                self.scalar_combo.hidePopup()
+                self._open_phase_fraction_rename_dialog(key)
+                return True
+            debug_print("PanelControlsWidget row text click selecting active phase fraction")
+            self.scalar_combo.blockSignals(True)
+            self.scalar_combo.setCurrentIndex(index.row())
+            self.scalar_combo.blockSignals(False)
+            self.scalar_combo.hidePopup()
+            self._emit_refresh_requested("scalar")
+            return True
+        return super().eventFilter(watched, event)
 
     def set_axis(self, axis: str) -> None:
         debug_print("PanelControlsWidget.set_axis called")
@@ -448,7 +679,15 @@ class PanelControlsWidget(QWidget):
 
     def current_scalar_label(self) -> str:
         debug_print("PanelControlsWidget.current_scalar_label called")
-        return self.scalar_combo.currentText()
+        key = self.current_scalar_key()
+        debug_print(f"PanelControlsWidget current scalar label key={key}")
+        if key in self._phase_fraction_keys:
+            label = self.phase_fraction_display_label(key)
+            debug_print(f"PanelControlsWidget current scalar phase label={label}")
+            return label
+        label = self.scalar_combo.currentText()
+        debug_print(f"PanelControlsWidget current scalar label={label}")
+        return label
 
     def current_axis(self) -> str:
         debug_print("PanelControlsWidget.current_axis called")
@@ -498,6 +737,11 @@ class PanelControlsWidget(QWidget):
     def _handle_range_slider_changed(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget._handle_range_slider_changed called")
         debug_print(f"PanelControlsWidget slider changed={minimum}..{maximum}")
+        if self.full_scale_check.isChecked():
+            debug_print("PanelControlsWidget disabling full scale after slider range edit")
+            self.full_scale_check.blockSignals(True)
+            self.full_scale_check.setChecked(False)
+            self.full_scale_check.blockSignals(False)
         self.range_min_spin.blockSignals(True)
         self.range_max_spin.blockSignals(True)
         self.range_min_spin.setValue(minimum)
@@ -512,5 +756,10 @@ class PanelControlsWidget(QWidget):
         minimum = self.range_min_spin.value()
         maximum = self.range_max_spin.value()
         debug_print(f"PanelControlsWidget spin range raw={minimum}..{maximum}")
+        if self.full_scale_check.isChecked():
+            debug_print("PanelControlsWidget disabling full scale after spin range edit")
+            self.full_scale_check.blockSignals(True)
+            self.full_scale_check.setChecked(False)
+            self.full_scale_check.blockSignals(False)
         self.set_slider_values(minimum, maximum)
         self._emit_refresh_requested("range")

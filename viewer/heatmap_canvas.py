@@ -193,9 +193,11 @@ class HeatmapCanvas(QWidget):
         vmax: float,
         line_overlay=None,
         overlay_grid=None,
+        time_plot_points=None,
         title: str = "",
         colorbar_label: str = "",
         plot_type: str = "heatmap",
+        phase_fraction_overlays=None,
     ) -> None:
         debug_print("HeatmapCanvas.render_heatmap called")
         self._update_colorbar_width(vmin, vmax)
@@ -220,7 +222,9 @@ class HeatmapCanvas(QWidget):
             "vmax": vmax,
             "line_overlay": line_overlay,
             "overlay_grid": overlay_grid,
+            "time_plot_points": time_plot_points or [],
             "colorbar_label": colorbar_label,
+            "phase_fraction_overlays": phase_fraction_overlays or [],
         }
         self._emit_status_changed()
         debug_print(f"HeatmapCanvas extent={self._last_extent}")
@@ -234,9 +238,11 @@ class HeatmapCanvas(QWidget):
             vmax=vmax,
             line_overlay=line_overlay,
             overlay_grid=overlay_grid,
+            time_plot_points=time_plot_points or [],
             title=title,
             colorbar_label=colorbar_label,
             plot_type=plot_type,
+            phase_fraction_overlays=phase_fraction_overlays or [],
         )
         html = self._build_html(figure)
         debug_print(f"HeatmapCanvas html size={len(html)}")
@@ -444,9 +450,11 @@ class HeatmapCanvas(QWidget):
         vmax: float,
         line_overlay,
         overlay_grid,
-        title: str,
-        colorbar_label: str,
+        time_plot_points=None,
+        title: str = "",
+        colorbar_label: str = "",
         plot_type: str = "heatmap",
+        phase_fraction_overlays=None,
     ) -> go.Figure:
         debug_print("HeatmapCanvas._build_figure called")
         rows, cols = np.asarray(z_grid).shape[:2]
@@ -487,10 +495,15 @@ class HeatmapCanvas(QWidget):
         hovertemplate = "x=%{x:.4f}<br>y=%{y:.4f}<br>value=%{z:.4f}<extra></extra>"
         debug_print(f"HeatmapCanvas live Plotly heatmap data pixels={cols}x{rows}")
         debug_print(f"HeatmapCanvas live Plotly fixed widget pixels={self.width()}x{_CANVAS_HEIGHT}")
-        for trace in renderer.build_traces(
-            x_values, y_values, z_grid, vmin, vmax, colorscale, colorbar_cfg, hovertemplate
-        ):
-            figure.add_trace(trace)
+        phase_fraction_overlays = phase_fraction_overlays or []
+        debug_print(f"HeatmapCanvas phase fraction overlay count={len(phase_fraction_overlays)}")
+        if phase_fraction_overlays:
+            self._add_phase_fraction_traces(figure, phase_fraction_overlays)
+        else:
+            for trace in renderer.build_traces(
+                x_values, y_values, z_grid, vmin, vmax, colorscale, colorbar_cfg, hovertemplate
+            ):
+                figure.add_trace(trace)
         if overlay_grid is not None:
             debug_print("HeatmapCanvas adding smooth contour overlay")
             overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
@@ -522,6 +535,31 @@ class HeatmapCanvas(QWidget):
                     opacity=1.0,
                 )
             )
+        points = time_plot_points or []
+        if points:
+            debug_print("HeatmapCanvas adding time plot point markers")
+            debug_print(f"HeatmapCanvas time plot marker count={len(points)}")
+            for point in points:
+                debug_print(f"HeatmapCanvas marker point={point}")
+            figure.add_trace(
+                go.Scatter(
+                    x=[float(point["x"]) for point in points],
+                    y=[float(point["y"]) for point in points],
+                    text=[str(point["label"]) for point in points],
+                    mode="markers+text",
+                    name="Plot Over Time Points",
+                    marker=dict(
+                        color="#c50623",
+                        size=11,
+                        symbol="x",
+                        line=dict(color="#ffffff", width=2),
+                    ),
+                    textposition="top center",
+                    textfont=dict(color="#102a52", size=12),
+                    hovertemplate="%{text}<br>x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
+                    showlegend=False,
+                )
+            )
         if line_overlay:
             debug_print("HeatmapCanvas adding line overlay")
             orientation, value = line_overlay
@@ -539,6 +577,21 @@ class HeatmapCanvas(QWidget):
                     line_dash="dash",
                     line_color="#c50623",
                 )
+        if phase_fraction_overlays:
+            debug_print("HeatmapCanvas enabling phase fraction legend")
+            figure.update_layout(
+                showlegend=True,
+                legend=dict(
+                    x=1.02,
+                    xanchor="left",
+                    y=1.0,
+                    yanchor="top",
+                    bgcolor="rgba(255, 255, 255, 0.88)",
+                    bordercolor="rgba(16, 42, 82, 0.18)",
+                    borderwidth=1,
+                    font=PlotStyle.layout_font(),
+                ),
+            )
         figure.update_layout(
             title=dict(text=title),
             width=self.width(),
@@ -567,6 +620,48 @@ class HeatmapCanvas(QWidget):
         )
         debug_print("HeatmapCanvas figure ready")
         return figure
+
+    def _add_phase_fraction_traces(self, figure: go.Figure, overlays: list[dict]) -> None:
+        """Add one thresholded, solid-color heatmap trace per selected phase fraction."""
+        debug_print("HeatmapCanvas._add_phase_fraction_traces called")
+        for overlay in overlays:
+            label = str(overlay["label"])
+            lo, hi = overlay["range"]
+            color = overlay["color"]
+            x_values, y_values = Heatmap2DOrientation.plot_axes(
+                overlay["x"],
+                overlay["y"],
+                overlay["z"],
+            )
+            z_values = np.asarray(overlay["z"], dtype=float)
+            visible_mask = (z_values >= lo) & (z_values <= hi)
+            visible_count = int(np.count_nonzero(visible_mask))
+            debug_print(f"HeatmapCanvas phase trace label={label}")
+            debug_print(f"HeatmapCanvas phase trace range={lo}..{hi}")
+            debug_print(f"HeatmapCanvas phase trace color={color}")
+            debug_print(f"HeatmapCanvas phase trace visible count={visible_count}")
+            masked = np.where(visible_mask, z_values, np.nan)
+            figure.add_trace(
+                go.Heatmap(
+                    x=x_values,
+                    y=y_values,
+                    z=masked,
+                    zmin=lo,
+                    zmax=hi if hi > lo else lo + 1e-12,
+                    colorscale=[[0.0, color], [1.0, color]],
+                    showscale=False,
+                    showlegend=True,
+                    name=label,
+                    legendgroup=label,
+                    hovertemplate=(
+                        f"{label}<br>"
+                        "x=%{x:.4f}<br>"
+                        "y=%{y:.4f}<br>"
+                        "value=%{z:.4f}<extra></extra>"
+                    ),
+                )
+            )
+        debug_print("HeatmapCanvas phase fraction traces added")
 
     def _build_html(self, figure: go.Figure) -> str:
         debug_print("HeatmapCanvas._build_html called")

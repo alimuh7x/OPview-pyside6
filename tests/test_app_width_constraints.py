@@ -3,11 +3,14 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QSize
+import numpy as np
+import plotly.graph_objects as go
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import QApplication
 
 from app.main_window import MainWindow
 from multi_view.multi_view_panel import MultiViewPanel
+from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.panel_controls_widget import PanelControlsWidget
 from viewer.panel_widget import PanelWidget
 
@@ -62,6 +65,112 @@ class AppWidthConstraintTests(unittest.TestCase):
 
         self.assertEqual(controls.layout_mode(), "wide")
         self.assertTrue(controls.range_values_row.isHidden())
+
+    def test_panel_controls_marks_phase_fraction_scalars_checkable(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+
+        controls.set_scalar_options(
+            [
+                {"label": "PhaseFields", "value": "PhaseFields", "array": "PhaseFields"},
+                {"label": "PhaseFraction_0", "value": "PhaseFraction_0", "array": "PhaseFraction_0"},
+                {"label": "PhaseFraction_1", "value": "PhaseFraction_1", "array": "PhaseFraction_1"},
+            ]
+        )
+
+        phase_index = controls.scalar_combo.findData("PhaseFraction_0")
+
+        self.assertEqual(
+            controls.scalar_combo.itemData(phase_index, Qt.ItemDataRole.CheckStateRole),
+            Qt.CheckState.Checked,
+        )
+        self.assertEqual(
+            controls.selected_phase_fraction_keys(),
+            ["PhaseFraction_0", "PhaseFraction_1"],
+        )
+
+    def test_panel_controls_renames_phase_fraction_display_only(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+        controls.set_scalar_options(
+            [
+                {"label": "PhaseFraction_0", "value": "PhaseFraction_0", "array": "PhaseFraction_0"},
+            ]
+        )
+
+        controls.rename_phase_fraction("PhaseFraction_0", "Austenite")
+        phase_index = controls.scalar_combo.findData("PhaseFraction_0")
+
+        self.assertEqual(controls.scalar_combo.itemText(phase_index), "Austenite  ✎")
+        self.assertEqual(controls.scalar_combo.itemData(phase_index), "PhaseFraction_0")
+        self.assertEqual(
+            controls.phase_fraction_display_label("PhaseFraction_0"),
+            "Austenite",
+        )
+
+    def test_panel_controls_current_scalar_label_excludes_phase_rename_icon(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+        controls.set_scalar_options(
+            [
+                {"label": "PhaseFraction_0", "value": "PhaseFraction_0", "array": "PhaseFraction_0"},
+            ]
+        )
+
+        controls.rename_phase_fraction("PhaseFraction_0", "Austenite")
+
+        self.assertEqual(controls.current_scalar_label(), "Austenite")
+
+    def test_panel_controls_rename_hit_zone_tracks_pencil_text(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+        controls.set_scalar_options(
+            [
+                {"label": "PhaseFraction_0", "value": "PhaseFraction_0", "array": "PhaseFraction_0"},
+            ]
+        )
+        phase_index = controls.scalar_combo.findData("PhaseFraction_0")
+        text_width = controls.scalar_combo.view().fontMetrics().horizontalAdvance(
+            controls.scalar_combo.itemText(phase_index)
+        )
+
+        role = controls.phase_fraction_click_role(
+            phase_index,
+            text_width - 8,
+            text_width + 80,
+        )
+
+        self.assertEqual(role, "rename")
+
+    def test_phase_fraction_rename_dialog_uses_readable_light_style(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+
+        dialog = controls._build_phase_fraction_rename_dialog("PhaseFraction_0", "PhaseFraction_0")
+        stylesheet = dialog.styleSheet()
+
+        self.assertIn("QInputDialog#phaseRenameDialog", stylesheet)
+        self.assertIn("background: #f7f9fc", stylesheet)
+        self.assertIn("color: #102a52", stylesheet)
+
+    def test_phase_fraction_traces_use_legend_without_colorbar(self):
+        canvas = HeatmapCanvas.__new__(HeatmapCanvas)
+        figure = go.Figure()
+
+        canvas._add_phase_fraction_traces(
+            figure,
+            [
+                {
+                    "label": "PhaseFraction_0",
+                    "x": np.array([[0.0, 1.0], [0.0, 1.0]]),
+                    "y": np.array([[0.0, 0.0], [1.0, 1.0]]),
+                    "z": np.array([[0.0, 0.7], [0.8, 0.0]]),
+                    "range": (0.5, 1.0),
+                    "color": "#d62728",
+                }
+            ],
+        )
+
+        trace = figure.data[0]
+
+        self.assertEqual(trace.name, "PhaseFraction_0")
+        self.assertTrue(trace.showlegend)
+        self.assertFalse(trace.showscale)
 
     def test_panel_widget_keeps_analysis_toolbar_compact(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})
