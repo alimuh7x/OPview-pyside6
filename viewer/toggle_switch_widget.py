@@ -50,6 +50,7 @@ class ToggleSwitchWidget(QWidget):
         self._anim.setStartValue(float(self._pos))
         self._anim.setEndValue(1.0 if checked else 0.0)
         self._anim.start()
+        self.toggled.emit(checked)
 
     def setText(self, text: str) -> None:
         self._text = text
@@ -67,7 +68,6 @@ class ToggleSwitchWidget(QWidget):
         if event.button() == Qt.MouseButton.LeftButton:
             new_state = not self._checked
             self.setChecked(new_state)
-            self.toggled.emit(new_state)
         event.accept()
 
     def paintEvent(self, event: QPaintEvent) -> None:

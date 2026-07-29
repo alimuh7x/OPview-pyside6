@@ -105,6 +105,45 @@ class VTKReader:
         debug_print(f"VTKReader grid shape={z_grid.shape} seconds={perf_counter() - start:.3f}")
         return x_grid, y_grid, z_grid
 
+    def gradient_magnitude_from_grid(self, x_grid, y_grid, z_grid):
+        """Return |grad| for a displayed 2D scalar grid."""
+        debug_print("VTKReader.gradient_magnitude_from_grid called")
+        start = perf_counter()
+        x_grid = np.asarray(x_grid, dtype=float)
+        y_grid = np.asarray(y_grid, dtype=float)
+        z_grid = np.asarray(z_grid, dtype=float)
+        debug_print(f"VTKReader gradient input shape={z_grid.shape}")
+        dx = self._grid_spacing(x_grid, axis=1)
+        dy = self._grid_spacing(y_grid, axis=0)
+        debug_print(f"VTKReader gradient dx={dx}")
+        debug_print(f"VTKReader gradient dy={dy}")
+        grad_y, grad_x = np.gradient(z_grid, dy, dx)
+        grad_grid = np.sqrt((grad_x * grad_x) + (grad_y * grad_y))
+        stats = {
+            "min": float(np.nanmin(grad_grid)),
+            "max": float(np.nanmax(grad_grid)),
+            "mean": float(np.nanmean(grad_grid)),
+            "std": float(np.nanstd(grad_grid)),
+        }
+        debug_print(f"VTKReader gradient min={stats['min']}")
+        debug_print(f"VTKReader gradient max={stats['max']}")
+        debug_print(f"VTKReader gradient seconds={perf_counter() - start:.3f}")
+        return grad_grid, stats
+
+    def _grid_spacing(self, grid, axis: int) -> float:
+        debug_print("VTKReader._grid_spacing called")
+        diffs = np.diff(grid, axis=axis)
+        finite = diffs[np.isfinite(diffs)]
+        if finite.size == 0:
+            debug_print("VTKReader grid spacing fallback=1.0")
+            return 1.0
+        spacing = float(np.nanmedian(np.abs(finite)))
+        if spacing <= 0.0:
+            debug_print("VTKReader grid spacing nonpositive fallback=1.0")
+            return 1.0
+        debug_print(f"VTKReader grid spacing={spacing}")
+        return spacing
+
     def _can_use_structured_2d_grid(self) -> bool:
         debug_print("VTKReader._can_use_structured_2d_grid called")
         if not self.dimensions or len(self.dimensions) != 3:
@@ -228,6 +267,46 @@ class VTKReader:
             "std": float(np.nanstd(scalars)),
         }
         return x_coords, y_coords, scalars, stats
+
+
+    def sample_point_value(
+        self,
+        axis: str = "y",
+        index: int | None = None,
+        scalar_name: str | None = None,
+        component: int | None = None,
+        x_value: float = 0.0,
+        y_value: float = 0.0,
+    ) -> float:
+        """Return the scalar value nearest to a local 2D slice coordinate."""
+        debug_print("VTKReader.sample_point_value called")
+        debug_print(f"VTKReader sample axis={axis}")
+        debug_print(f"VTKReader sample index={index}")
+        debug_print(f"VTKReader sample scalar_name={scalar_name}")
+        debug_print(f"VTKReader sample component={component}")
+        debug_print(f"VTKReader sample x_value={x_value}")
+        debug_print(f"VTKReader sample y_value={y_value}")
+        scalar_name = scalar_name or self.scalar_name
+        x_coords, y_coords, scalars, _ = self.get_slice(
+            axis=axis,
+            index=index,
+            scalar_name=scalar_name,
+            component=component,
+        )
+        x_arr = np.asarray(x_coords, dtype=float)
+        y_arr = np.asarray(y_coords, dtype=float)
+        scalar_arr = np.asarray(scalars, dtype=float)
+        valid = ~np.isnan(scalar_arr)
+        if not np.any(valid):
+            debug_print("VTKReader sample found no finite values")
+            raise ValueError("No finite scalar values available")
+        distance = (x_arr - float(x_value)) ** 2 + (y_arr - float(y_value)) ** 2
+        distance = np.where(valid, distance, np.inf)
+        nearest_index = int(np.argmin(distance))
+        value = float(scalar_arr[nearest_index])
+        debug_print(f"VTKReader sample nearest_index={nearest_index}")
+        debug_print(f"VTKReader sample value={value}")
+        return value
 
     def get_max_slice_index(self, axis: str = "y") -> int:
         debug_print("VTKReader.get_max_slice_index called")

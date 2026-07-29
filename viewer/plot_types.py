@@ -173,10 +173,30 @@ class DifferencePlotRenderer(PlotTypeRenderer):
         )]
 
 
+class GradientMagnitudeRenderer(PlotTypeRenderer):
+    """Display the controller-computed |grad| map as a heatmap."""
+
+    key   = "gradient_magnitude"
+    label = "|grad|"
+
+    def build_traces(self, x, y, z, zmin, zmax, colorscale, colorbar_cfg, hovertemplate):
+        return [go.Heatmap(
+            x             = x,
+            y             = y,
+            z             = np.asarray(z),
+            zmin          = zmin,
+            zmax          = zmax,
+            colorscale    = colorscale,
+            colorbar      = colorbar_cfg,
+            hovertemplate = hovertemplate,
+        )]
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 PLOT_TYPE_REGISTRY: list[PlotTypeRenderer] = [
     HeatmapRenderer(),
+    GradientMagnitudeRenderer(),
     ContourLinesRenderer(),
     ContourFilledRenderer(),
     HeatmapContourRenderer(),

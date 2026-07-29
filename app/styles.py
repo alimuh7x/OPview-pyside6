@@ -232,6 +232,79 @@ QWidget#toolbarStrip {{
     background: #f3f6fa;
     border-radius: 10px;
 }}
+QWidget#timePlotToolbar {{
+    background: #f3f6fa;
+    border: 1px solid #e0e7f1;
+    border-radius: 8px;
+}}
+QWidget#timePlotActionRow,
+QWidget#timePlotStatusRow,
+QWidget#timePlotPointsContainer {{
+    background: transparent;
+}}
+QPushButton#timePlotAddPointButton,
+QPushButton#timePlotManualButton,
+QPushButton#timePlotCancelButton,
+QPushButton#timePlotClearButton {{
+    background: #ffffff;
+    border: 1px solid #d2dbea;
+    border-radius: 7px;
+    padding: 3px 10px;
+    font-weight: 700;
+}}
+QPushButton#timePlotAddPointButton:hover,
+QPushButton#timePlotManualButton:hover,
+QPushButton#timePlotCancelButton:hover,
+QPushButton#timePlotClearButton:hover {{
+    background: #eaf0f8;
+    border-color: #bfccde;
+}}
+QPushButton#timePlotAddPointButton:checked {{
+    background: #cc0c24;
+    color: #ffffff;
+    border-color: #ad081d;
+}}
+QPushButton#timePlotCalculateButton {{
+    background: #123764;
+    color: #ffffff;
+    border: 1px solid #123764;
+    border-radius: 7px;
+    padding: 3px 12px;
+    font-weight: 800;
+}}
+QPushButton#timePlotCalculateButton:hover {{
+    background: #1b4778;
+    border-color: #1b4778;
+}}
+QPushButton#timePlotCalculateButton:disabled,
+QPushButton#timePlotCancelButton:disabled {{
+    background: #edf1f7;
+    color: #8fa0b8;
+    border-color: #d9e1ed;
+}}
+QWidget#timePlotPointRow {{
+    background: #f8fafd;
+    border: 1px solid #dfe7f2;
+    border-radius: 6px;
+}}
+QLabel#timePlotPointLabel {{
+    color: #17375e;
+    font-size: 13px;
+    font-weight: 700;
+}}
+QPushButton#timePlotRemovePointButton {{
+    background: #ffffff;
+    color: #6a7e9f;
+    border: 1px solid #d8e0ec;
+    border-radius: 6px;
+    padding: 0px;
+    font-weight: 800;
+}}
+QPushButton#timePlotRemovePointButton:hover {{
+    background: #ffecef;
+    color: #cc0c24;
+    border-color: #f2b9c1;
+}}
 QWidget#controlsRow {{
     background: transparent;
 }}

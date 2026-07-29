@@ -85,14 +85,21 @@ class Heatmap2DOrientation:
 
     @staticmethod
     def nearest_value(x_grid, y_grid, z_grid, x_value: float, y_value: float) -> float:
+        _, _, value = Heatmap2DOrientation.nearest_point(x_grid, y_grid, z_grid, x_value, y_value)
+        return value
+
+    @staticmethod
+    def nearest_point(x_grid, y_grid, z_grid, x_value: float, y_value: float) -> tuple[float, float, float]:
         z_arr = np.asarray(z_grid, dtype=float)
         valid = ~np.isnan(z_arr)
         if not np.any(valid):
             raise ValueError("No valid z values in grid")
-        distance = (np.asarray(x_grid) - float(x_value)) ** 2 + (np.asarray(y_grid) - float(y_value)) ** 2
+        x_arr = np.asarray(x_grid, dtype=float)
+        y_arr = np.asarray(y_grid, dtype=float)
+        distance = (x_arr - float(x_value)) ** 2 + (y_arr - float(y_value)) ** 2
         distance = np.where(valid, distance, np.inf)
         idx = np.unravel_index(np.argmin(distance), distance.shape)
-        return float(z_arr[idx])
+        return float(x_arr[idx]), float(y_arr[idx]), float(z_arr[idx])
 
     @staticmethod
     def line_overlay(direction: str, x_position: float | None, y_position: float | None):

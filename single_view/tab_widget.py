@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from utils.panel_load_worker import PanelLoadWorker
 from viewer.panel_widget import PanelWidget
+from app.debug import debug_print
 
 _REMOVE_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "remove.png"
 
@@ -31,6 +32,10 @@ class SingleViewTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._projects: dict[str, dict] = {}
+        self._shared_time_plot_points: list[dict] = []
+        self._shared_time_plot_source_panel: PanelWidget | None = None
+        self._updating_shared_time_plot_points = False
+        self._time_plot_shared_panels: list[PanelWidget] = []
         self._panel_tabs = QTabWidget()
         self._panel_tabs.setObjectName("panelTabs")
         self._panel_tabs.setTabsClosable(False)
@@ -84,6 +89,7 @@ class SingleViewTab(QWidget):
     def _finish_panel(self, load_index: int, label: str, dataset_info: dict, worker) -> None:
         """Called on main thread after worker warms the cache. Creates and installs the panel."""
         panel = PanelWidget(dataset_info=dataset_info, projects=self._projects)
+        self._attach_time_plot_point_sharing(panel)
 
         self._panel_tabs.removeTab(load_index)
         index = self._panel_tabs.insertTab(load_index, panel, label)
@@ -198,3 +204,77 @@ class SingleViewTab(QWidget):
         self._refresh_tab_header_states()
         if widget is not None:
             widget.deleteLater()
+
+    def _attach_time_plot_point_sharing(self, panel: PanelWidget) -> None:
+        """Wire one panel into the Single View shared Plot Over Time point store."""
+        debug_print("SingleViewTab._attach_time_plot_point_sharing called")
+        debug_print(f"SingleViewTab attach panel label={panel.dataset_info.get('label', '')}")
+        if panel in self._time_plot_shared_panels:
+            debug_print("SingleViewTab panel already attached for sharing")
+            return
+        self._time_plot_shared_panels.append(panel)
+        debug_print(f"SingleViewTab shared panel count={len(self._time_plot_shared_panels)}")
+        panel.time_plot_points_changed.connect(self._on_panel_time_plot_points_changed)
+        panel.time_plot_use_same_points_toggled.connect(self._on_panel_use_same_points_toggled)
+        debug_print("SingleViewTab attached time plot point sharing")
+
+    def _on_panel_time_plot_points_changed(self, panel: PanelWidget, points: list[dict]) -> None:
+        """Store latest shared points and push them to panels following shared points."""
+        debug_print("SingleViewTab._on_panel_time_plot_points_changed called")
+        debug_print(f"SingleViewTab point source label={panel.dataset_info.get('label', '')}")
+        debug_print(f"SingleViewTab point count={len(points)}")
+        if self._updating_shared_time_plot_points:
+            debug_print("SingleViewTab point change ignored during shared update")
+            return
+        self._shared_time_plot_points = [dict(point) for point in points]
+        self._shared_time_plot_source_panel = panel
+        debug_print("SingleViewTab stored shared time plot points")
+        self._push_shared_time_plot_points(exclude_panel=panel)
+
+    def _on_panel_use_same_points_toggled(self, panel: PanelWidget, checked: bool) -> None:
+        """Apply current shared points when a panel starts following them."""
+        debug_print("SingleViewTab._on_panel_use_same_points_toggled called")
+        debug_print(f"SingleViewTab use same panel label={panel.dataset_info.get('label', '')}")
+        debug_print(f"SingleViewTab use same checked={checked}")
+        if not checked:
+            debug_print("SingleViewTab use same disabled")
+            return
+        if not self._shared_time_plot_points:
+            current_points = panel.controller.time_plot_points_snapshot()
+            debug_print(f"SingleViewTab no shared points current panel count={len(current_points)}")
+            if current_points:
+                self._shared_time_plot_points = current_points
+                self._shared_time_plot_source_panel = panel
+                debug_print("SingleViewTab seeded shared points from toggled panel")
+                self._push_shared_time_plot_points(exclude_panel=panel)
+            return
+        self._apply_shared_time_plot_points(panel)
+
+    def _push_shared_time_plot_points(self, *, exclude_panel: PanelWidget | None = None) -> None:
+        """Push the current shared points to every panel with Use Same Points enabled."""
+        debug_print("SingleViewTab._push_shared_time_plot_points called")
+        debug_print(f"SingleViewTab shared point count={len(self._shared_time_plot_points)}")
+        for index, widget in enumerate(list(self._time_plot_shared_panels)):
+            if widget is exclude_panel:
+                debug_print(f"SingleViewTab shared push skipped source index={index}")
+                continue
+            if not widget.time_plot_use_same_points_check.isChecked():
+                debug_print(f"SingleViewTab shared push skipped unchecked index={index}")
+                continue
+            self._apply_shared_time_plot_points(widget)
+        debug_print("SingleViewTab shared push complete")
+
+    def _apply_shared_time_plot_points(self, panel: PanelWidget) -> None:
+        """Apply shared points to one following panel without re-publishing them."""
+        debug_print("SingleViewTab._apply_shared_time_plot_points called")
+        debug_print(f"SingleViewTab applying to label={panel.dataset_info.get('label', '')}")
+        self._updating_shared_time_plot_points = True
+        try:
+            panel.controller.set_time_plot_points(
+                self._shared_time_plot_points,
+                source="shared",
+                notify=False,
+            )
+        finally:
+            self._updating_shared_time_plot_points = False
+        debug_print("SingleViewTab shared points applied")

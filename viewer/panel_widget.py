@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -27,6 +28,7 @@ from viewer.heatmap_controller import HeatmapController
 from viewer.histogram_canvas import HistogramCanvas
 from viewer.line_scan_canvas import LineScanCanvas
 from viewer.panel_controls_widget import PanelControlsWidget
+from viewer.time_plot_canvas import TimePlotCanvas
 from viewer.toggle_switch_widget import ToggleSwitchWidget
 
 
@@ -107,6 +109,8 @@ class PanelWidget(QWidget):
     """Compose controls, canvas, and controller into one panel."""
 
     file_loaded = Signal(str)  # emitted with file_path whenever a VTK file is loaded
+    time_plot_points_changed = Signal(object, object)  # emits panel, point list
+    time_plot_use_same_points_toggled = Signal(object, bool)  # emits panel, checked
 
     _ASSETS = Path(__file__).parent.parent / "assets"
 
@@ -119,6 +123,7 @@ class PanelWidget(QWidget):
         self.heatmap_canvas  = HeatmapCanvas()
         self.line_scan_canvas = LineScanCanvas()
         self.histogram_canvas = HistogramCanvas()
+        self.time_plot_canvas = TimePlotCanvas()
         self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
         self.show_line_check = ToggleSwitchWidget("Show Line", checked=False)
         self.direction_combo = QComboBox()
@@ -168,6 +173,51 @@ class PanelWidget(QWidget):
         )
         self.export_button.setIconSize(QSize(16, 16))
         self.export_button.setProperty("subtle", True)
+        self.time_plot_add_point_btn = QPushButton("Add Point")
+        self.time_plot_add_point_btn.setObjectName("timePlotAddPointButton")
+        self.time_plot_add_point_btn.setCheckable(True)
+        self.time_plot_add_point_btn.setToolTip("Toggle heatmap point selection for Plot Over Time")
+        self.time_plot_add_point_btn.setMinimumWidth(112)
+        debug_print("PlotOverTime Add Point button set checkable")
+        self.time_plot_manual_btn = QPushButton("Manual")
+        self.time_plot_manual_btn.setObjectName("timePlotManualButton")
+        self.time_plot_calculate_btn = QPushButton("Calculate")
+        self.time_plot_calculate_btn.setObjectName("timePlotCalculateButton")
+        self.time_plot_cancel_btn = QPushButton("Cancel")
+        self.time_plot_cancel_btn.setObjectName("timePlotCancelButton")
+        self.time_plot_clear_btn = QPushButton("Clear")
+        self.time_plot_clear_btn.setObjectName("timePlotClearButton")
+        for button in (
+            self.time_plot_add_point_btn,
+            self.time_plot_manual_btn,
+            self.time_plot_calculate_btn,
+            self.time_plot_cancel_btn,
+            self.time_plot_clear_btn,
+        ):
+            button.setFixedHeight(28)
+            debug_print(f"PlotOverTime formatted button={button.objectName()}")
+        self.time_plot_cancel_btn.setEnabled(False)
+        self.time_plot_use_same_points_check = ToggleSwitchWidget("Use Same Points", checked=False)
+        self.time_plot_use_same_points_check.setObjectName("timePlotUseSamePointsToggle")
+        self.time_plot_use_same_points_check.toggled.connect(self._on_use_same_points_toggled)
+        debug_print("PlotOverTime Use Same Points toggle initialized")
+        self.time_plot_show_points_check = ToggleSwitchWidget("Show Points", checked=False)
+        self.time_plot_selected_label = QLabel("No point selected")
+        self.time_plot_selected_label.setObjectName("mutedInfo")
+        self.time_plot_points_container = QWidget()
+        self.time_plot_points_container.setObjectName("timePlotPointsContainer")
+        self.time_plot_points_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.time_plot_points_layout = QVBoxLayout(self.time_plot_points_container)
+        self.time_plot_points_layout.setContentsMargins(0, 0, 0, 0)
+        self.time_plot_points_layout.setSpacing(4)
+        self.time_plot_points_container.setVisible(False)
+        debug_print("PlotOverTime point list container initialized")
+        self.time_plot_progress = QProgressBar()
+        self.time_plot_progress.setRange(0, 100)
+        self.time_plot_progress.setValue(0)
+        self.time_plot_progress.setFormat("Ready")
+        self.time_plot_progress.setFixedHeight(18)
+        debug_print("PlotOverTime card widgets initialized")
         self.logo_label = QLabel()
         self.heatmap_status_label = QLabel("Heatmap waiting for controller")
         self.heatmap_status_label.setObjectName("mutedInfo")
@@ -188,10 +238,23 @@ class PanelWidget(QWidget):
             export_button=self.export_button,
             colorbar_label_edit=self.colorbar_label_edit,
             unit_scale_combo=self.unit_scale_combo,
+            time_plot_canvas=self.time_plot_canvas,
+            time_plot_add_point_btn=self.time_plot_add_point_btn,
+            time_plot_manual_btn=self.time_plot_manual_btn,
+            time_plot_calculate_btn=self.time_plot_calculate_btn,
+            time_plot_cancel_btn=self.time_plot_cancel_btn,
+            time_plot_clear_btn=self.time_plot_clear_btn,
+            time_plot_show_points_check=self.time_plot_show_points_check,
+            time_plot_selected_label=self.time_plot_selected_label,
+            time_plot_points_container=self.time_plot_points_container,
+            time_plot_points_layout=self.time_plot_points_layout,
+            time_plot_progress=self.time_plot_progress,
             dataset_info=dataset_info,
             export_widget=self.heatmap_row,
         )
         self.controller._file_loaded_callback = self.file_loaded.emit
+        self.controller._file_options_changed_callback = self._sync_playback_frame_count
+        self.controller._time_plot_points_changed_callback = self._emit_time_plot_points_changed
         self.controller.connect_signals()
         self.controller.refresh_view()
 
@@ -224,37 +287,65 @@ class PanelWidget(QWidget):
         return button
 
     def _sync_playback_frame_count(self) -> None:
+        debug_print("PanelWidget._sync_playback_frame_count called")
         n = self.controller.get_file_count()
+        debug_print(f"PanelWidget playback file count={n}")
         self.playback_slider.setRange(0, max(0, n - 1))
-        self.frame_label.setText(f"1 / {n}" if n > 0 else "– / –")
+        debug_print(f"PanelWidget playback slider maximum={self.playback_slider.maximum()}")
+        current_index = self.controls_widget.file_combo.currentIndex()
+        debug_print(f"PanelWidget file combo current index={current_index}")
+        slider_index = max(0, min(current_index, self.playback_slider.maximum()))
+        debug_print(f"PanelWidget syncing playback slider index={slider_index}")
+        self.playback_slider.blockSignals(True)
+        self.playback_slider.setValue(slider_index)
+        self.playback_slider.blockSignals(False)
+        debug_print(f"PanelWidget playback slider value={self.playback_slider.value()}")
+        self.frame_label.setText(f"{slider_index + 1} / {n}" if n > 0 else "– / –")
+        debug_print(f"PanelWidget playback frame label={self.frame_label.text()}")
         self._update_playback_buttons()
 
     def _on_slider_value_changed(self, index: int) -> None:
+        debug_print("PanelWidget._on_slider_value_changed called")
+        debug_print(f"PanelWidget slider index={index}")
         n = self.playback_slider.maximum() + 1
         self.frame_label.setText(f"{index + 1} / {n}")
+        debug_print(f"PanelWidget slider frame label={self.frame_label.text()}")
         if self.controls_widget.file_combo.currentIndex() != index:
+            debug_print("PanelWidget slider updating file combo index")
             self.controls_widget.file_combo.setCurrentIndex(index)
         self._update_playback_buttons()
 
     def _on_file_combo_changed(self, index: int) -> None:
+        debug_print("PanelWidget._on_file_combo_changed called")
+        debug_print(f"PanelWidget file combo index={index}")
         self.playback_slider.blockSignals(True)
         self.playback_slider.setValue(index)
         self.playback_slider.blockSignals(False)
+        debug_print(f"PanelWidget synced slider value={self.playback_slider.value()}")
         n = self.playback_slider.maximum() + 1
         self.frame_label.setText(f"{index + 1} / {n}" if n > 0 else "– / –")
+        debug_print(f"PanelWidget combo frame label={self.frame_label.text()}")
         self._update_playback_buttons()
 
     def _jump_to_frame(self, index: int) -> None:
+        debug_print("PanelWidget._jump_to_frame called")
+        debug_print(f"PanelWidget requested frame index={index}")
         maximum = self.playback_slider.maximum()
+        debug_print(f"PanelWidget current slider maximum={maximum}")
         if maximum < 0:
             return
         target = max(0, min(index, maximum))
+        debug_print(f"PanelWidget target frame index={target}")
         self.controls_widget.file_combo.setCurrentIndex(target)
 
     def _update_playback_buttons(self) -> None:
+        debug_print("PanelWidget._update_playback_buttons called")
         maximum = self.playback_slider.maximum()
         current = self.playback_slider.value()
         has_frames = maximum >= 0 and self.controller.get_file_count() > 0
+        debug_print(f"PanelWidget playback current={current}")
+        debug_print(f"PanelWidget playback maximum={maximum}")
+        debug_print(f"PanelWidget playback has_frames={has_frames}")
         for button in (
             self.first_frame_btn,
             self.previous_frame_btn,
@@ -345,6 +436,7 @@ class PanelWidget(QWidget):
         self._update_heatmap_toolbar_mode(max(0, bounded_width - 56))
         self.line_scan_canvas.set_available_width(max(240, bounded_width - 72))
         self.histogram_canvas.set_available_width(max(240, bounded_width - 72))
+        self.time_plot_canvas.set_available_width(max(240, bounded_width - 72))
         self._splitter.setMaximumWidth(bounded_width)
         debug_print(f"PanelWidget max width applied={bounded_width}")
 
@@ -581,6 +673,69 @@ class PanelWidget(QWidget):
         histogram_layout.addLayout(bins_row)
         histogram_layout.addWidget(self.histogram_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.histogram_card)
+
+        self.time_plot_card = QWidget()
+        self.time_plot_card.setObjectName("innerCard")
+        self.time_plot_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.time_plot_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        time_plot_layout = QVBoxLayout(self.time_plot_card)
+        time_plot_layout.setContentsMargins(10, 8, 10, 10)
+        time_plot_layout.setSpacing(8)
+        time_plot_title = QLabel("Plot Over Time")
+        time_plot_title.setObjectName("sectionTitle")
+        time_plot_layout.addWidget(time_plot_title)
+
+        time_plot_toolbar = QWidget()
+        time_plot_toolbar.setObjectName("timePlotToolbar")
+        time_plot_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        time_plot_toolbar_layout = QVBoxLayout(time_plot_toolbar)
+        time_plot_toolbar_layout.setContentsMargins(8, 8, 8, 8)
+        time_plot_toolbar_layout.setSpacing(6)
+
+        time_plot_action_row = QWidget()
+        time_plot_action_row.setObjectName("timePlotActionRow")
+        time_plot_action_layout = QHBoxLayout(time_plot_action_row)
+        time_plot_action_layout.setContentsMargins(0, 0, 0, 0)
+        time_plot_action_layout.setSpacing(6)
+        time_plot_action_layout.addWidget(self.time_plot_add_point_btn)
+        time_plot_action_layout.addWidget(self.time_plot_manual_btn)
+        time_plot_action_layout.addStretch(1)
+        time_plot_action_layout.addWidget(self.time_plot_calculate_btn)
+        time_plot_action_layout.addWidget(self.time_plot_cancel_btn)
+        time_plot_action_layout.addWidget(self.time_plot_clear_btn)
+
+        time_plot_status_row = QWidget()
+        time_plot_status_row.setObjectName("timePlotStatusRow")
+        time_plot_status_layout = QHBoxLayout(time_plot_status_row)
+        time_plot_status_layout.setContentsMargins(0, 0, 0, 0)
+        time_plot_status_layout.setSpacing(8)
+        time_plot_status_layout.addWidget(self.time_plot_selected_label, 1)
+        time_plot_status_layout.addWidget(self.time_plot_use_same_points_check)
+        time_plot_status_layout.addWidget(self.time_plot_show_points_check)
+
+        time_plot_toolbar_layout.addWidget(time_plot_action_row)
+        time_plot_toolbar_layout.addWidget(time_plot_status_row)
+        time_plot_layout.addWidget(time_plot_toolbar)
+        time_plot_layout.addWidget(self.time_plot_points_container)
+        time_plot_layout.addWidget(self.time_plot_progress)
+        time_plot_layout.addWidget(self.time_plot_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.time_plot_card)
+        debug_print("PlotOverTime card initialized")
         layout.addStretch(1)
 
         return card
+
+    def _on_use_same_points_toggled(self, checked: bool) -> None:
+        """Emit when this panel wants to follow shared Plot Over Time points."""
+        debug_print("PanelWidget._on_use_same_points_toggled called")
+        debug_print(f"PanelWidget Use Same Points checked={checked}")
+        self.time_plot_use_same_points_toggled.emit(self, bool(checked))
+        debug_print("PanelWidget emitted use same points toggle")
+
+    def _emit_time_plot_points_changed(self, points: list[dict]) -> None:
+        """Emit a copy of this panel's Plot Over Time points."""
+        debug_print("PanelWidget._emit_time_plot_points_changed called")
+        snapshot = [dict(point) for point in points]
+        debug_print(f"PanelWidget time plot point count={len(snapshot)}")
+        self.time_plot_points_changed.emit(self, snapshot)
+        debug_print("PanelWidget emitted time plot points changed")
