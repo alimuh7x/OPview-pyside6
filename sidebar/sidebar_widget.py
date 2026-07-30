@@ -1,7 +1,7 @@
 """Sidebar widget for project and panel actions."""
 
 from pathlib import Path
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, Signal, QEvent, QRect
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -16,12 +16,18 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionButton,
+    QStyleOptionViewItem,
 )
 
 _ASSETS = Path(__file__).parent.parent / "assets"
 _SIDEBAR_LIST_ROW_HEIGHT = 32
 _SIDEBAR_LIST_FRAME_PADDING = 8
 _DATASET_LIST_MIN_ROWS = 8
+_PROJECT_REMOVE_BUTTON_WIDTH = 24
+_PROJECT_REMOVE_BUTTON_GAP = 8
 
 from app.debug import debug_print
 from config.constants import ALLOWED_TEXTDATA_EXTENSIONS
@@ -29,6 +35,64 @@ from config.tabs import TAB_CONFIGS
 from config.dataset_registry import DatasetRegistry
 from utils.combo_box_utils import update_combo_popup_width
 from utils.project_scanner import get_textdata_files
+
+
+class _ProjectRemoveDelegate(QStyledItemDelegate):
+    """Draw a fixed right-side remove button while preserving native item checks."""
+
+    def __init__(self, sidebar: "SidebarWidget") -> None:
+        super().__init__(sidebar.project_list)
+        self._sidebar = sidebar
+        self.remove_button_width = _PROJECT_REMOVE_BUTTON_WIDTH
+        debug_print("_ProjectRemoveDelegate.__init__ complete")
+
+    def _remove_button_rect(self, item_rect: QRect) -> QRect:
+        debug_print(f"_ProjectRemoveDelegate._remove_button_rect item_rect={item_rect}")
+        top = item_rect.top() + max(0, (item_rect.height() - self.remove_button_width) // 2)
+        rect = QRect(
+            item_rect.right() - self.remove_button_width - 6,
+            top,
+            self.remove_button_width,
+            self.remove_button_width,
+        )
+        debug_print(f"_ProjectRemoveDelegate remove rect={rect}")
+        return rect
+
+    def paint(self, painter, option, index) -> None:
+        item_option = QStyleOptionViewItem(option)
+        remove_rect = self._remove_button_rect(option.rect)
+        item_option.rect.setRight(remove_rect.left() - _PROJECT_REMOVE_BUTTON_GAP)
+        super().paint(painter, item_option, index)
+
+        button_option = QStyleOptionButton()
+        button_option.rect = remove_rect
+        button_option.text = "X"
+        button_option.state = QStyle.StateFlag.State_Enabled
+        if option.state & QStyle.StateFlag.State_MouseOver:
+            button_option.state |= QStyle.StateFlag.State_MouseOver
+        widget = option.widget or self._sidebar.project_list
+        debug_print(f"_ProjectRemoveDelegate.paint widget={widget.objectName()}")
+        widget.style().drawControl(QStyle.ControlElement.CE_PushButton, button_option, painter, widget)
+
+    def sizeHint(self, option, index) -> QSize:
+        base = super().sizeHint(option, index)
+        width = base.width() + self.remove_button_width + _PROJECT_REMOVE_BUTTON_GAP
+        height = max(base.height(), _SIDEBAR_LIST_ROW_HEIGHT, self.remove_button_width)
+        size = QSize(width, height)
+        debug_print(f"_ProjectRemoveDelegate.sizeHint size={size}")
+        return size
+
+    def editorEvent(self, event, model, option, index) -> bool:
+        debug_print(f"_ProjectRemoveDelegate.editorEvent type={event.type()}")
+        if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            debug_print(f"_ProjectRemoveDelegate mouse pos={pos}")
+            if self._remove_button_rect(option.rect).contains(pos):
+                project_name = index.data(Qt.ItemDataRole.UserRole)
+                debug_print(f"_ProjectRemoveDelegate remove clicked project={project_name}")
+                self._sidebar.remove_project(project_name)
+                return True
+        return super().editorEvent(event, model, option, index)
 
 
 class SidebarWidget(QWidget):
@@ -46,6 +110,7 @@ class SidebarWidget(QWidget):
         super().__init__()
         self._projects: dict[str, dict] = {}
         self._manual_projects: dict[str, dict] = {}
+        self._hidden_projects: set[str] = set()
         self._dataset_registry: DatasetRegistry | None = None
         self._mode = "vtk"
         self._project_check_state_by_mode: dict[str, dict[str, Qt.CheckState]] = {
@@ -79,6 +144,8 @@ class SidebarWidget(QWidget):
         self.project_list.setObjectName("projectList")
         self.project_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.project_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._project_remove_delegate = _ProjectRemoveDelegate(self)
+        self.project_list.setItemDelegate(self._project_remove_delegate)
         self._resize_project_list()
         projects_layout.addWidget(self.project_list)
 
@@ -185,14 +252,17 @@ class SidebarWidget(QWidget):
     def set_projects(self, projects: dict[str, dict]) -> None:
         debug_print("SidebarWidget.set_projects called")
         debug_print(f"SidebarWidget received {len(projects)} projects")
-        self._projects = projects
-        if self._mode == "custom_graph":
-            count = sum(1 for p in projects.values() if self._is_text_project(p))
-        else:
-            count = sum(1 for p in projects.values() if p.get("has_vtk"))
+        self._projects = dict(projects)
+        debug_print(f"SidebarWidget stored projects count={len(self._projects)}")
+        count = sum(
+            1
+            for name, info in self._projects.items()
+            if self._is_project_visible_for_mode(name, info)
+        )
+        debug_print(f"SidebarWidget visible project count={count}")
         self.project_status_label.setText(f"{count} project(s) found")
         self._populate_project_list()
-        self.projects_changed.emit(projects)
+        self.projects_changed.emit(self._projects)
         debug_print("SidebarWidget emitted projects_changed")
 
     def reload_from_cwd(self) -> None:
@@ -207,8 +277,36 @@ class SidebarWidget(QWidget):
     def add_manual_project(self, name: str, info: dict) -> None:
         """Register a manually added project (survives reload)."""
         debug_print(f"SidebarWidget.add_manual_project: {name}")
+        self._hidden_projects.discard(name)
+        debug_print(f"SidebarWidget manual project unhidden: {name}")
         self._manual_projects[name] = info
+        debug_print(f"SidebarWidget manual projects count={len(self._manual_projects)}")
         self.set_projects({**self._projects, **self._manual_projects})
+
+    def remove_project(self, project_name: str) -> None:
+        """Remove a project from the visible OPView list without deleting files."""
+        debug_print(f"SidebarWidget.remove_project called name={project_name}")
+        if not project_name:
+            debug_print("SidebarWidget.remove_project skipped: empty project name")
+            return
+        related_names = self._related_project_names(project_name)
+        debug_print(f"SidebarWidget.remove_project related_names={sorted(related_names)}")
+        for name in related_names:
+            was_manual = name in self._manual_projects
+            debug_print(f"SidebarWidget.remove_project name={name} was_manual={was_manual}")
+            if was_manual:
+                self._manual_projects.pop(name, None)
+                debug_print(f"SidebarWidget removed manual project: {name}")
+            else:
+                self._hidden_projects.add(name)
+                debug_print(f"SidebarWidget hid scanned project: {name}")
+            self._projects.pop(name, None)
+            debug_print(f"SidebarWidget projects count after pop={len(self._projects)}")
+            for mode, state in self._project_check_state_by_mode.items():
+                state.pop(name, None)
+                debug_print(f"SidebarWidget cleared check state mode={mode} project={name}")
+        self.set_projects({**self._projects, **self._manual_projects})
+        debug_print("SidebarWidget.remove_project complete")
 
     def _emit_add_panel_request(self) -> None:
         debug_print("SidebarWidget._emit_add_panel_request called")
@@ -255,19 +353,16 @@ class SidebarWidget(QWidget):
         self.project_list.clear()
         mode_state = self._project_check_state_by_mode.setdefault(self._mode, {})
         for project_name, project_info in sorted(self._projects.items()):
-            if self._mode == "custom_graph":
-                if not self._is_text_project(project_info):
-                    continue
-            else:
-                if not project_info.get("has_vtk"):
-                    continue
-                if not project_info.get("is_subdirectory") and f"{project_name}/VTK" in self._projects:
-                    continue
+            if not self._is_project_visible_for_mode(project_name, project_info):
+                continue
             item = QListWidgetItem(project_name)
             item.setData(Qt.ItemDataRole.UserRole, project_name)
+            item.setToolTip(project_name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(mode_state.get(project_name, Qt.CheckState.Unchecked))
+            item.setSizeHint(QSize(0, _SIDEBAR_LIST_ROW_HEIGHT))
             self.project_list.addItem(item)
+            debug_print(f"SidebarWidget added native project item={project_name}")
         self.project_list.blockSignals(False)
         self._resize_project_list()
         debug_print(f"SidebarWidget project list count={self.project_list.count()}")
@@ -277,7 +372,8 @@ class SidebarWidget(QWidget):
             self._refresh_dataset_combo()
 
     def _on_project_check_changed(self, item: QListWidgetItem) -> None:
-        debug_print(f"SidebarWidget project check changed: {item.text()} -> {item.checkState()}")
+        project_name = item.data(Qt.ItemDataRole.UserRole)
+        debug_print(f"SidebarWidget project check changed: {project_name} -> {item.checkState()}")
         self._project_check_state_by_mode.setdefault(self._mode, {})[
             item.data(Qt.ItemDataRole.UserRole)
         ] = item.checkState()
@@ -393,6 +489,39 @@ class SidebarWidget(QWidget):
         )
         debug_print(f"SidebarWidget._is_text_project result={is_text}")
         return is_text
+
+    def _is_project_visible_for_mode(self, project_name: str, project_info: dict) -> bool:
+        debug_print(f"SidebarWidget._is_project_visible_for_mode name={project_name}")
+        if project_name in self._hidden_projects:
+            debug_print("SidebarWidget project hidden: removed by user")
+            return False
+        if self._mode == "custom_graph":
+            visible = self._is_text_project(project_info)
+            debug_print(f"SidebarWidget project visible={visible} mode={self._mode}")
+            return visible
+        if not project_info.get("has_vtk"):
+            debug_print("SidebarWidget project hidden: no VTK")
+            return False
+        if not project_info.get("is_subdirectory") and f"{project_name}/VTK" in self._projects:
+            debug_print("SidebarWidget project hidden: parent has VTK subentry")
+            return False
+        debug_print(f"SidebarWidget project visible=True mode={self._mode}")
+        return True
+
+    def _related_project_names(self, project_name: str) -> set[str]:
+        debug_print(f"SidebarWidget._related_project_names name={project_name}")
+        names = {project_name}
+        info = self._projects.get(project_name, {})
+        parent = info.get("parent_folder")
+        if parent:
+            names.add(parent)
+            debug_print(f"SidebarWidget related parent={parent}")
+        child = f"{project_name}/VTK"
+        if child in self._projects:
+            names.add(child)
+            debug_print(f"SidebarWidget related child={child}")
+        debug_print(f"SidebarWidget._related_project_names result={sorted(names)}")
+        return names
 
     def _checked_project_names(self) -> list[str]:
         debug_print("SidebarWidget._checked_project_names called")

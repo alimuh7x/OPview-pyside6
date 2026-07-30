@@ -64,6 +64,10 @@ class HeatmapController:
         time_plot_points_container=None,
         time_plot_points_layout=None,
         time_plot_progress=None,
+        phase_fraction_history_canvas=None,
+        phase_fraction_history_separator=None,
+        phase_history_dt_spin=None,
+        phase_history_time_unit_combo=None,
         export_widget=None,
     ) -> None:
         """Store all widget references, initialise default state, and populate controls."""
@@ -91,6 +95,10 @@ class HeatmapController:
         self.time_plot_points_container = time_plot_points_container
         self.time_plot_points_layout = time_plot_points_layout
         self.time_plot_progress = time_plot_progress
+        self.phase_fraction_history_canvas = phase_fraction_history_canvas
+        self.phase_fraction_history_separator = phase_fraction_history_separator
+        self.phase_history_dt_spin = phase_history_dt_spin
+        self.phase_history_time_unit_combo = phase_history_time_unit_combo
         self.export_widget = export_widget
         self.dataset_info = dataset_info
         self._file_loaded_callback = None
@@ -116,6 +124,7 @@ class HeatmapController:
         self._time_plot_values: list[float] = []
         self._time_plot_errors: list[str] = []
         self._phase_fraction_ranges: dict[str, tuple[float, float]] = {}
+        self._phase_fraction_history_cache: dict | None = None
         self.state = ViewerState(
             dataset_id=dataset_info.get("id", ""),
             dataset_label=dataset_info.get("label", "Untitled"),
@@ -152,6 +161,14 @@ class HeatmapController:
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
         self.colorbar_label_edit.editingFinished.connect(lambda *_: self._refresh_from_toolbar("colorbar-label"))
         self.unit_scale_combo.currentIndexChanged.connect(lambda *_: self._refresh_from_toolbar("unit-scale"))
+        if self.phase_history_dt_spin is not None:
+            self.phase_history_dt_spin.valueChanged.connect(
+                lambda *_: self._on_time_axis_control_changed("phase-history-dt")
+            )
+        if self.phase_history_time_unit_combo is not None:
+            self.phase_history_time_unit_combo.currentIndexChanged.connect(
+                lambda *_: self._on_time_axis_control_changed("phase-history-time-unit")
+            )
         if self.time_plot_add_point_btn is not None:
             self.time_plot_add_point_btn.toggled.connect(self._on_time_plot_add_point_toggled)
         if self.time_plot_manual_btn is not None:
@@ -173,6 +190,17 @@ class HeatmapController:
         self.controls_widget.set_last_trigger(trigger)
         self.refresh_view()
         debug_print("HeatmapController toolbar refresh complete")
+
+    def _on_time_axis_control_changed(self, trigger: str) -> None:
+        """Refresh views that use the shared dt/time-unit axis."""
+        debug_print("HeatmapController._on_time_axis_control_changed called")
+        debug_print(f"HeatmapController time axis trigger={trigger}")
+        self._refresh_from_toolbar(trigger)
+        if self._time_plot_series_data:
+            debug_print("PlotOverTime rerendering existing data with new time axis")
+            self._render_time_plot_values()
+        else:
+            debug_print("PlotOverTime no existing data to rerender")
 
     def _initialize_controls(self) -> None:
         """Populate project and file dropdowns, then load the first file."""
@@ -315,6 +343,7 @@ class HeatmapController:
         extra_scale, display_label = self._get_display_params(scalar_label)
         display_label = self._display_label_for_plot_type(display_label, plot_type)
         self._render_heatmap(x_grid, y_grid, z_grid, extra_scale, display_label)
+        self._render_phase_fraction_history()
         self._render_line_scan(x_grid, y_grid, z_grid, extra_scale, display_label)
         self._render_histogram(extra_scale, display_label)
         debug_print("Controller requested all canvas updates")
@@ -487,6 +516,202 @@ class HeatmapController:
         ordered = sorted(names, key=sort_key)
         debug_print(f"HeatmapController ordered phase fraction names={ordered}")
         return ordered
+
+    def _is_phase_field_dataset(self) -> bool:
+        """Return True for the Phase Field dataset/tab where phase history should be shown."""
+        debug_print("HeatmapController._is_phase_field_dataset called")
+        dataset_id = str(self.dataset_info.get("id", "")).lower()
+        dataset_label = str(self.dataset_info.get("label", "")).lower().replace(" ", "")
+        config_label = str(self.dataset_info.get("dataset_config", {}).get("label", "")).lower().replace(" ", "")
+        debug_print(f"HeatmapController phase history dataset_id={dataset_id}")
+        debug_print(f"HeatmapController phase history dataset_label={dataset_label}")
+        debug_print(f"HeatmapController phase history config_label={config_label}")
+        result = "phase-field" in dataset_id or dataset_label == "phasefield" or config_label == "phasefield"
+        debug_print(f"HeatmapController is phase field dataset={result}")
+        return result
+
+    def _current_phase_history_step(self, files) -> int | None:
+        """Return the timestep corresponding to the currently selected file."""
+        debug_print("HeatmapController._current_phase_history_step called")
+        current_path = str(Path(self.state.file_path).resolve()) if self.state.file_path else ""
+        debug_print(f"HeatmapController phase history current path={current_path}")
+        for item in files:
+            item_path = str(Path(item.path).resolve())
+            debug_print(f"HeatmapController phase history compare path={item_path}")
+            if item_path == current_path:
+                debug_print(f"HeatmapController phase history current step={item.step}")
+                return int(item.step)
+        debug_print("HeatmapController phase history current step not found")
+        return None
+
+    def _phase_fraction_history_cache_key(self, files, phase_names: list[str]) -> tuple:
+        """Build a cache key for one phase-fraction file series."""
+        debug_print("HeatmapController._phase_fraction_history_cache_key called")
+        key = (
+            tuple(str(Path(item.path).resolve()) for item in files),
+            tuple(phase_names),
+        )
+        debug_print(f"HeatmapController phase history cache file count={len(key[0])}")
+        debug_print(f"HeatmapController phase history cache phase count={len(key[1])}")
+        return key
+
+    def _phase_history_time_axis(self) -> tuple[float, str, str]:
+        """Return factor and labels for converting filename timestep to displayed time."""
+        debug_print("HeatmapController._phase_history_time_axis called")
+        dt = 1.0
+        if self.phase_history_dt_spin is not None:
+            dt = float(self.phase_history_dt_spin.value())
+        unit = "timestep"
+        if self.phase_history_time_unit_combo is not None:
+            unit = str(self.phase_history_time_unit_combo.currentText() or "timestep")
+        if unit == "timestep":
+            factor = 1.0
+            x_label = "Timestep"
+            hover_x_label = "timestep"
+        else:
+            unit_factor = {"s": 1.0, "min": 1.0 / 60.0, "hr": 1.0 / 3600.0}.get(unit, 1.0)
+            factor = dt * unit_factor
+            x_label = f"Time [{unit}]"
+            hover_x_label = "time"
+        debug_print(f"HeatmapController phase history dt={dt}")
+        debug_print(f"HeatmapController phase history unit={unit}")
+        debug_print(f"HeatmapController phase history factor={factor}")
+        debug_print(f"HeatmapController phase history x_label={x_label}")
+        debug_print(f"HeatmapController phase history hover_x_label={hover_x_label}")
+        return factor, x_label, hover_x_label
+
+    def _convert_phase_fraction_history_axis(
+        self,
+        series: list[dict],
+        current_step: int | None,
+    ) -> tuple[list[dict], float | None, str, str]:
+        """Convert raw timestep x-values to user-selected physical time units."""
+        debug_print("HeatmapController._convert_phase_fraction_history_axis called")
+        factor, x_label, hover_x_label = self._phase_history_time_axis()
+        converted_series = []
+        for index, item in enumerate(series):
+            debug_print(f"HeatmapController converting phase history series index={index}")
+            converted_item = dict(item)
+            converted_item["steps"] = [float(step) * factor for step in item.get("steps", [])]
+            debug_print(f"HeatmapController converted steps count={len(converted_item['steps'])}")
+            converted_series.append(converted_item)
+        converted_current = None if current_step is None else float(current_step) * factor
+        debug_print(f"HeatmapController converted current step={converted_current}")
+        return converted_series, converted_current, x_label, hover_x_label
+
+    def _converted_time_plot_series(self) -> tuple[list[dict], str, str]:
+        """Return Plot Over Time data converted from raw timesteps to selected time units."""
+        debug_print("HeatmapController._converted_time_plot_series called")
+        factor, x_label, hover_x_label = self._phase_history_time_axis()
+        converted_series = []
+        for index, item in enumerate(self._time_plot_series_data):
+            debug_print(f"PlotOverTime converting series index={index}")
+            converted_item = dict(item)
+            converted_item["steps"] = [float(step) * factor for step in item.get("steps", [])]
+            debug_print(f"PlotOverTime converted steps count={len(converted_item['steps'])}")
+            converted_series.append(converted_item)
+        debug_print(f"PlotOverTime converted x_label={x_label}")
+        return converted_series, x_label, hover_x_label
+
+    def _build_phase_fraction_history_series(self, files, phase_names: list[str]) -> list[dict]:
+        """Calculate whole-mesh phase-fraction percentages for every timestep."""
+        debug_print("HeatmapController._build_phase_fraction_history_series called")
+        debug_print(f"HeatmapController phase history files={len(files)}")
+        debug_print(f"HeatmapController phase history phases={phase_names}")
+        series = [
+            {
+                "label": self.controls_widget.phase_fraction_display_label(name, name),
+                "key": name,
+                "steps": [],
+                "values": [],
+                "color": _PHASE_FRACTION_COLORS[index % len(_PHASE_FRACTION_COLORS)],
+            }
+            for index, name in enumerate(phase_names)
+        ]
+        for file_index, item in enumerate(files):
+            debug_print(f"HeatmapController phase history reading index={file_index}")
+            debug_print(f"HeatmapController phase history path={item.path}")
+            reader = get_reader(item.path)
+            available = set(reader.scalar_fields)
+            debug_print(f"HeatmapController phase history available arrays={len(available)}")
+            for phase_index, phase_name in enumerate(phase_names):
+                debug_print(f"HeatmapController phase history phase={phase_name}")
+                series[phase_index]["steps"].append(int(item.step))
+                if phase_name not in available:
+                    debug_print("HeatmapController phase history missing phase in file")
+                    series[phase_index]["values"].append(float("nan"))
+                    continue
+                values = np.asarray(reader.mesh[phase_name], dtype=float)
+                finite_count = int(np.count_nonzero(np.isfinite(values)))
+                debug_print(f"HeatmapController phase history finite count={finite_count}")
+                if finite_count == 0:
+                    debug_print("HeatmapController phase history no finite values")
+                    series[phase_index]["values"].append(float("nan"))
+                    continue
+                percent = float(np.nanmean(values) * 100.0)
+                debug_print(f"HeatmapController phase history percent={percent}")
+                series[phase_index]["values"].append(percent)
+        debug_print("HeatmapController._build_phase_fraction_history_series complete")
+        return series
+
+    def _render_phase_fraction_history(self) -> None:
+        """Show Phase Field phase-fraction percentage history below the VTK view."""
+        debug_print("HeatmapController._render_phase_fraction_history called")
+        if self.phase_fraction_history_canvas is None:
+            debug_print("HeatmapController phase history skipped no canvas")
+            return
+        if self.reader is None or not self._is_phase_field_dataset():
+            debug_print("HeatmapController phase history hidden non phase field/no reader")
+            self.phase_fraction_history_canvas.hide()
+            if self.phase_fraction_history_separator is not None:
+                debug_print("HeatmapController hiding phase history separator")
+                self.phase_fraction_history_separator.hide()
+            return
+        phase_names = self._phase_fraction_array_names()
+        debug_print(f"HeatmapController phase history detected phases={phase_names}")
+        if not phase_names:
+            debug_print("HeatmapController phase history hidden no PhaseFraction arrays")
+            self.phase_fraction_history_canvas.hide()
+            if self.phase_fraction_history_separator is not None:
+                debug_print("HeatmapController hiding phase history separator")
+                self.phase_fraction_history_separator.hide()
+            return
+        files = collect_same_series_files(self.state.file_path, self._current_file_paths())
+        debug_print(f"HeatmapController phase history same-series files={len(files)}")
+        if not files:
+            debug_print("HeatmapController phase history hidden no files")
+            self.phase_fraction_history_canvas.hide()
+            if self.phase_fraction_history_separator is not None:
+                debug_print("HeatmapController hiding phase history separator")
+                self.phase_fraction_history_separator.hide()
+            return
+        cache_key = self._phase_fraction_history_cache_key(files, phase_names)
+        if self._phase_fraction_history_cache and self._phase_fraction_history_cache.get("key") == cache_key:
+            debug_print("HeatmapController phase history cache hit")
+            series = self._phase_fraction_history_cache["series"]
+        else:
+            debug_print("HeatmapController phase history cache miss")
+            series = self._build_phase_fraction_history_series(files, phase_names)
+            self._phase_fraction_history_cache = {"key": cache_key, "series": series}
+            debug_print("HeatmapController phase history cache stored")
+        current_step = self._current_phase_history_step(files)
+        debug_print(f"HeatmapController phase history render current_step={current_step}")
+        series, current_step, x_label, hover_x_label = self._convert_phase_fraction_history_axis(
+            series,
+            current_step,
+        )
+        debug_print(f"HeatmapController phase history converted x_label={x_label}")
+        if self.phase_fraction_history_separator is not None:
+            debug_print("HeatmapController showing phase history separator")
+            self.phase_fraction_history_separator.show()
+        self.phase_fraction_history_canvas.show()
+        self.phase_fraction_history_canvas.render_phase_fraction_history(
+            series,
+            current_step=current_step,
+            x_label=x_label,
+            hover_x_label=hover_x_label,
+        )
+        debug_print("HeatmapController phase history rendered")
 
     def _get_scalar_def(self, scalar_key: str) -> dict | None:
         """Return the scalar definition matching scalar_key, or the first available as a fallback."""
@@ -1505,9 +1730,12 @@ class HeatmapController:
         if self.time_plot_canvas is None:
             debug_print("PlotOverTime render skipped no canvas")
             return
+        series, x_label, hover_x_label = self._converted_time_plot_series()
         self.time_plot_canvas.render_time_series(
-            self._time_plot_series_data,
+            series,
             y_label=self._time_plot_display_label,
+            x_label=x_label,
+            hover_x_label=hover_x_label,
         )
 
     def _handle_time_plot_sample(self, sample, display_label: str) -> None:
@@ -1519,11 +1747,16 @@ class HeatmapController:
         self._time_plot_values.append(float(sample.value))
         if self.time_plot_canvas is not None:
             point_label = f"x={self.state.time_plot_x:.4f}, y={self.state.time_plot_y:.4f}"
+            factor, x_label, hover_x_label = self._phase_history_time_axis()
+            converted_steps = [float(step) * factor for step in self._time_plot_steps]
+            debug_print(f"PlotOverTime sample converted steps count={len(converted_steps)}")
             self.time_plot_canvas.render_time_plot(
-                self._time_plot_steps,
+                converted_steps,
                 self._time_plot_values,
                 y_label=display_label,
                 point_label=point_label,
+                x_label=x_label,
+                hover_x_label=hover_x_label,
             )
 
     def _handle_time_plot_error(self, index: int, path: str, message: str) -> None:

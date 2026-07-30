@@ -157,7 +157,10 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         sidebar.project_list.item(0).setCheckState(Qt.CheckState.Checked)
 
         self.assertEqual(sidebar.project_list.count(), 1)
-        self.assertEqual(sidebar.project_list.item(0).text(), "TextOnlyProject")
+        self.assertEqual(
+            sidebar.project_list.item(0).data(Qt.ItemDataRole.UserRole),
+            "TextOnlyProject",
+        )
         self.assertTrue(sidebar.panel_group.isHidden())
         self.assertTrue(sidebar.text_files_group.isHidden())
 
@@ -185,9 +188,197 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         sidebar.set_projects(projects)
 
         self.assertEqual(sidebar.project_list.count(), 1)
-        self.assertEqual(sidebar.project_list.item(0).text(), "VtkProject")
+        self.assertEqual(
+            sidebar.project_list.item(0).data(Qt.ItemDataRole.UserRole),
+            "VtkProject",
+        )
         self.assertFalse(sidebar.panel_group.isHidden())
         self.assertTrue(sidebar.text_files_group.isHidden())
+
+    def test_sidebar_vtk_status_counts_visible_projects_only(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        projects = {
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+                "is_subdirectory": False,
+            },
+            "DemoProject/VTK": {
+                "path": root / "DemoProject" / "VTK",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+                "is_subdirectory": True,
+                "parent_folder": "DemoProject",
+            },
+            "OtherProject": {
+                "path": root / "OtherProject",
+                "has_vtk": True,
+                "vtk_path": root / "OtherProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+                "is_subdirectory": False,
+            },
+        }
+
+        sidebar.set_mode("vtk")
+        sidebar.set_projects(projects)
+
+        self.assertEqual(sidebar.project_list.count(), 2)
+        self.assertEqual(sidebar.project_status_label.text(), "2 project(s) found")
+
+    def test_sidebar_project_rows_keep_native_checkbox_with_remove_delegate(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        sidebar.set_projects({
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+            },
+        })
+
+        item = sidebar.project_list.item(0)
+        delegate = sidebar.project_list.itemDelegate()
+
+        self.assertEqual(item.text(), "DemoProject")
+        self.assertIsNone(sidebar.project_list.itemWidget(item))
+        self.assertTrue(item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        self.assertEqual(delegate.remove_button_width, 24)
+
+    def test_sidebar_project_item_uses_native_text_and_check_state(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        sidebar.set_projects({
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+            },
+        })
+
+        item = sidebar.project_list.item(0)
+
+        self.assertEqual(item.text(), "DemoProject")
+        self.assertEqual(item.data(Qt.ItemDataRole.UserRole), "DemoProject")
+        self.assertEqual(item.checkState(), Qt.CheckState.Unchecked)
+
+    def test_sidebar_project_row_reserves_space_for_remove_column(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        sidebar.set_projects({
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+            },
+        })
+
+        item = sidebar.project_list.item(0)
+        delegate = sidebar.project_list.itemDelegate()
+
+        self.assertGreaterEqual(item.sizeHint().height(), delegate.remove_button_width)
+        self.assertEqual(delegate.remove_button_width, 24)
+
+    def test_sidebar_project_row_uses_native_item_and_fixed_remove_column(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        sidebar.set_projects({
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+            },
+        })
+
+        item = sidebar.project_list.item(0)
+        delegate = sidebar.project_list.itemDelegate()
+
+        self.assertEqual(item.text(), "DemoProject")
+        self.assertIsNone(sidebar.project_list.itemWidget(item))
+        self.assertEqual(delegate.remove_button_width, 24)
+
+    def test_sidebar_remove_button_hides_scanned_project(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        projects = {
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+            },
+        }
+        sidebar.set_projects(projects)
+
+        sidebar.remove_project("DemoProject")
+        self.assertIn("DemoProject", projects)
+        sidebar.set_projects(projects)
+
+        self.assertEqual(sidebar.project_list.count(), 0)
+        self.assertEqual(sidebar.project_status_label.text(), "0 project(s) found")
+
+    def test_sidebar_remove_button_hides_vtk_subentry_and_parent(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        projects = {
+            "DemoProject": {
+                "path": root / "DemoProject",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+                "is_subdirectory": False,
+            },
+            "DemoProject/VTK": {
+                "path": root / "DemoProject" / "VTK",
+                "has_vtk": True,
+                "vtk_path": root / "DemoProject" / "VTK",
+                "has_textdata": False,
+                "textdata_path": None,
+                "is_subdirectory": True,
+                "parent_folder": "DemoProject",
+            },
+        }
+        sidebar.set_projects(projects)
+
+        sidebar.remove_project("DemoProject/VTK")
+        self.assertEqual(sidebar.project_list.count(), 0)
+        sidebar.set_projects(projects)
+
+        self.assertEqual(sidebar.project_list.count(), 0)
+        self.assertEqual(sidebar.project_status_label.text(), "0 project(s) found")
+
+    def test_sidebar_remove_button_removes_manual_project_from_reload_state(self):
+        root = Path(tempfile.mkdtemp())
+        sidebar = SidebarWidget()
+        sidebar.add_manual_project("ManualProject", {
+            "path": root / "ManualProject",
+            "has_vtk": True,
+            "vtk_path": root / "ManualProject",
+            "has_textdata": False,
+            "textdata_path": None,
+        })
+
+        sidebar.remove_project("ManualProject")
+
+        self.assertNotIn("ManualProject", sidebar._manual_projects)
+        self.assertNotIn("ManualProject", sidebar._projects)
+        self.assertEqual(sidebar.project_list.count(), 0)
 
     def test_sidebar_remembers_project_check_state_when_switching_modes(self):
         root = Path(tempfile.mkdtemp())
@@ -222,7 +413,10 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         sidebar.project_list.item(0).setCheckState(Qt.CheckState.Checked)
         sidebar.set_mode("custom_graph")
 
-        self.assertEqual(sidebar.project_list.item(0).text(), "TextProject")
+        self.assertEqual(
+            sidebar.project_list.item(0).data(Qt.ItemDataRole.UserRole),
+            "TextProject",
+        )
         self.assertEqual(sidebar.project_list.item(0).checkState(), Qt.CheckState.Checked)
 
         sidebar.project_list.item(0).setCheckState(Qt.CheckState.Unchecked)

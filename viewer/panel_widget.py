@@ -6,6 +6,8 @@ from PySide6.QtGui import QIcon, QPixmap, QResizeEvent
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -28,6 +30,7 @@ from viewer.heatmap_controller import HeatmapController
 from viewer.histogram_canvas import HistogramCanvas
 from viewer.line_scan_canvas import LineScanCanvas
 from viewer.panel_controls_widget import PanelControlsWidget
+from viewer.phase_fraction_history_canvas import PhaseFractionHistoryCanvas
 from viewer.time_plot_canvas import TimePlotCanvas
 from viewer.toggle_switch_widget import ToggleSwitchWidget
 
@@ -124,6 +127,16 @@ class PanelWidget(QWidget):
         self.line_scan_canvas = LineScanCanvas()
         self.histogram_canvas = HistogramCanvas()
         self.time_plot_canvas = TimePlotCanvas()
+        self.phase_fraction_history_canvas = PhaseFractionHistoryCanvas()
+        self.phase_fraction_history_canvas.hide()
+        debug_print("PanelWidget phase fraction history canvas initialized hidden")
+        self.phase_fraction_history_separator = QFrame()
+        self.phase_fraction_history_separator.setObjectName("phaseFractionHistorySeparator")
+        self.phase_fraction_history_separator.setFrameShape(QFrame.Shape.HLine)
+        self.phase_fraction_history_separator.setFrameShadow(QFrame.Shadow.Plain)
+        self.phase_fraction_history_separator.setFixedHeight(18)
+        self.phase_fraction_history_separator.hide()
+        debug_print("PanelWidget phase fraction history separator initialized hidden")
         self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
         self.show_line_check = ToggleSwitchWidget("Show Line", checked=False)
         self.direction_combo = QComboBox()
@@ -161,6 +174,23 @@ class PanelWidget(QWidget):
         self.animate_btn = QPushButton("▶  Animate")
         self.animate_btn.setFixedHeight(28)
         self.animate_btn.setObjectName("playbackBtn")
+        self.phase_history_dt_label = QLabel("dt:")
+        self.phase_history_dt_label.setObjectName("mutedInfo")
+        self.phase_history_dt_spin = QDoubleSpinBox()
+        self.phase_history_dt_spin.setObjectName("viewerSpin")
+        self.phase_history_dt_spin.setDecimals(6)
+        self.phase_history_dt_spin.setRange(0.000001, 1_000_000_000.0)
+        self.phase_history_dt_spin.setValue(1.0)
+        self.phase_history_dt_spin.setSingleStep(0.1)
+        self.phase_history_dt_spin.setFixedWidth(120)
+        self.phase_history_dt_spin.setKeyboardTracking(False)
+        debug_print("PanelWidget phase history dt spin initialized width=120")
+        self.phase_history_time_unit_combo = QComboBox()
+        self.phase_history_time_unit_combo.setObjectName("viewerCombo")
+        self.phase_history_time_unit_combo.addItems(["timestep", "s", "min", "hr"])
+        self.phase_history_time_unit_combo.setFixedWidth(132)
+        update_combo_popup_width(self.phase_history_time_unit_combo)
+        debug_print("PanelWidget phase history time unit combo initialized width=132")
         self.unit_scale_combo = QComboBox()
         self.unit_scale_combo.setObjectName("viewerCombo")
         self.unit_scale_combo.addItem("Raw",     (1.0,   ""))
@@ -249,6 +279,10 @@ class PanelWidget(QWidget):
             time_plot_points_container=self.time_plot_points_container,
             time_plot_points_layout=self.time_plot_points_layout,
             time_plot_progress=self.time_plot_progress,
+            phase_fraction_history_canvas=self.phase_fraction_history_canvas,
+            phase_fraction_history_separator=self.phase_fraction_history_separator,
+            phase_history_dt_spin=self.phase_history_dt_spin,
+            phase_history_time_unit_combo=self.phase_history_time_unit_combo,
             dataset_info=dataset_info,
             export_widget=self.heatmap_row,
         )
@@ -447,6 +481,7 @@ class PanelWidget(QWidget):
         self.line_scan_canvas.set_available_width(max(240, bounded_width - 72))
         self.histogram_canvas.set_available_width(max(240, bounded_width - 72))
         self.time_plot_canvas.set_available_width(max(240, bounded_width - 72))
+        self.phase_fraction_history_canvas.set_available_width(max(240, bounded_width - 28))
         self._splitter.setMaximumWidth(bounded_width)
         debug_print(f"PanelWidget max width applied={bounded_width}")
 
@@ -542,6 +577,9 @@ class PanelWidget(QWidget):
         self.heatmap_row.setMaximumHeight(self.heatmap_canvas.canvas_height())
         layout.addSpacing(24)
         layout.addWidget(self.heatmap_row)
+        layout.addWidget(self.phase_fraction_history_separator)
+        debug_print("PanelWidget added phase fraction history separator below heatmap")
+        layout.addWidget(self.phase_fraction_history_canvas, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.heatmap_status_label)
         return card
 
@@ -570,6 +608,9 @@ class PanelWidget(QWidget):
         self._clear_toolbar_layout(self.heatmap_toolbar_secondary_layout)
         self.heatmap_toolbar_primary_layout.addWidget(self.colorbar_label_caption)
         self.heatmap_toolbar_primary_layout.addWidget(self.colorbar_label_edit, 1)
+        self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_dt_label)
+        self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_dt_spin)
+        self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_time_unit_combo)
         self.heatmap_toolbar_primary_layout.addWidget(self.unit_scale_combo)
         if mode == "compact":
             debug_print("PanelWidget applying compact heatmap toolbar")

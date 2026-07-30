@@ -232,6 +232,14 @@ QWidget#toolbarStrip {{
     background: #f3f6fa;
     border-radius: 10px;
 }}
+QFrame#phaseFractionHistorySeparator {{
+    color: #d7deea;
+    background: transparent;
+    border: none;
+    border-top: 1px solid #d7deea;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}}
 QWidget#timePlotToolbar {{
     background: #f3f6fa;
     border: 1px solid #e0e7f1;
@@ -334,6 +342,8 @@ QDoubleSpinBox#viewerSpin {{
     min-height: 28px;
     background: #ffffff;
     color: #102a52;
+    selection-background-color: #d8ecff;
+    selection-color: #102a52;
     border: 1px solid #ccd7e8;
     border-radius: 10px;
     padding: 2px 24px 2px 8px;

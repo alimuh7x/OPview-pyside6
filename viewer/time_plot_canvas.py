@@ -70,31 +70,63 @@ class TimePlotCanvas(QWidget):
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
-            xaxis=PlotStyle.panel_axis("Time Step", True),
+            xaxis=PlotStyle.panel_axis("Timestep", True),
             yaxis=PlotStyle.panel_axis("Value", True),
         )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("TimePlotCanvas placeholder rendered")
 
-    def render_time_plot(self, steps, values, *, y_label: str, point_label: str) -> None:
+    def render_time_plot(
+        self,
+        steps,
+        values,
+        *,
+        y_label: str,
+        point_label: str,
+        x_label: str = "Timestep",
+        hover_x_label: str = "timestep",
+    ) -> None:
         debug_print("TimePlotCanvas.render_time_plot called")
         self.render_time_series(
             [{"label": point_label, "steps": steps, "values": values}],
             y_label=y_label,
+            x_label=x_label,
+            hover_x_label=hover_x_label,
         )
         debug_print("TimePlotCanvas.render_time_plot complete")
 
-    def render_time_series(self, series, *, y_label: str) -> None:
+    def render_time_series(
+        self,
+        series,
+        *,
+        y_label: str,
+        x_label: str = "Timestep",
+        hover_x_label: str = "timestep",
+    ) -> None:
         """Render multiple point-history series."""
         debug_print("TimePlotCanvas.render_time_series called")
         debug_print(f"TimePlotCanvas series count={len(series)}")
-        figure = self._build_time_plot_figure(series, y_label=y_label)
+        debug_print(f"TimePlotCanvas x_label={x_label}")
+        figure = self._build_time_plot_figure(
+            series,
+            y_label=y_label,
+            x_label=x_label,
+            hover_x_label=hover_x_label,
+        )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("TimePlotCanvas.render_time_series complete")
 
-    def _build_time_plot_figure(self, series, *, y_label: str) -> go.Figure:
+    def _build_time_plot_figure(
+        self,
+        series,
+        *,
+        y_label: str,
+        x_label: str = "Timestep",
+        hover_x_label: str = "timestep",
+    ) -> go.Figure:
         """Build a Plotly figure for one or more point-history series."""
         debug_print("TimePlotCanvas._build_time_plot_figure called")
+        debug_print(f"TimePlotCanvas figure x_label={x_label}")
         figure = go.Figure()
         colors = ["#c50623", "#183568", "#0f9ca6", "#f0a202", "#7b2cbf", "#2d6a4f"]
         added = 0
@@ -118,7 +150,7 @@ class TimePlotCanvas(QWidget):
                     name=item.get("label", f"P{index + 1}"),
                     line=PlotStyle.trace_line(color=colors[index % len(colors)]),
                     marker=dict(size=6, color=colors[index % len(colors)]),
-                    hovertemplate="step=%{x:.0f}<br>value=%{y:.6g}<extra></extra>",
+                    hovertemplate=f"{hover_x_label}=%{{x:.6g}}<br>value=%{{y:.6g}}<extra></extra>",
                     showlegend=True,
                 )
             )
@@ -148,7 +180,7 @@ class TimePlotCanvas(QWidget):
                 xanchor="right",
                 x=1.0,
             ),
-            xaxis=PlotStyle.panel_axis("Time Step", True),
+            xaxis=PlotStyle.panel_axis(x_label, True),
             yaxis=PlotStyle.panel_axis(y_label or "Value", True),
         )
         debug_print("TimePlotCanvas._build_time_plot_figure complete")

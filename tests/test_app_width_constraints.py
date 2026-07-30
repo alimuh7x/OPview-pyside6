@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import numpy as np
 import plotly.graph_objects as go
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionViewItem
 
 from app.main_window import MainWindow
 from multi_view.multi_view_panel import MultiViewPanel
@@ -15,6 +15,8 @@ from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.heatmap_controller import HeatmapController
 from viewer.panel_controls_widget import PanelControlsWidget
 from viewer.panel_widget import PanelWidget
+from viewer.phase_fraction_history_canvas import PhaseFractionHistoryCanvas
+from viewer.time_plot_canvas import TimePlotCanvas
 
 
 class AppWidthConstraintTests(unittest.TestCase):
@@ -147,6 +149,17 @@ class AppWidthConstraintTests(unittest.TestCase):
 
         self.assertIs(controls.scalar_combo.itemDelegate()._controls, controls)
 
+    def test_phase_fraction_rename_icon_uses_hover_text_color(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+        delegate = controls.scalar_combo.itemDelegate()
+        option = QStyleOptionViewItem()
+        option.state = QStyle.StateFlag.State_MouseOver
+
+        self.assertEqual(
+            delegate._rename_icon_color(option),
+            option.palette.highlightedText().color(),
+        )
+
     def test_phase_fraction_rename_dialog_uses_readable_light_style(self):
         controls = PanelControlsWidget({"label": "PhaseField"})
 
@@ -212,6 +225,107 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertEqual([spec["label"] for spec in specs], ["Alpha", "Delta"])
         self.assertEqual([spec["range"] for spec in specs], [(0.4, 1.0), (0.2, 0.7)])
         self.assertEqual([spec["color"] for spec in specs], ["#d62728", "#1f77b4"])
+
+    def test_phase_fraction_history_legend_is_on_top_with_taller_graph(self):
+        canvas = PhaseFractionHistoryCanvas.__new__(PhaseFractionHistoryCanvas)
+        canvas._canvas_width = 800
+
+        figure = canvas._build_figure(
+            [
+                {
+                    "label": "PhaseFraction_0",
+                    "steps": [0, 1],
+                    "values": [20.0, 30.0],
+                    "color": "#d62728",
+                }
+            ],
+            current_step=1,
+        )
+
+        self.assertEqual(figure.layout.height, 400)
+        self.assertEqual(figure.layout.legend.orientation, "h")
+        self.assertEqual(figure.layout.legend.yanchor, "bottom")
+        self.assertEqual(figure.layout.legend.xanchor, "right")
+        self.assertEqual(figure.layout.legend.x, 1.0)
+        self.assertEqual(figure.layout.legend.entrywidthmode, "fraction")
+        self.assertAlmostEqual(figure.layout.legend.entrywidth, 0.33)
+        self.assertGreaterEqual(figure.layout.legend.y, 1.02)
+        self.assertGreaterEqual(figure.layout.margin.t, 108)
+
+    def test_phase_fraction_history_modebar_stays_visible_at_top(self):
+        canvas = PhaseFractionHistoryCanvas.__new__(PhaseFractionHistoryCanvas)
+        html = canvas._build_html(go.Figure())
+
+        self.assertIn(".modebar", html)
+        self.assertIn("top: 0px !important", html)
+
+    def test_phase_fraction_history_canvas_can_use_wider_panel_space(self):
+        canvas = PhaseFractionHistoryCanvas()
+
+        canvas.set_available_width(900)
+
+        self.assertEqual(canvas._canvas_width, 680)
+
+    def test_phase_fraction_history_uses_supplied_time_axis_label(self):
+        canvas = PhaseFractionHistoryCanvas.__new__(PhaseFractionHistoryCanvas)
+        canvas._canvas_width = 800
+
+        figure = canvas._build_figure(
+            [
+                {
+                    "label": "PhaseFraction_0",
+                    "steps": [0.0, 2.5],
+                    "values": [20.0, 30.0],
+                    "color": "#d62728",
+                }
+            ],
+            current_step=2.5,
+            x_label="Time [min]",
+            hover_x_label="time",
+        )
+
+        self.assertEqual(figure.layout.xaxis.title.text, "Time [min]")
+        self.assertEqual(list(figure.data[0].x), [0.0, 2.5])
+
+    def test_phase_fraction_history_defaults_to_timestep_axis(self):
+        canvas = PhaseFractionHistoryCanvas.__new__(PhaseFractionHistoryCanvas)
+        canvas._canvas_width = 800
+
+        figure = canvas._build_figure(
+            [
+                {
+                    "label": "PhaseFraction_0",
+                    "steps": [0.0, 1.0],
+                    "values": [20.0, 30.0],
+                    "color": "#d62728",
+                }
+            ],
+            current_step=1.0,
+        )
+
+        self.assertEqual(figure.layout.xaxis.title.text, "Timestep")
+        self.assertIn("timestep=", figure.data[0].hovertemplate)
+
+    def test_plot_over_time_uses_supplied_time_axis_label(self):
+        canvas = TimePlotCanvas.__new__(TimePlotCanvas)
+        canvas._canvas_width = 600
+
+        figure = canvas._build_time_plot_figure(
+            [{"label": "P1", "steps": [0.0, 2.5], "values": [1.0, 3.0]}],
+            y_label="Temperature",
+            x_label="Time [min]",
+            hover_x_label="time",
+        )
+
+        self.assertEqual(figure.layout.xaxis.title.text, "Time [min]")
+        self.assertEqual(list(figure.data[0].x), [0.0, 2.5])
+        self.assertNotIn("step=", figure.data[0].hovertemplate)
+
+    def test_phase_history_dt_controls_are_wide_enough_for_timestep(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        self.assertGreaterEqual(panel.phase_history_dt_spin.width(), 120)
+        self.assertGreaterEqual(panel.phase_history_time_unit_combo.width(), 132)
 
     def test_panel_widget_keeps_analysis_toolbar_compact(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})

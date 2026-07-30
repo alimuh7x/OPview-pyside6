@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QSlider,
     QStyledItemDelegate,
     QVBoxLayout,
@@ -46,8 +47,10 @@ class _PhaseFractionRenameDelegate(QStyledItemDelegate):
         debug_print(f"_PhaseFractionRenameDelegate key={key}")
         icon_rect = self._rename_icon_rect(option.rect)
         debug_print(f"_PhaseFractionRenameDelegate icon_rect={icon_rect}")
+        icon_color = self._rename_icon_color(option)
+        debug_print(f"_PhaseFractionRenameDelegate icon_color={icon_color.name()}")
         painter.save()
-        painter.setPen(QPen(option.palette.text().color()))
+        painter.setPen(QPen(icon_color))
         painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "✎")
         painter.restore()
 
@@ -55,6 +58,19 @@ class _PhaseFractionRenameDelegate(QStyledItemDelegate):
     def _rename_icon_rect(row_rect: QRect) -> QRect:
         width = 28
         return QRect(row_rect.right() - width + 1, row_rect.top(), width, row_rect.height())
+
+    @staticmethod
+    def _rename_icon_color(option):
+        debug_print("_PhaseFractionRenameDelegate._rename_icon_color called")
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        debug_print(f"_PhaseFractionRenameDelegate hovered={hovered}")
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        debug_print(f"_PhaseFractionRenameDelegate selected={selected}")
+        if hovered or selected:
+            debug_print("_PhaseFractionRenameDelegate using highlighted text color")
+            return option.palette.highlightedText().color()
+        debug_print("_PhaseFractionRenameDelegate using normal text color")
+        return option.palette.text().color()
 
 
 class PanelControlsWidget(QWidget):
@@ -137,6 +153,8 @@ class PanelControlsWidget(QWidget):
         self.range_min_spin.setProperty("rangeSpin", True)
         self.range_min_spin.setDecimals(6)
         self.range_min_spin.setRange(-1e12, 1e12)
+        self.range_min_spin.setKeyboardTracking(False)
+        debug_print("PanelControlsWidget range_min_spin keyboard tracking disabled")
         self.range_min_spin.setMinimumWidth(120)
         self.range_min_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_min_spin min width set to 120")
@@ -145,6 +163,8 @@ class PanelControlsWidget(QWidget):
         self.range_max_spin.setProperty("rangeSpin", True)
         self.range_max_spin.setDecimals(6)
         self.range_max_spin.setRange(-1e12, 1e12)
+        self.range_max_spin.setKeyboardTracking(False)
+        debug_print("PanelControlsWidget range_max_spin keyboard tracking disabled")
         self.range_max_spin.setMinimumWidth(120)
         self.range_max_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_max_spin min width set to 120")

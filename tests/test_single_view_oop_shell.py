@@ -5,6 +5,8 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QSizePolicy, QWidget
 
 from app.application_bootstrap import ApplicationBootstrap
@@ -41,6 +43,12 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIn("background: transparent;", stylesheet)
         self.assertIn("padding: 7px 20px;", stylesheet)
         self.assertIn("border-bottom: 3px solid #cc0c24;", stylesheet)
+
+    def test_viewer_spin_box_selection_uses_light_blue(self):
+        stylesheet = build_app_stylesheet()
+
+        self.assertIn("selection-background-color: #d8ecff;", stylesheet)
+        self.assertIn("selection-color: #102a52;", stylesheet)
 
     def test_main_window_wires_sidebar_to_single_view(self):
         window = MainWindow()
@@ -807,6 +815,89 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertEqual(panel.controls_widget.current_scalar_label(), "PhaseFields")
         self.assertIn("PhaseFields", panel.map_title_label.text())
 
+    def test_phase_field_panel_shows_phase_fraction_history_graph(self):
+        first_file = str(Path("Project1/VTK/PhaseField_00000000.vts").resolve())
+        second_file = str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [first_file, second_file],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        payload = panel.phase_fraction_history_canvas._last_payload
+
+        self.assertFalse(panel.phase_fraction_history_canvas.isHidden())
+        self.assertFalse(panel.phase_fraction_history_separator.isHidden())
+        self.assertEqual(payload["y_label"], "Phase fraction (%)")
+        self.assertEqual(payload["current_step"], 0)
+        self.assertIn("PhaseFraction_0", [item["label"] for item in payload["series"]])
+        for item in payload["series"]:
+            for value in item["values"]:
+                self.assertGreaterEqual(value, 0.0)
+                self.assertLessEqual(value, 100.0)
+
+        panel.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.phase_fraction_history_canvas._last_payload["current_step"], 5000)
+
+        panel.phase_history_dt_spin.setValue(0.5)
+        panel.phase_history_time_unit_combo.setCurrentText("min")
+
+        converted_payload = panel.phase_fraction_history_canvas._last_payload
+        self.assertEqual(converted_payload["x_label"], "Time [min]")
+        self.assertAlmostEqual(converted_payload["current_step"], 2500 / 60)
+        self.assertAlmostEqual(converted_payload["series"][0]["steps"][1], 2500 / 60)
+
+    def test_plot_over_time_uses_phase_history_dt_time_axis(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        panel.controller._time_plot_series_data = [
+            {"label": "P1", "x": 1.0, "y": 2.0, "steps": [0, 5000], "values": [3.0, 4.0]}
+        ]
+        panel.controller._time_plot_display_label = "PhaseFields"
+
+        self.assertEqual(panel.phase_history_time_unit_combo.itemText(0), "timestep")
+        default_series, default_x_label, default_hover_x_label = panel.controller._converted_time_plot_series()
+        self.assertEqual(default_x_label, "Timestep")
+        self.assertEqual(default_hover_x_label, "timestep")
+        self.assertEqual(default_series[0]["steps"], [0.0, 5000.0])
+
+        panel.phase_history_dt_spin.setValue(0.5)
+        panel.phase_history_time_unit_combo.setCurrentText("min")
+        converted_series, x_label, hover_x_label = panel.controller._converted_time_plot_series()
+
+        self.assertEqual(x_label, "Time [min]")
+        self.assertEqual(hover_x_label, "time")
+        self.assertAlmostEqual(converted_series[0]["steps"][1], 2500 / 60)
+
+    def test_non_phase_field_panel_hides_phase_fraction_history_graph(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        self.assertTrue(panel.phase_fraction_history_canvas.isHidden())
+        self.assertTrue(panel.phase_fraction_history_separator.isHidden())
+
     def test_histogram_canvas_handles_near_constant_data(self):
         canvas = HistogramCanvas()
         values = [100000000.0, 100000000.0, 100000000.00000001, 99999999.99999999]
@@ -889,6 +980,47 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertAlmostEqual(panel.controls_widget.range_slider.lower_value(), 2.0, places=4)
         self.assertAlmostEqual(panel.controls_widget.range_slider.upper_value(), 7.0, places=4)
+
+    def test_range_spin_box_text_edit_commits_only_when_finished(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        panel.show()
+        QApplication.processEvents()
+        panel.controls_widget.range_min_spin.setValue(2.0)
+        panel.controls_widget.range_max_spin.setValue(7.0)
+        QApplication.processEvents()
+
+        line_edit = panel.controls_widget.range_min_spin.lineEdit()
+        panel.controls_widget.range_min_spin.setFocus()
+        line_edit.selectAll()
+        QTest.keyClicks(line_edit, "1")
+        QApplication.processEvents()
+
+        self.assertAlmostEqual(panel.controls_widget.range_slider.lower_value(), 2.0, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_slider.upper_value(), 7.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_min, 2.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, 7.0, places=4)
+
+        QTest.keyClick(line_edit, Qt.Key.Key_Return)
+        QApplication.processEvents()
+
+        self.assertAlmostEqual(panel.controls_widget.range_slider.lower_value(), 1.0, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_slider.upper_value(), 7.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_min, 1.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, 7.0, places=4)
 
     def test_range_reset_restores_slider_bounds(self):
         panel = PanelWidget(
