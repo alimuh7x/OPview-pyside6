@@ -1831,8 +1831,14 @@ class HeatmapController:
             debug_print("HeatmapController export cancelled")
             self.controls_widget.set_status_text("PNG export cancelled")
             return
-        debug_print("HeatmapController exporting from heatmap data payload")
-        saved = self.heatmap_canvas.save_high_resolution_png(str(output_path))
+        plot_type = self.controls_widget.current_plot_type()
+        debug_print(f"HeatmapController export plot_type={plot_type}")
+        if plot_type == "threshold":
+            debug_print("HeatmapController exporting exact current threshold row")
+            saved = self._save_current_export_widget_png(str(output_path))
+        else:
+            debug_print("HeatmapController exporting from heatmap data payload")
+            saved = self.heatmap_canvas.save_high_resolution_png(str(output_path))
         debug_print(f"HeatmapController export saved={saved}")
         debug_print(f"HeatmapController export output path={output_path}")
         if saved:
@@ -1840,6 +1846,18 @@ class HeatmapController:
         else:
             self.controls_widget.set_status_text("PNG export failed")
         debug_print("HeatmapController._export_png complete")
+
+    def _save_current_export_widget_png(self, path: str) -> bool:
+        """Save the visible export row so logo and heatmap are captured together."""
+        debug_print("HeatmapController._save_current_export_widget_png called")
+        widget = self.export_widget or self.heatmap_canvas
+        debug_print(f"HeatmapController current-row export widget={widget.__class__.__name__}")
+        debug_print(f"HeatmapController current-row export path={path}")
+        pixmap = widget.grab()
+        debug_print(f"HeatmapController current-row pixmap null={pixmap.isNull()}")
+        saved = pixmap.save(path, "PNG")
+        debug_print(f"HeatmapController current-row export saved={saved}")
+        return bool(saved)
 
     @staticmethod
     def _default_export_filename(label: str) -> str:

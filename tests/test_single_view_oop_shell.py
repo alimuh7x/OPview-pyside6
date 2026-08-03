@@ -2,6 +2,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -794,6 +797,101 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertGreaterEqual(image.shape[0], 1000)
         self.assertGreaterEqual(image.shape[1], 1000)
+
+    def test_threshold_png_export_masks_values_outside_selected_range(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        panel.heatmap_canvas._last_export_payload = {
+            "z_grid": np.array([[0.1, 0.6], [0.8, 1.2]], dtype=float),
+            "x_grid": np.array([[0.0, 1.0], [0.0, 1.0]], dtype=float),
+            "y_grid": np.array([[0.0, 0.0], [1.0, 1.0]], dtype=float),
+            "cmap": "viridis",
+            "vmin": 0.5,
+            "vmax": 1.0,
+            "plot_type": "threshold",
+            "line_overlay": None,
+            "overlay_grid": None,
+            "time_plot_points": [],
+            "colorbar_label": "",
+            "phase_fraction_overlays": [],
+        }
+
+        z_grid = panel.heatmap_canvas._export_z_grid_for_payload(
+            panel.heatmap_canvas._last_export_payload
+        )
+
+        self.assertTrue(np.isnan(z_grid[0, 0]))
+        self.assertFalse(np.isnan(z_grid[0, 1]))
+        self.assertFalse(np.isnan(z_grid[1, 0]))
+        self.assertTrue(np.isnan(z_grid[1, 1]))
+
+    def test_threshold_export_uses_exact_current_row_png_with_logo(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        threshold_index = panel.controls_widget.plot_type_combo.findData("threshold")
+        panel.controls_widget.plot_type_combo.blockSignals(True)
+        panel.controls_widget.plot_type_combo.setCurrentIndex(threshold_index)
+        panel.controls_widget.plot_type_combo.blockSignals(False)
+        calls = []
+
+        class FakePixmap:
+            def isNull(self):
+                return False
+
+            def save(self, path, fmt):
+                calls.append(("current-row", path, fmt))
+                return True
+
+        class FakeExportWidget:
+            def grab(self):
+                calls.append(("grab-export-widget",))
+                return FakePixmap()
+
+        def fake_save_png(path):
+            calls.append(("heatmap-only", path))
+            return True
+
+        def fake_save_high_resolution_png(path):
+            calls.append(("high-resolution", path))
+            return True
+
+        panel.controller.export_widget = FakeExportWidget()
+        panel.heatmap_canvas.save_png = fake_save_png
+        panel.heatmap_canvas.save_high_resolution_png = fake_save_high_resolution_png
+        output_path = str(Path(tempfile.gettempdir()) / "opview_threshold_exact_view_test.png")
+
+        with patch("viewer.heatmap_controller.QFileDialog.getSaveFileName", return_value=(output_path, "PNG (*.png)")):
+            panel.controller._export_png()
+
+        self.assertEqual(calls, [("grab-export-widget",), ("current-row", output_path, "PNG")])
 
     def test_phase_field_defaults_to_phasefields_scalar(self):
         panel = PanelWidget(

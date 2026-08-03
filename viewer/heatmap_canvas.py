@@ -224,6 +224,7 @@ class HeatmapCanvas(QWidget):
             "overlay_grid": overlay_grid,
             "time_plot_points": time_plot_points or [],
             "colorbar_label": colorbar_label,
+            "plot_type": plot_type,
             "phase_fraction_overlays": phase_fraction_overlays or [],
         }
         self._emit_status_changed()
@@ -249,12 +250,16 @@ class HeatmapCanvas(QWidget):
         self._web_view.setHtml(html, self._base_url)
         debug_print("HeatmapCanvas Plotly HTML updated")
 
-    def save_png(self, path: str) -> None:
+    def save_png(self, path: str) -> bool:
         """Export the current web view contents to PNG."""
         debug_print("HeatmapCanvas.save_png called")
+        debug_print(f"HeatmapCanvas current-view export path={path}")
         pixmap = self._web_view.grab()
-        pixmap.save(path, "PNG")
+        debug_print(f"HeatmapCanvas current-view pixmap null={pixmap.isNull()}")
+        saved = pixmap.save(path, "PNG")
+        debug_print(f"HeatmapCanvas current-view export saved={saved}")
         debug_print(f"HeatmapCanvas saved {path}")
+        return bool(saved)
 
     def save_high_resolution_png(self, path: str) -> bool:
         """Export the current heatmap data as a high-pixel PNG without resizing the widget."""
@@ -270,7 +275,7 @@ class HeatmapCanvas(QWidget):
             return False
 
         payload = self._export_payload_at_good_resolution(self._last_export_payload)
-        z_grid = np.asarray(payload["z_grid"])
+        z_grid = self._export_z_grid_for_payload(payload)
         x_grid = np.asarray(payload["x_grid"])
         y_grid = np.asarray(payload["y_grid"])
         rows, cols = z_grid.shape[:2]
@@ -328,6 +333,25 @@ class HeatmapCanvas(QWidget):
         fig.savefig(path, dpi=dpi, facecolor="white")
         debug_print(f"HeatmapCanvas high-resolution export saved={path}")
         return True
+
+    def _export_z_grid_for_payload(self, payload: dict):
+        """Return the display z-grid used by PNG export."""
+        debug_print("HeatmapCanvas._export_z_grid_for_payload called")
+        z_grid = np.asarray(payload["z_grid"], dtype=float)
+        plot_type = payload.get("plot_type", "heatmap")
+        debug_print(f"HeatmapCanvas export plot_type={plot_type}")
+        if plot_type != "threshold":
+            debug_print("HeatmapCanvas export threshold mask skipped")
+            return z_grid
+        vmin = float(payload["vmin"])
+        vmax = float(payload["vmax"])
+        debug_print(f"HeatmapCanvas export threshold range={vmin}..{vmax}")
+        visible_mask = (z_grid >= vmin) & (z_grid <= vmax)
+        visible_count = int(np.count_nonzero(visible_mask))
+        debug_print(f"HeatmapCanvas export threshold visible count={visible_count}")
+        masked = np.where(visible_mask, z_grid, np.nan)
+        debug_print("HeatmapCanvas export threshold mask applied")
+        return masked
 
     def _export_payload_at_good_resolution(self, payload: dict) -> dict:
         """Return a copy of payload resampled to the configured PNG export resolution."""
