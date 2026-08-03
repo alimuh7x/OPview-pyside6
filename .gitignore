@@ -25,6 +25,10 @@ build-*/
 *.jpg
 !assets/*.png
 
+# VTK simulation outputs
+*.vtk
+*.vts
+
 # OS
 .DS_Store
 Thumbs.db
