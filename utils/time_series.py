@@ -31,19 +31,35 @@ def _parse_series_name(path: str | Path):
     return parsed
 
 
-def collect_same_series_files(current_file: str, file_paths) -> list[TimeSeriesFile]:
+def collect_same_series_files(current_file: str, file_paths, *, existing_only: bool = False) -> list[TimeSeriesFile]:
     """Return files matching current_file's prefix/suffix, sorted by timestep."""
 
     debug_print("collect_same_series_files called")
+    debug_print(f"collect_same_series_files current_file={current_file}")
+    debug_print(f"collect_same_series_files existing_only={existing_only}")
     current = _parse_series_name(current_file)
     if current is None:
         debug_print("collect_same_series_files using combo order fallback")
-        return [TimeSeriesFile(index, str(path)) for index, path in enumerate(file_paths) if path]
+        fallback = []
+        for index, path in enumerate(file_paths):
+            if not path:
+                debug_print("collect_same_series_files fallback skipped empty path")
+                continue
+            if existing_only and not Path(path).exists():
+                debug_print(f"collect_same_series_files fallback skipped missing path={path}")
+                continue
+            fallback.append(TimeSeriesFile(index, str(path)))
+            debug_print(f"collect_same_series_files fallback accepted index={index} path={path}")
+        debug_print(f"collect_same_series_files fallback count={len(fallback)}")
+        return fallback
     prefix, _, suffix = current
     series: list[TimeSeriesFile] = []
     for path in file_paths:
         if not path:
             debug_print("collect_same_series_files skipped empty path")
+            continue
+        if existing_only and not Path(path).exists():
+            debug_print(f"collect_same_series_files skipped missing path={path}")
             continue
         parsed = _parse_series_name(path)
         if parsed is None:

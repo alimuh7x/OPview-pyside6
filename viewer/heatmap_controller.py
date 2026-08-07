@@ -162,6 +162,52 @@ class HeatmapController:
         debug_print("HeatmapController phase history cache cleared")
         debug_print("HeatmapController.invalidate_cached_reader complete")
 
+    def remove_missing_file_options(self, reason: str = "") -> None:
+        """Remove deleted VTK files from the file dropdown before an explicit reload."""
+        debug_print("HeatmapController.remove_missing_file_options called")
+        debug_print(f"HeatmapController prune reason={reason}")
+        combo = self.controls_widget.file_combo
+        original_paths = [combo.itemData(index) for index in range(combo.count())]
+        debug_print(f"HeatmapController prune original file count={len(original_paths)}")
+        existing_paths = []
+        missing_paths = []
+        for path in original_paths:
+            debug_print(f"HeatmapController prune checking path={path}")
+            if path and Path(path).exists():
+                existing_paths.append(path)
+                debug_print("HeatmapController prune path exists")
+            else:
+                missing_paths.append(path)
+                debug_print("HeatmapController prune path missing")
+        debug_print(f"HeatmapController prune existing count={len(existing_paths)}")
+        debug_print(f"HeatmapController prune missing count={len(missing_paths)}")
+        if len(existing_paths) == len(original_paths):
+            debug_print("HeatmapController prune skipped no missing files")
+            return
+        previous_file = self.state.file_path
+        debug_print(f"HeatmapController prune previous file={previous_file}")
+        self.controls_widget.set_file_options(existing_paths)
+        debug_print("HeatmapController prune updated file options")
+        restored_index = -1
+        if previous_file in existing_paths:
+            restored_index = existing_paths.index(previous_file)
+            debug_print(f"HeatmapController prune restoring previous index={restored_index}")
+        elif existing_paths:
+            restored_index = 0
+            debug_print("HeatmapController prune selecting first existing file")
+        if restored_index >= 0:
+            combo.blockSignals(True)
+            combo.setCurrentIndex(restored_index)
+            combo.blockSignals(False)
+            debug_print(f"HeatmapController prune current index={combo.currentIndex()}")
+        else:
+            self.state.file_path = ""
+            debug_print("HeatmapController prune cleared state file path because no files remain")
+        if self._file_options_changed_callback:
+            debug_print("HeatmapController prune notifying file options changed")
+            self._file_options_changed_callback()
+        debug_print("HeatmapController.remove_missing_file_options complete")
+
     def connect_signals(self) -> None:
         """Wire all Qt signals from controls and canvases to their handler methods."""
         debug_print("HeatmapController.connect_signals called")
@@ -696,7 +742,11 @@ class HeatmapController:
                 debug_print("HeatmapController hiding phase history separator")
                 self.phase_fraction_history_separator.hide()
             return
-        files = collect_same_series_files(self.state.file_path, self._current_file_paths())
+        files = collect_same_series_files(
+            self.state.file_path,
+            self._current_file_paths(),
+            existing_only=True,
+        )
         debug_print(f"HeatmapController phase history same-series files={len(files)}")
         if not files:
             debug_print("HeatmapController phase history hidden no files")
