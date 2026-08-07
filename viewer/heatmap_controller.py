@@ -142,6 +142,26 @@ class HeatmapController:
         """Return number of files currently loaded in the file combo."""
         return self.controls_widget.file_combo.count()
 
+    def invalidate_cached_reader(self, reason: str = "") -> None:
+        """Forget in-memory VTK data so the next refresh reads from disk again."""
+        debug_print("HeatmapController.invalidate_cached_reader called")
+        debug_print(f"HeatmapController invalidate reason={reason}")
+        debug_print(f"HeatmapController invalidate current file={self.state.file_path}")
+        debug_print(f"HeatmapController invalidate had reader={self.reader is not None}")
+        self.reader = None
+        debug_print("HeatmapController reader cleared")
+        self._last_grids = None
+        debug_print("HeatmapController last grids cleared")
+        self._last_display_grids = None
+        debug_print("HeatmapController last display grids cleared")
+        self._last_scaled_grid = None
+        debug_print("HeatmapController last scaled grid cleared")
+        self._histogram_cache = None
+        debug_print("HeatmapController histogram cache cleared")
+        self._phase_fraction_history_cache = None
+        debug_print("HeatmapController phase history cache cleared")
+        debug_print("HeatmapController.invalidate_cached_reader complete")
+
     def connect_signals(self) -> None:
         """Wire all Qt signals from controls and canvases to their handler methods."""
         debug_print("HeatmapController.connect_signals called")

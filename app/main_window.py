@@ -25,6 +25,7 @@ from multi_view.multi_view_tab import MultiViewTab
 from sidebar.sidebar_widget import SidebarWidget
 from single_view.tab_widget import SingleViewTab
 from utils.project_scanner import scan_project_folders
+from utils.vtk_utils import clear_reader_cache
 
 
 class MainWindow(QMainWindow):
@@ -347,11 +348,15 @@ class MainWindow(QMainWindow):
         """Refresh projects, datasets, and open panels after the Reload button is clicked."""
         debug_print("MainWindow._force_full_rescan called")
         assert self.sidebar_widget is not None
+        clear_reader_cache("reload-button")
+        debug_print("MainWindow cleared VTK reader cache for reload")
         if self.sidebar_widget.mode() == "custom_graph":
             self.sidebar_widget._emit_custom_graph_project_scope()
         else:
             self.sidebar_widget._refresh_dataset_combo()
         for panel in self._iter_panels():
+            debug_print(f"MainWindow invalidating panel before reload refresh={panel.dataset_info.get('label', '')}")
+            panel.controller.invalidate_cached_reader("reload-button")
             panel.controller.refresh_view()
         debug_print("MainWindow._force_full_rescan complete")
 
@@ -400,6 +405,8 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         self._settings.setValue("last_vtk_folder", folder)
+        clear_reader_cache("add-vtk-folder")
+        debug_print("MainWindow cleared VTK reader cache for added folder")
         vtk_folder = Path(folder)
         project_name = self._manual_folder_project_name(vtk_folder)
         debug_print(f"MainWindow vtk folder project_name={project_name}")
