@@ -203,12 +203,6 @@ class SidebarWidget(QWidget):
         self.text_file_list.setObjectName("textFileList")
         self.text_file_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         text_layout.addWidget(self.text_file_list)
-        self.add_text_files_button = QPushButton(
-            QIcon(str(_ASSETS / "plus.png")), "Add To Graph"
-        )
-        self.add_text_files_button.setIconSize(QSize(16, 16))
-        self.add_text_files_button.setProperty("accent", True)
-        text_layout.addWidget(self.add_text_files_button)
         self.add_external_text_file_button = QPushButton("Add External Text File")
         self.add_external_text_file_button.setProperty("accent", True)
         text_layout.addWidget(self.add_external_text_file_button)
@@ -232,7 +226,7 @@ class SidebarWidget(QWidget):
         self.reload_projects_button.clicked.connect(self.reload_from_cwd)
         self.add_folder_button.clicked.connect(self.add_folder_requested.emit)
         self.text_file_filter.textChanged.connect(self._refresh_text_file_list)
-        self.add_text_files_button.clicked.connect(self._emit_text_files_add_request)
+        self.text_file_list.itemChanged.connect(self._on_text_file_check_changed)
         self.add_external_text_file_button.clicked.connect(self._open_external_text_files)
         debug_print("SidebarWidget signals connected")
 
@@ -368,6 +362,7 @@ class SidebarWidget(QWidget):
         debug_print(f"SidebarWidget project list count={self.project_list.count()}")
         if self._mode == "custom_graph":
             self._emit_custom_graph_project_scope()
+            self._refresh_text_file_list()
         else:
             self._refresh_dataset_combo()
 
@@ -379,6 +374,7 @@ class SidebarWidget(QWidget):
         ] = item.checkState()
         if self._mode == "custom_graph":
             self._emit_custom_graph_project_scope()
+            self._refresh_text_file_list()
         else:
             self._refresh_dataset_combo()
 
@@ -549,6 +545,8 @@ class SidebarWidget(QWidget):
         files = get_textdata_files(self._projects, selected_project_names) if selected_project_names else []
         filter_text = self.text_file_filter.text().strip().lower()
         debug_print(f"SidebarWidget._refresh_text_file_list filter={filter_text}")
+        debug_print("SidebarWidget blocking text file list signals for rebuild")
+        self.text_file_list.blockSignals(True)
         self.text_file_list.clear()
         for file_path in files:
             path = Path(file_path)
@@ -558,13 +556,32 @@ class SidebarWidget(QWidget):
             item = QListWidgetItem(label)
             item.setToolTip(str(path))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
+            debug_print(f"SidebarWidget text file item checkable path={path}")
             self.text_file_list.addItem(item)
+        self.text_file_list.blockSignals(False)
+        debug_print("SidebarWidget unblocked text file list signals after rebuild")
         count = self.text_file_list.count()
         if selected_project_names:
             self.text_file_status_label.setText(f"{count} text file(s) found")
         else:
             self.text_file_status_label.setText("Check a project to browse text files")
         debug_print(f"SidebarWidget._refresh_text_file_list count={count}")
+
+    def _on_text_file_check_changed(self, item: QListWidgetItem) -> None:
+        debug_print("SidebarWidget._on_text_file_check_changed called")
+        file_path = item.data(Qt.ItemDataRole.UserRole)
+        debug_print(f"SidebarWidget text file check path={file_path}")
+        debug_print(f"SidebarWidget text file check state={item.checkState()}")
+        if item.checkState() != Qt.CheckState.Checked:
+            debug_print("SidebarWidget text file unchecked; no add emitted")
+            return
+        if not file_path:
+            debug_print("SidebarWidget text file check missing path")
+            return
+        self.text_files_add_requested.emit([file_path])
+        debug_print(f"SidebarWidget emitted text_files_add_requested file={file_path}")
 
     def _selected_text_files(self) -> list[str]:
         debug_print("SidebarWidget._selected_text_files called")

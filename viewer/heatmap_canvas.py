@@ -198,6 +198,7 @@ class HeatmapCanvas(QWidget):
         colorbar_label: str = "",
         plot_type: str = "heatmap",
         phase_fraction_overlays=None,
+        vector_overlay=None,
     ) -> None:
         debug_print("HeatmapCanvas.render_heatmap called")
         self._update_colorbar_width(vmin, vmax)
@@ -226,10 +227,12 @@ class HeatmapCanvas(QWidget):
             "colorbar_label": colorbar_label,
             "plot_type": plot_type,
             "phase_fraction_overlays": phase_fraction_overlays or [],
+            "vector_overlay": vector_overlay,
         }
         self._emit_status_changed()
         debug_print(f"HeatmapCanvas extent={self._last_extent}")
         debug_print(f"HeatmapCanvas colorbar_label={colorbar_label}")
+        debug_print(f"HeatmapCanvas vector overlay present={vector_overlay is not None}")
         figure = self._build_figure(
             x_grid=x_grid,
             y_grid=y_grid,
@@ -244,6 +247,7 @@ class HeatmapCanvas(QWidget):
             colorbar_label=colorbar_label,
             plot_type=plot_type,
             phase_fraction_overlays=phase_fraction_overlays or [],
+            vector_overlay=vector_overlay,
         )
         html = self._build_html(figure)
         debug_print(f"HeatmapCanvas html size={len(html)}")
@@ -261,35 +265,86 @@ class HeatmapCanvas(QWidget):
         debug_print(f"HeatmapCanvas saved {path}")
         return bool(saved)
 
-    def save_high_resolution_png(self, path: str) -> bool:
+    def save_high_resolution_png(
+        self,
+        path: str,
+        *,
+        payload: dict | None = None,
+        logo_path: Path | None = None,
+        logo_band_width: int = 0,
+        dpi: int | None = None,
+    ) -> bool:
         """Export the current heatmap data as a high-pixel PNG without resizing the widget."""
         debug_print("HeatmapCanvas.save_high_resolution_png called")
-        if not self._last_export_payload:
+        source_payload = payload or self._last_export_payload
+        debug_print(f"HeatmapCanvas high-resolution external payload={payload is not None}")
+        if not source_payload:
             debug_print("HeatmapCanvas high-resolution export missing payload")
             return False
         try:
             from matplotlib.backends.backend_agg import FigureCanvasAgg
             from matplotlib.figure import Figure
+            from matplotlib.colors import ListedColormap
+            from matplotlib import image as mpimg
         except ModuleNotFoundError as exc:
             debug_print(f"HeatmapCanvas high-resolution export unavailable missing={exc.name}")
             return False
 
-        payload = self._export_payload_at_good_resolution(self._last_export_payload)
+        payload = self._export_payload_at_good_resolution(source_payload)
         z_grid = self._export_z_grid_for_payload(payload)
         x_grid = np.asarray(payload["x_grid"])
         y_grid = np.asarray(payload["y_grid"])
         rows, cols = z_grid.shape[:2]
-        dpi = 100
-        colorbar_pixels = max(120, int(cols * 0.18))
-        width_pixels = max(1, cols + colorbar_pixels)
-        height_pixels = max(1, rows)
+        dpi = int(dpi or DEFAULTS.get("export_dpi", 300))
+        debug_print(f"HeatmapCanvas export dpi={dpi}")
+        layout = self._export_layout_metrics(rows, cols, logo_band_width)
+        logo_band_pixels = layout["logo_band_pixels"]
+        colorbar_pixels = layout["colorbar_panel_pixels"]
+        width_pixels = layout["width_pixels"]
+        height_pixels = layout["height_pixels"]
+        debug_print(f"HeatmapCanvas export logo path={logo_path}")
+        debug_print(f"HeatmapCanvas export logo band widget width={logo_band_width}")
+        debug_print(f"HeatmapCanvas export logo band pixels={logo_band_pixels}")
+        debug_print(f"HeatmapCanvas export colorbar panel pixels={colorbar_pixels}")
+        debug_print(f"HeatmapCanvas export colorbar thickness pixels={layout['colorbar_thickness_pixels']}")
+        debug_print(f"HeatmapCanvas export colorbar gap pixels={layout['colorbar_gap_pixels']}")
         debug_print(f"HeatmapCanvas export data pixels={cols}x{rows}")
         debug_print(f"HeatmapCanvas export image pixels={width_pixels}x{height_pixels}")
 
         fig = Figure(figsize=(width_pixels / dpi, height_pixels / dpi), dpi=dpi)
+        fig.patch.set_facecolor("white")
         canvas = FigureCanvasAgg(fig)
-        ax = fig.add_axes([0.0, 0.0, cols / width_pixels, 1.0])
-        cax = fig.add_axes([(cols + 24) / width_pixels, 0.15, 28 / width_pixels, 0.7])
+        if logo_band_pixels:
+            logo_x, logo_y, logo_width, logo_height = layout["logo_rect"]
+            debug_print(f"HeatmapCanvas export logo rect={layout['logo_rect']}")
+            logo_ax = fig.add_axes([
+                logo_x / width_pixels,
+                logo_y / height_pixels,
+                logo_width / width_pixels,
+                logo_height / height_pixels,
+            ])
+            logo_ax.set_facecolor("white")
+            logo_ax.set_axis_off()
+            debug_print("HeatmapCanvas export logo axes created")
+            if logo_path and logo_path.exists():
+                try:
+                    logo = mpimg.imread(str(logo_path))
+                    logo_ax.imshow(logo)
+                    debug_print("HeatmapCanvas export logo loaded")
+                    debug_print(f"HeatmapCanvas export logo shape={getattr(logo, 'shape', None)}")
+                except Exception as exc:
+                    debug_print(f"HeatmapCanvas export logo load failed={exc}")
+            else:
+                debug_print("HeatmapCanvas export logo file missing")
+        ax = fig.add_axes([logo_band_pixels / width_pixels, 0.0, cols / width_pixels, 1.0])
+        colorbar_x, colorbar_y, colorbar_width, colorbar_height = layout["colorbar_rect"]
+        debug_print(f"HeatmapCanvas export colorbar rect={layout['colorbar_rect']}")
+        cax = fig.add_axes([
+            colorbar_x / width_pixels,
+            colorbar_y / height_pixels,
+            colorbar_width / width_pixels,
+            colorbar_height / height_pixels,
+        ])
         x_values, y_values = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
         image = ax.imshow(
             z_grid,
@@ -303,6 +358,7 @@ class HeatmapCanvas(QWidget):
         )
         overlay_grid = payload.get("overlay_grid")
         if overlay_grid is not None:
+            debug_print("HeatmapCanvas export drawing interface overlay")
             overlay_z = np.asarray(overlay_grid["z"])
             overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
                 overlay_grid["x"],
@@ -317,22 +373,122 @@ class HeatmapCanvas(QWidget):
                 colors=["black"],
                 alpha=0.82,
             )
+        for overlay in payload.get("phase_fraction_overlays") or []:
+            debug_print(f"HeatmapCanvas export drawing phase overlay={overlay.get('label')}")
+            lo, hi = overlay["range"]
+            phase_z = np.asarray(overlay["z"], dtype=float)
+            visible = np.where((phase_z >= lo) & (phase_z <= hi), 1.0, np.nan)
+            phase_x, phase_y = Heatmap2DOrientation.plot_axes(overlay["x"], overlay["y"], phase_z)
+            ax.imshow(
+                visible,
+                origin="lower",
+                extent=[float(np.nanmin(phase_x)), float(np.nanmax(phase_x)), float(np.nanmin(phase_y)), float(np.nanmax(phase_y))],
+                cmap=ListedColormap([overlay["color"]]),
+                vmin=0.0,
+                vmax=1.0,
+                aspect="equal",
+                interpolation="nearest",
+            )
         line_overlay = payload.get("line_overlay")
         if line_overlay:
+            debug_print(f"HeatmapCanvas export drawing line overlay={line_overlay}")
             orientation, value = line_overlay
             if orientation == "horizontal":
-                ax.axhline(value, color="#c50623", linewidth=2, linestyle="--")
+                ax.axhline(value, color="#c50623", linewidth=PlotStyle.GUIDE_LINE_WIDTH, linestyle="--")
             else:
-                ax.axvline(value, color="#c50623", linewidth=2, linestyle="--")
+                ax.axvline(value, color="#c50623", linewidth=PlotStyle.GUIDE_LINE_WIDTH, linestyle="--")
+        for point in payload.get("time_plot_points") or []:
+            debug_print(f"HeatmapCanvas export drawing time point={point}")
+            ax.scatter(
+                [float(point["x"])],
+                [float(point["y"])],
+                c="#c50623",
+                s=90,
+                marker="x",
+                linewidths=2.5,
+            )
+            ax.text(
+                float(point["x"]),
+                float(point["y"]),
+                str(point["label"]),
+                color="#06162d",
+                fontsize=13,
+                ha="center",
+                va="bottom",
+                bbox=dict(facecolor="white", edgecolor="none", alpha=0.92, pad=2),
+            )
         ax.set_axis_off()
         colorbar = fig.colorbar(image, cax=cax)
-        colorbar.ax.tick_params(labelsize=14)
+        tick_font_size = self._export_font_points(PlotStyle.COLORBAR_TICK_FONT_SIZE, dpi, layout["pixel_scale"])
+        title_font_size = self._export_font_points(PlotStyle.COLORBAR_TITLE_SIZE, dpi, layout["pixel_scale"])
+        label_pad = self._export_font_points(12, dpi, layout["pixel_scale"])
+        tick_pad = self._export_font_points(4, dpi, layout["pixel_scale"])
+        debug_print(f"HeatmapCanvas export colorbar tick font pt={tick_font_size}")
+        debug_print(f"HeatmapCanvas export colorbar title font pt={title_font_size}")
+        debug_print(f"HeatmapCanvas export colorbar label pad pt={label_pad}")
+        colorbar.ax.tick_params(labelsize=tick_font_size, pad=tick_pad)
         if payload.get("colorbar_label"):
-            colorbar.set_label(payload["colorbar_label"], fontsize=16)
+            colorbar.set_label(payload["colorbar_label"], fontsize=title_font_size, labelpad=label_pad)
         canvas.draw()
         fig.savefig(path, dpi=dpi, facecolor="white")
         debug_print(f"HeatmapCanvas high-resolution export saved={path}")
         return True
+
+    @staticmethod
+    def _export_layout_metrics(rows: int, cols: int, logo_band_width: int) -> dict:
+        """Return pixel-perfect PNG layout metrics scaled from the visible heatmap row."""
+        debug_print("HeatmapCanvas._export_layout_metrics called")
+        pixel_scale = max(float(rows) / float(_CANVAS_HEIGHT), 1.0)
+        debug_print(f"HeatmapCanvas export layout pixel_scale={pixel_scale}")
+        logo_band_pixels = 0
+        logo_rect = (0, 0, 0, 0)
+        if logo_band_width > 0:
+            logo_band_pixels = max(1, int(round(float(logo_band_width) * pixel_scale)))
+            debug_print(f"HeatmapCanvas export layout logo band={logo_band_pixels}")
+            logo_width = max(1, int(round(52.0 * pixel_scale)))
+            logo_width = min(logo_width, logo_band_pixels)
+            logo_height = logo_width
+            logo_x = max(0, int(round((logo_band_pixels - logo_width) / 2.0)))
+            logo_y = max(0, int(round(12.0 * pixel_scale)))
+            logo_rect = (logo_x, logo_y, logo_width, logo_height)
+            debug_print(f"HeatmapCanvas export layout logo_rect={logo_rect}")
+        colorbar_gap_pixels = max(1, int(round(24.0 * pixel_scale)))
+        colorbar_thickness_pixels = max(1, int(round(18.0 * pixel_scale)))
+        colorbar_right_text_pixels = max(1, int(round(170.0 * pixel_scale)))
+        colorbar_panel_pixels = max(
+            int(round(float(_COLORBAR_WIDTH) * pixel_scale)),
+            colorbar_gap_pixels + colorbar_thickness_pixels + colorbar_right_text_pixels,
+        )
+        width_pixels = max(1, logo_band_pixels + int(cols) + colorbar_panel_pixels)
+        height_pixels = max(1, int(rows))
+        colorbar_x = logo_band_pixels + int(cols) + colorbar_gap_pixels
+        colorbar_y = int(round(float(rows) * 0.15))
+        colorbar_height = max(1, int(round(float(rows) * 0.7)))
+        colorbar_rect = (colorbar_x, colorbar_y, colorbar_thickness_pixels, colorbar_height)
+        debug_print(f"HeatmapCanvas export layout colorbar_panel={colorbar_panel_pixels}")
+        debug_print(f"HeatmapCanvas export layout colorbar_rect={colorbar_rect}")
+        debug_print(f"HeatmapCanvas export layout image={width_pixels}x{height_pixels}")
+        return {
+            "pixel_scale": pixel_scale,
+            "logo_band_pixels": logo_band_pixels,
+            "logo_rect": logo_rect,
+            "colorbar_gap_pixels": colorbar_gap_pixels,
+            "colorbar_thickness_pixels": colorbar_thickness_pixels,
+            "colorbar_panel_pixels": colorbar_panel_pixels,
+            "colorbar_rect": colorbar_rect,
+            "width_pixels": width_pixels,
+            "height_pixels": height_pixels,
+        }
+
+    @staticmethod
+    def _export_font_points(view_font_pixels: int, dpi: int, pixel_scale: float) -> float:
+        """Convert Plotly pixel font sizes to Matplotlib points at export DPI."""
+        debug_print("HeatmapCanvas._export_font_points called")
+        font_pixels = float(view_font_pixels) * float(pixel_scale)
+        font_points = font_pixels * 72.0 / float(dpi)
+        debug_print(f"HeatmapCanvas export font pixels={font_pixels}")
+        debug_print(f"HeatmapCanvas export font points={font_points}")
+        return font_points
 
     def _export_z_grid_for_payload(self, payload: dict):
         """Return the display z-grid used by PNG export."""
@@ -479,6 +635,7 @@ class HeatmapCanvas(QWidget):
         colorbar_label: str = "",
         plot_type: str = "heatmap",
         phase_fraction_overlays=None,
+        vector_overlay=None,
     ) -> go.Figure:
         debug_print("HeatmapCanvas._build_figure called")
         rows, cols = np.asarray(z_grid).shape[:2]
@@ -559,12 +716,41 @@ class HeatmapCanvas(QWidget):
                     opacity=1.0,
                 )
             )
+        if vector_overlay is not None:
+            debug_print("HeatmapCanvas adding vector arrow overlay")
+            arrow_traces = self._build_vector_arrow_traces(
+                vector_overlay,
+                arrow_length=vector_overlay.get("arrow_length"),
+            )
+            debug_print(f"HeatmapCanvas vector arrow trace count={len(arrow_traces)}")
+            for trace in arrow_traces:
+                figure.add_trace(trace)
         points = time_plot_points or []
         if points:
             debug_print("HeatmapCanvas adding time plot point markers")
             debug_print(f"HeatmapCanvas time plot marker count={len(points)}")
             for point in points:
                 debug_print(f"HeatmapCanvas marker point={point}")
+            debug_print("HeatmapCanvas using borderless label boxes without white underlay")
+            for point in points:
+                debug_print(f"HeatmapCanvas adding label box point={point}")
+                figure.add_annotation(
+                    x=float(point["x"]),
+                    y=float(point["y"]),
+                    text=f"<b>{point['label']}</b>",
+                    showarrow=False,
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=10,
+                    name="Plot Over Time Label Box",
+                    font=dict(color="#06162d", size=13, family="Arial"),
+                    bgcolor="rgba(255, 255, 255, 0.92)",
+                    bordercolor="rgba(0, 0, 0, 0)",
+                    borderwidth=0,
+                    borderpad=2,
+                    opacity=1.0,
+                    captureevents=False,
+                )
             figure.add_trace(
                 go.Scatter(
                     x=[float(point["x"]) for point in points],
@@ -579,7 +765,7 @@ class HeatmapCanvas(QWidget):
                         line=dict(color="#ffffff", width=2),
                     ),
                     textposition="top center",
-                    textfont=dict(color="#102a52", size=12),
+                    textfont=dict(color="#06162d", size=13),
                     hovertemplate="%{text}<br>x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
                     showlegend=False,
                 )
@@ -644,6 +830,142 @@ class HeatmapCanvas(QWidget):
         )
         debug_print("HeatmapCanvas figure ready")
         return figure
+
+    @staticmethod
+    def _build_vector_arrow_traces(vector_overlay: dict, *, arrow_length: float | None = None, color_bins: int = 8) -> list[go.Scatter]:
+        """Build fixed-length, magnitude-colored arrow traces for a vector overlay."""
+        debug_print("HeatmapCanvas._build_vector_arrow_traces called")
+        x_values = np.asarray(vector_overlay["x"], dtype=float).ravel()
+        y_values = np.asarray(vector_overlay["y"], dtype=float).ravel()
+        u_values = np.asarray(vector_overlay["u"], dtype=float).ravel()
+        v_values = np.asarray(vector_overlay["v"], dtype=float).ravel()
+        magnitudes = np.asarray(vector_overlay["magnitude"], dtype=float).ravel()
+        label = str(vector_overlay.get("label", "Vector"))
+        finite = (
+            np.isfinite(x_values)
+            & np.isfinite(y_values)
+            & np.isfinite(u_values)
+            & np.isfinite(v_values)
+            & np.isfinite(magnitudes)
+        )
+        x_values = x_values[finite]
+        y_values = y_values[finite]
+        u_values = u_values[finite]
+        v_values = v_values[finite]
+        magnitudes = magnitudes[finite]
+        debug_print(f"HeatmapCanvas vector finite arrows={len(x_values)}")
+        if len(x_values) == 0:
+            debug_print("HeatmapCanvas vector arrows empty")
+            return []
+        direction_lengths = np.sqrt((u_values * u_values) + (v_values * v_values))
+        nonzero = direction_lengths > 1e-12
+        x_values = x_values[nonzero]
+        y_values = y_values[nonzero]
+        u_values = u_values[nonzero]
+        v_values = v_values[nonzero]
+        magnitudes = magnitudes[nonzero]
+        direction_lengths = direction_lengths[nonzero]
+        debug_print(f"HeatmapCanvas vector nonzero arrows={len(x_values)}")
+        if len(x_values) == 0:
+            debug_print("HeatmapCanvas vector arrows all zero")
+            return []
+        if arrow_length is None:
+            x_span = float(np.nanmax(x_values) - np.nanmin(x_values))
+            y_span = float(np.nanmax(y_values) - np.nanmin(y_values))
+            arrow_length = max(x_span, y_span, 1.0) * 0.035
+        arrow_length = float(arrow_length)
+        debug_print(f"HeatmapCanvas fixed arrow length={arrow_length}")
+        ux = u_values / direction_lengths
+        vy = v_values / direction_lengths
+        mag_min = float(np.nanmin(magnitudes))
+        mag_max = float(np.nanmax(magnitudes))
+        debug_print(f"HeatmapCanvas vector magnitude min={mag_min}")
+        debug_print(f"HeatmapCanvas vector magnitude max={mag_max}")
+        span = max(mag_max - mag_min, 1e-12)
+        if mag_max > mag_min:
+            magnitude_fraction = (magnitudes - mag_min) / span
+            length_scale = 0.50 + (magnitude_fraction * 1.00)
+        else:
+            length_scale = np.ones_like(magnitudes)
+        scaled_lengths = arrow_length * length_scale
+        debug_print(f"HeatmapCanvas vector length scale min={float(np.nanmin(length_scale))}")
+        debug_print(f"HeatmapCanvas vector length scale max={float(np.nanmax(length_scale))}")
+        debug_print(f"HeatmapCanvas vector arrow length min={float(np.nanmin(scaled_lengths))}")
+        debug_print(f"HeatmapCanvas vector arrow length max={float(np.nanmax(scaled_lengths))}")
+        end_x = x_values + (ux * scaled_lengths)
+        end_y = y_values + (vy * scaled_lengths)
+        bin_count = max(1, int(color_bins))
+        bins = np.clip(((magnitudes - mag_min) / span * bin_count).astype(int), 0, bin_count - 1)
+        colors = HeatmapCanvas._vector_bin_colors(bin_count)
+        traces: list[go.Scatter] = []
+        for bin_index, color in enumerate(colors):
+            mask = bins == bin_index
+            if not np.any(mask):
+                continue
+            shaft_x: list[float | None] = []
+            shaft_y: list[float | None] = []
+            head_x: list[float | None] = []
+            head_y: list[float | None] = []
+            for start_x, start_y, stop_x, stop_y, dir_x, dir_y, current_length in zip(
+                x_values[mask],
+                y_values[mask],
+                end_x[mask],
+                end_y[mask],
+                ux[mask],
+                vy[mask],
+                scaled_lengths[mask],
+            ):
+                shaft_x.extend([float(start_x), float(stop_x), None])
+                shaft_y.extend([float(start_y), float(stop_y), None])
+                head_length = current_length * 0.34
+                head_width = current_length * 0.20
+                normal_x = -dir_y
+                normal_y = dir_x
+                base_x = stop_x - (dir_x * head_length)
+                base_y = stop_y - (dir_y * head_length)
+                left_x = base_x + (normal_x * head_width)
+                left_y = base_y + (normal_y * head_width)
+                right_x = base_x - (normal_x * head_width)
+                right_y = base_y - (normal_y * head_width)
+                head_x.extend([float(left_x), float(stop_x), float(right_x), None])
+                head_y.extend([float(left_y), float(stop_y), float(right_y), None])
+            traces.append(
+                go.Scatter(
+                    x=shaft_x,
+                    y=shaft_y,
+                    mode="lines",
+                    line=dict(color=color, width=1.6),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name=f"{label} arrows",
+                )
+            )
+            traces.append(
+                go.Scatter(
+                    x=head_x,
+                    y=head_y,
+                    mode="lines",
+                    line=dict(color=color, width=1.4),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name=f"{label} arrow heads",
+                )
+            )
+        debug_print(f"HeatmapCanvas vector traces built={len(traces)}")
+        return traces
+
+    @staticmethod
+    def _vector_bin_colors(color_bins: int) -> list[str]:
+        debug_print("HeatmapCanvas._vector_bin_colors called")
+        from plotly.colors import sample_colorscale
+
+        if color_bins <= 1:
+            samples = [0.5]
+        else:
+            samples = np.linspace(0.12, 0.95, color_bins)
+        colors = sample_colorscale("Viridis", [float(sample) for sample in samples])
+        debug_print(f"HeatmapCanvas vector color bins={len(colors)}")
+        return colors
 
     def _add_phase_fraction_traces(self, figure: go.Figure, overlays: list[dict]) -> None:
         """Add one thresholded, solid-color heatmap trace per selected phase fraction."""
@@ -777,7 +1099,10 @@ class HeatmapCanvas(QWidget):
             if lookup_value is None:
                 return f"hover x={float(x_value):.4f} | y={float(y_value):.4f}"
             z_value = lookup_value
-        hover_text = f"hover x={float(x_value):.4f} | y={float(y_value):.4f} | value={float(z_value):.4f}"
+        formatted_value = self._fmt_tick(float(z_value))
+        debug_print(f"HeatmapCanvas hover raw value={float(z_value)}")
+        debug_print(f"HeatmapCanvas hover formatted value={formatted_value}")
+        hover_text = f"hover x={float(x_value):.4f} | y={float(y_value):.4f} | value={formatted_value}"
         debug_print(f"HeatmapCanvas hover_text={hover_text}")
         return hover_text
 

@@ -104,6 +104,50 @@ class AnimationPlayerTests(unittest.TestCase):
         finally:
             player.close()
 
+    def test_player_applies_rotation_to_loaded_frames_and_overlays(self):
+        player = AnimationPlayer(
+            [],
+            {"array": "PhaseFraction_0"},
+            "z",
+            0,
+            "Aqua Fire",
+            0.0,
+            1.0,
+            rotation_degrees=90,
+            plot_type="threshold",
+        )
+        try:
+            player._file_paths = ["first.vts"]
+            player._frames = [None]
+            player._overlays = [None]
+            player._phase_fraction_overlays = [[]]
+            z = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+            overlay = np.array([[10, 20, 30], [40, 50, 60]], dtype=np.float32)
+            phase_overlay = {
+                "label": "Austenite",
+                "z": np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]], dtype=np.float32),
+                "range": (0.2, 1.0),
+                "color": "#f0a202",
+            }
+
+            player._on_frame_ready(
+                0,
+                {
+                    "z": z,
+                    "overlay": overlay,
+                    "phase_fraction_overlays": [phase_overlay],
+                },
+            )
+
+            np.testing.assert_array_equal(player._frames[0], np.rot90(z, k=-1))
+            np.testing.assert_array_equal(player._overlays[0], np.rot90(overlay, k=-1))
+            np.testing.assert_array_equal(
+                player._phase_fraction_overlays[0][0]["z"],
+                np.rot90(phase_overlay["z"], k=-1),
+            )
+        finally:
+            player.close()
+
     def test_matplotlib_canvas_draws_phase_fraction_overlays_with_legend(self):
         canvas = _MatplotlibCanvas()
         try:

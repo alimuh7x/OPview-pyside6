@@ -126,7 +126,12 @@ class PlotStyle:
 
     @classmethod
     def panel_legend(cls, **overrides: Any) -> dict[str, Any]:
-        return cls._legend(cls.panel_legend_font(), **overrides)
+        config = {
+            "entrywidthmode": "fraction",
+            "entrywidth": 0.33,
+        }
+        config.update(overrides)
+        return cls._legend(cls.panel_legend_font(), **config)
 
     @classmethod
     def graph_legend(cls, **overrides: Any) -> dict[str, Any]:

@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 import numpy as np
 from matplotlib.colors import Normalize
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QRect, QSize, Qt, QTimer
+from PySide6.QtGui import QImage, QPainter
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QWidget
 
 from app.debug import debug_print
+from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS
 from utils.time_series import collect_same_series_files
-from utils.vtk_utils import get_reader
+from utils.vtk_utils import get_reader, list_vtk_files
 from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
 from viewer.heatmap_orientation import Heatmap2DOrientation
@@ -46,9 +49,10 @@ class HeatmapController:
         histogram_canvas,
         line_mode_check,
         show_line_check,
-        direction_combo,
+        direction_selector,
         histogram_bins_slider,
         interfaces_check,
+        vector_overlay_check=None,
         export_button,
         colorbar_label_edit,
         unit_scale_combo,
@@ -78,9 +82,10 @@ class HeatmapController:
         self.histogram_canvas = histogram_canvas
         self.line_mode_check = line_mode_check
         self.show_line_check = show_line_check
-        self.direction_combo = direction_combo
+        self.direction_selector = direction_selector
         self.histogram_bins_slider = histogram_bins_slider
         self.interfaces_check = interfaces_check
+        self.vector_overlay_check = vector_overlay_check
         self.export_button = export_button
         self.colorbar_label_edit = colorbar_label_edit
         self.unit_scale_combo    = unit_scale_combo
@@ -125,6 +130,7 @@ class HeatmapController:
         self._time_plot_errors: list[str] = []
         self._phase_fraction_ranges: dict[str, tuple[float, float]] = {}
         self._phase_fraction_history_cache: dict | None = None
+        self._scalar_average_history_cache: dict | None = None
         self.state = ViewerState(
             dataset_id=dataset_info.get("id", ""),
             dataset_label=dataset_info.get("label", "Untitled"),
@@ -160,6 +166,8 @@ class HeatmapController:
         debug_print("HeatmapController histogram cache cleared")
         self._phase_fraction_history_cache = None
         debug_print("HeatmapController phase history cache cleared")
+        self._scalar_average_history_cache = None
+        debug_print("HeatmapController scalar average history cache cleared")
         debug_print("HeatmapController.invalidate_cached_reader complete")
 
     def remove_missing_file_options(self, reason: str = "") -> None:
@@ -208,6 +216,92 @@ class HeatmapController:
             self._file_options_changed_callback()
         debug_print("HeatmapController.remove_missing_file_options complete")
 
+    def discover_new_file_options(self, reason: str = "") -> None:
+        """Add newly created VTK files from the active dataset folder during reload."""
+        debug_print("HeatmapController.discover_new_file_options called")
+        debug_print(f"HeatmapController discover reason={reason}")
+        vtk_folder = self.dataset_info.get("vtk_folder", "")
+        debug_print(f"HeatmapController discover vtk_folder={vtk_folder}")
+        if not vtk_folder:
+            debug_print("HeatmapController discover skipped missing vtk_folder")
+            return
+        folder_path = Path(vtk_folder)
+        debug_print(f"HeatmapController discover folder exists={folder_path.exists()}")
+        if not folder_path.exists() or not folder_path.is_dir():
+            debug_print("HeatmapController discover skipped invalid vtk_folder")
+            return
+        combo = self.controls_widget.file_combo
+        previous_file = self.controls_widget.current_file_path() or self.state.file_path
+        debug_print(f"HeatmapController discover previous_file={previous_file}")
+        current_paths = [combo.itemData(index) for index in range(combo.count()) if combo.itemData(index)]
+        debug_print(f"HeatmapController discover current count={len(current_paths)}")
+        discovered_paths = list_vtk_files(folder_path)
+        debug_print(f"HeatmapController discover scanned count={len(discovered_paths)}")
+        matched_paths = self._filter_reload_file_options(discovered_paths, current_paths)
+        debug_print(f"HeatmapController discover matched count={len(matched_paths)}")
+        if matched_paths == current_paths:
+            debug_print("HeatmapController discover skipped no file option changes")
+            return
+        self.dataset_info["files"] = matched_paths
+        debug_print("HeatmapController discover updated dataset_info files")
+        self._update_current_project_files(matched_paths)
+        debug_print("HeatmapController discover updated active project files")
+        self.controls_widget.set_file_options(matched_paths)
+        debug_print("HeatmapController discover applied file options")
+        restored_index = 0
+        if previous_file in matched_paths:
+            restored_index = matched_paths.index(previous_file)
+            debug_print(f"HeatmapController discover restoring index={restored_index}")
+        else:
+            debug_print("HeatmapController discover previous file absent; selecting first file")
+        combo.blockSignals(True)
+        combo.setCurrentIndex(restored_index if matched_paths else -1)
+        combo.blockSignals(False)
+        debug_print(f"HeatmapController discover current index={combo.currentIndex()}")
+        if self._file_options_changed_callback:
+            debug_print("HeatmapController discover notifying file options changed")
+            self._file_options_changed_callback()
+        debug_print("HeatmapController.discover_new_file_options complete")
+
+    def _filter_reload_file_options(self, discovered_paths: list[str], current_paths: list[str]) -> list[str]:
+        """Keep reload discovery scoped to the dataset represented by this panel."""
+        debug_print("HeatmapController._filter_reload_file_options called")
+        file_glob = self.dataset_info.get("dataset_config", {}).get("file_glob", "")
+        debug_print(f"HeatmapController reload file_glob={file_glob}")
+        if file_glob:
+            filtered = [path for path in discovered_paths if fnmatchcase(Path(path).name, file_glob)]
+            debug_print(f"HeatmapController reload filtered by glob count={len(filtered)}")
+            return filtered
+        if current_paths:
+            reference = Path(current_paths[0])
+            prefix, _, numeric_suffix = reference.stem.rpartition("_")
+            debug_print(f"HeatmapController reload inferred prefix={prefix}")
+            debug_print(f"HeatmapController reload inferred numeric_suffix={numeric_suffix}")
+            if prefix and numeric_suffix.isdigit():
+                filtered = [
+                    path
+                    for path in discovered_paths
+                    if Path(path).suffix == reference.suffix
+                    and Path(path).stem.startswith(f"{prefix}_")
+                    and Path(path).stem.rpartition("_")[2].isdigit()
+                ]
+                debug_print(f"HeatmapController reload filtered by inferred series count={len(filtered)}")
+                return filtered
+        debug_print("HeatmapController reload using all discovered VTK files")
+        return discovered_paths
+
+    def _update_current_project_files(self, files: list[str]) -> None:
+        """Keep available-project metadata in sync with a reload-scanned file list."""
+        debug_print("HeatmapController._update_current_project_files called")
+        project_info = self.controls_widget.current_project_info()
+        debug_print(f"HeatmapController update project has info={bool(project_info)}")
+        if project_info:
+            project_info["files"] = files
+            project_info["file_count"] = len(files)
+            project_info["files_limited"] = False
+            debug_print(f"HeatmapController update project file_count={len(files)}")
+        debug_print("HeatmapController._update_current_project_files complete")
+
     def connect_signals(self) -> None:
         """Wire all Qt signals from controls and canvases to their handler methods."""
         debug_print("HeatmapController.connect_signals called")
@@ -216,13 +310,15 @@ class HeatmapController:
         self.line_mode_check.toggled.connect(self._on_line_mode_toggled)
         self.controls_widget.click_mode_range_check.toggled.connect(self._on_range_mode_toggled)
         self.show_line_check.toggled.connect(lambda *_: self._refresh_from_toolbar("line-overlay"))
-        self.direction_combo.currentIndexChanged.connect(lambda *_: self._refresh_from_toolbar("line-direction"))
+        self.direction_selector.line_scan_direction_changed.connect(lambda *_: self._refresh_from_toolbar("line-direction"))
         self.controls_widget.scalar_combo.currentIndexChanged.connect(self.refresh_view)
         self.controls_widget.phase_fraction_selection_changed.connect(
             lambda *_: self._refresh_from_toolbar("phase-fraction-selection")
         )
         self.histogram_bins_slider.valueChanged.connect(lambda *_: self._refresh_from_toolbar("histogram-bins"))
         self.interfaces_check.toggled.connect(lambda *_: self._refresh_from_toolbar("interfaces"))
+        if self.vector_overlay_check is not None:
+            self.vector_overlay_check.toggled.connect(lambda *_: self._refresh_from_toolbar("vectors"))
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
         self.colorbar_label_edit.editingFinished.connect(lambda *_: self._refresh_from_toolbar("colorbar-label"))
@@ -345,7 +441,7 @@ class HeatmapController:
         self.state.units                      = scalar_def.get("units")
         self.state.colorscale_mode            = "dynamic" if self.controls_widget.full_scale_enabled() else "normal"
         self.state.line_overlay_visible       = self.show_line_check.isChecked()
-        self.state.line_scan_direction        = self.direction_combo.currentData() or "horizontal"
+        self.state.line_scan_direction        = self.direction_selector.current_line_scan_direction()
         self.state.interfaces_overlay_visible = self.interfaces_check.isChecked()
         if self.line_mode_check.isChecked():
             self.state.click_mode = "linescan"
@@ -421,28 +517,41 @@ class HeatmapController:
         self._histogram_cache = None
         previous_state = replace(self.state)
         previous_time_points = [dict(point) for point in self.state.time_plot_points]
+        previous_display_grids = self._last_display_grids
+        debug_print(f"HeatmapController previous display grids available={previous_display_grids is not None}")
         self.reader      = get_reader(file_path)
         axis             = self._detect_axis()
         self.scalar_defs = self._build_scalar_defs()
-        first_scalar     = self.scalar_defs[0] if self.scalar_defs else {"value": "", "label": ""}
-        fallback_state   = self._build_state(self.reader, file_path, first_scalar["value"], axis)
+        default_scalar   = self._default_initial_scalar_def()
+        fallback_state   = self._build_state(self.reader, file_path, default_scalar["value"], axis)
         data_range_min = fallback_state.range_min
         data_range_max = fallback_state.range_max
         debug_print(f"HeatmapController loaded data range min={data_range_min}")
         debug_print(f"HeatmapController loaded data range max={data_range_max}")
         self.state       = self._preserve_file_change_state(fallback_state, previous_state, previous_time_points)
+        active_scalar = self._get_scalar_def(self.state.scalar_key) or default_scalar
+        debug_print(f"HeatmapController active file-change scalar={active_scalar.get('label')}")
+        next_display_grids = self._file_change_display_grids(active_scalar, self.state.axis, self.state.slice_index)
+        self._restore_line_scan_display_fraction(previous_state, previous_display_grids, next_display_grids)
         self.controls_widget.set_axis(axis)
         is_effective_2d = Heatmap2DOrientation.is_2d(self.reader.dimensions)
         max_slice_index = 0 if is_effective_2d else self.reader.get_max_slice_index(axis)
         self.controls_widget.set_slice_range(0, max_slice_index)
         self.controls_widget.set_slice_controls_visible(not is_effective_2d and max_slice_index > 0)
         prev_scalar_key = self.controls_widget.current_scalar_key()
+        debug_print(f"HeatmapController previous combo scalar key={prev_scalar_key}")
         self.controls_widget.set_scalar_options(self.scalar_defs)
-        restored = self.controls_widget.scalar_combo.findData(prev_scalar_key)
+        selected_scalar_key = prev_scalar_key or self.state.scalar_key
+        debug_print(f"HeatmapController selected combo scalar key={selected_scalar_key}")
+        restored = self.controls_widget.scalar_combo.findData(selected_scalar_key)
+        debug_print(f"HeatmapController selected combo scalar index={restored}")
         if restored >= 0:
             self.controls_widget.scalar_combo.blockSignals(True)
             self.controls_widget.scalar_combo.setCurrentIndex(restored)
             self.controls_widget.scalar_combo.blockSignals(False)
+            debug_print("HeatmapController applied selected scalar to combo")
+        else:
+            debug_print("HeatmapController selected scalar not found in combo")
 
         self.controls_widget.set_slider_bounds(data_range_min, data_range_max)
         self.controls_widget.set_range_values(self.state.range_min, self.state.range_max)
@@ -450,6 +559,28 @@ class HeatmapController:
         if self._file_loaded_callback:
             self._file_loaded_callback(file_path)
         debug_print("HeatmapController reader and controls updated")
+
+    def _default_initial_scalar_def(self) -> dict:
+        """Return the initial scalar, preferring PhaseFields for PhaseField panels."""
+        debug_print("HeatmapController._default_initial_scalar_def called")
+        fallback = self.scalar_defs[0] if self.scalar_defs else {"value": "", "label": ""}
+        debug_print(f"HeatmapController fallback scalar label={fallback.get('label')}")
+        debug_print(f"HeatmapController fallback scalar value={fallback.get('value')}")
+        if not self._is_phase_field_dataset():
+            debug_print("HeatmapController default scalar using fallback for non PhaseField")
+            return fallback
+        for scalar_def in self.scalar_defs:
+            label = str(scalar_def.get("label", ""))
+            array = str(scalar_def.get("array", ""))
+            value = str(scalar_def.get("value", ""))
+            debug_print(f"HeatmapController default candidate label={label}")
+            debug_print(f"HeatmapController default candidate array={array}")
+            debug_print(f"HeatmapController default candidate value={value}")
+            if label.lower() == "phasefields" or array.lower() == "phasefields":
+                debug_print("HeatmapController selected PhaseFields as default scalar")
+                return scalar_def
+        debug_print("HeatmapController PhaseFields default not found; using fallback")
+        return fallback
 
     def _preserve_file_change_state(
         self,
@@ -492,6 +623,8 @@ class HeatmapController:
         next_state.line_scan_direction = previous_state.line_scan_direction
         next_state.line_overlay_visible = previous_state.line_overlay_visible
         next_state.click_mode = previous_state.click_mode
+        next_state.rotation_degrees = previous_state.rotation_degrees
+        debug_print(f"Preserved rotation degrees={next_state.rotation_degrees}")
         next_state.time_plot_x = previous_state.time_plot_x
         next_state.time_plot_y = previous_state.time_plot_y
         next_state.time_plot_points = previous_time_points
@@ -500,6 +633,83 @@ class HeatmapController:
         debug_print(f"Preserved time points visible={next_state.time_plot_points_visible}")
         debug_print("HeatmapController._preserve_file_change_state complete")
         return next_state
+
+    def _file_change_display_grids(self, scalar_def: dict, axis: str, slice_index: int):
+        """Return oriented grids for translating line-scan position across a file change."""
+        debug_print("HeatmapController._file_change_display_grids called")
+        if self.reader is None or not scalar_def.get("array"):
+            debug_print("HeatmapController file-change display grids skipped no reader/scalar")
+            return None
+        debug_print(f"HeatmapController file-change display scalar={scalar_def.get('label')}")
+        debug_print(f"HeatmapController file-change display axis={axis}")
+        debug_print(f"HeatmapController file-change display slice={slice_index}")
+        x_grid, y_grid, z_grid, _ = self._load_display_grid(
+            self.reader,
+            scalar_def,
+            axis,
+            slice_index,
+            plot_type=self.controls_widget.current_plot_type(),
+        )
+        display = self._orientation().apply_grid(x_grid, y_grid, z_grid)
+        debug_print(f"HeatmapController file-change display x_min={float(np.nanmin(display.x))}")
+        debug_print(f"HeatmapController file-change display x_max={float(np.nanmax(display.x))}")
+        debug_print(f"HeatmapController file-change display y_min={float(np.nanmin(display.y))}")
+        debug_print(f"HeatmapController file-change display y_max={float(np.nanmax(display.y))}")
+        return display.x, display.y, display.z
+
+    def _restore_line_scan_display_fraction(
+        self,
+        previous_state: ViewerState,
+        previous_display_grids,
+        next_display_grids,
+    ) -> None:
+        """Keep the line scan at the same relative heatmap position after file extent changes."""
+        debug_print("HeatmapController._restore_line_scan_display_fraction called")
+        debug_print(f"Line restore previous file exists={bool(previous_state.file_path)}")
+        debug_print(f"Line restore previous grids available={previous_display_grids is not None}")
+        debug_print(f"Line restore next grids available={next_display_grids is not None}")
+        if not previous_state.file_path or previous_display_grids is None or next_display_grids is None:
+            debug_print("Line restore skipped missing file/grid context")
+            return
+        direction = previous_state.line_scan_direction
+        debug_print(f"Line restore direction={direction}")
+        if direction == "horizontal":
+            old_position = previous_state.line_scan_y
+            old_grid = previous_display_grids[1]
+            new_grid = next_display_grids[1]
+            target_attr = "line_scan_y"
+        else:
+            old_position = previous_state.line_scan_x
+            old_grid = previous_display_grids[0]
+            new_grid = next_display_grids[0]
+            target_attr = "line_scan_x"
+        debug_print(f"Line restore old_position={old_position}")
+        if old_position is None:
+            debug_print("Line restore skipped because no previous line position")
+            return
+        old_min = float(np.nanmin(old_grid))
+        old_max = float(np.nanmax(old_grid))
+        new_min = float(np.nanmin(new_grid))
+        new_max = float(np.nanmax(new_grid))
+        debug_print(f"Line restore old_min={old_min}")
+        debug_print(f"Line restore old_max={old_max}")
+        debug_print(f"Line restore new_min={new_min}")
+        debug_print(f"Line restore new_max={new_max}")
+        old_span = old_max - old_min
+        new_span = new_max - new_min
+        debug_print(f"Line restore old_span={old_span}")
+        debug_print(f"Line restore new_span={new_span}")
+        if old_span == 0 or new_span == 0:
+            debug_print("Line restore skipped zero span")
+            return
+        fraction = (float(old_position) - old_min) / old_span
+        fraction = float(np.clip(fraction, 0.0, 1.0))
+        restored_position = new_min + fraction * new_span
+        debug_print(f"Line restore fraction={fraction}")
+        debug_print(f"Line restore restored_position={restored_position}")
+        setattr(self.state, target_attr, restored_position)
+        debug_print(f"Line restore stored attr={target_attr}")
+        debug_print("HeatmapController._restore_line_scan_display_fraction complete")
 
     def _project_display_text(self) -> str:
         """Return a human-readable 'parent/folder' label for the project header."""
@@ -621,6 +831,21 @@ class HeatmapController:
         debug_print(f"HeatmapController phase history cache phase count={len(key[1])}")
         return key
 
+    def _scalar_average_history_cache_key(self, files, scalar_def: dict, scale: float) -> tuple:
+        """Build a cache key for one selected-scalar average history."""
+        debug_print("HeatmapController._scalar_average_history_cache_key called")
+        key = (
+            tuple(str(Path(item.path).resolve()) for item in files),
+            str(scalar_def.get("array", "")),
+            scalar_def.get("component"),
+            float(scale),
+        )
+        debug_print(f"HeatmapController average history file count={len(key[0])}")
+        debug_print(f"HeatmapController average history array={key[1]}")
+        debug_print(f"HeatmapController average history component={key[2]}")
+        debug_print(f"HeatmapController average history scale={key[3]}")
+        return key
+
     def _phase_history_time_axis(self) -> tuple[float, str, str]:
         """Return factor and labels for converting filename timestep to displayed time."""
         debug_print("HeatmapController._phase_history_time_axis called")
@@ -720,26 +945,73 @@ class HeatmapController:
         debug_print("HeatmapController._build_phase_fraction_history_series complete")
         return series
 
+    def _scalar_values_for_average(self, reader, scalar_def: dict):
+        """Return scalar/component values for whole-field average history."""
+        debug_print("HeatmapController._scalar_values_for_average called")
+        array_name = scalar_def.get("array")
+        component = scalar_def.get("component")
+        debug_print(f"HeatmapController average array={array_name}")
+        debug_print(f"HeatmapController average component={component}")
+        values = np.asarray(reader.mesh[array_name], dtype=float)
+        debug_print(f"HeatmapController average source ndim={getattr(values, 'ndim', 1)}")
+        if getattr(values, "ndim", 1) == 2:
+            if component is not None and 0 <= int(component) < values.shape[1]:
+                debug_print("HeatmapController average selecting tensor/vector component")
+                values = values[:, int(component)]
+            else:
+                debug_print("HeatmapController average using vector/tensor norm")
+                values = np.linalg.norm(values, axis=1)
+        debug_print(f"HeatmapController average values count={values.size}")
+        return values
+
+    def _build_scalar_average_history_series(self, files, scalar_def: dict, scale: float, label: str) -> list[dict]:
+        """Calculate whole-field selected-scalar average for every timestep."""
+        debug_print("HeatmapController._build_scalar_average_history_series called")
+        debug_print(f"HeatmapController average history files={len(files)}")
+        debug_print(f"HeatmapController average history label={label}")
+        debug_print(f"HeatmapController average history scale={scale}")
+        series = [{"label": label, "steps": [], "values": [], "color": "#c50623"}]
+        for file_index, item in enumerate(files):
+            debug_print(f"HeatmapController average history reading index={file_index}")
+            debug_print(f"HeatmapController average history path={item.path}")
+            series[0]["steps"].append(int(item.step))
+            try:
+                reader = get_reader(item.path)
+                available = set(reader.scalar_fields)
+                array_name = scalar_def.get("array")
+                debug_print(f"HeatmapController average history available arrays={len(available)}")
+                debug_print(f"HeatmapController average history target array={array_name}")
+                if array_name not in available:
+                    debug_print("HeatmapController average history missing scalar in file")
+                    series[0]["values"].append(float("nan"))
+                    continue
+                values = self._scalar_values_for_average(reader, scalar_def)
+                finite_count = int(np.count_nonzero(np.isfinite(values)))
+                debug_print(f"HeatmapController average history finite count={finite_count}")
+                if finite_count == 0:
+                    debug_print("HeatmapController average history no finite values")
+                    series[0]["values"].append(float("nan"))
+                    continue
+                average = float(np.nanmean(values) * scale)
+                debug_print(f"HeatmapController average history value={average}")
+                series[0]["values"].append(average)
+            except Exception as exc:
+                debug_print(f"HeatmapController average history file failed={exc}")
+                series[0]["values"].append(float("nan"))
+        debug_print("HeatmapController._build_scalar_average_history_series complete")
+        return series
+
     def _render_phase_fraction_history(self) -> None:
-        """Show Phase Field phase-fraction percentage history below the VTK view."""
+        """Show PhaseField fractions or selected-scalar averages below the VTK view."""
         debug_print("HeatmapController._render_phase_fraction_history called")
         if self.phase_fraction_history_canvas is None:
             debug_print("HeatmapController phase history skipped no canvas")
             return
-        if self.reader is None or not self._is_phase_field_dataset():
-            debug_print("HeatmapController phase history hidden non phase field/no reader")
+        if self.reader is None:
+            debug_print("HeatmapController history hidden no reader")
             self.phase_fraction_history_canvas.hide()
             if self.phase_fraction_history_separator is not None:
-                debug_print("HeatmapController hiding phase history separator")
-                self.phase_fraction_history_separator.hide()
-            return
-        phase_names = self._phase_fraction_array_names()
-        debug_print(f"HeatmapController phase history detected phases={phase_names}")
-        if not phase_names:
-            debug_print("HeatmapController phase history hidden no PhaseFraction arrays")
-            self.phase_fraction_history_canvas.hide()
-            if self.phase_fraction_history_separator is not None:
-                debug_print("HeatmapController hiding phase history separator")
+                debug_print("HeatmapController hiding history separator")
                 self.phase_fraction_history_separator.hide()
             return
         files = collect_same_series_files(
@@ -747,32 +1019,62 @@ class HeatmapController:
             self._current_file_paths(),
             existing_only=True,
         )
-        debug_print(f"HeatmapController phase history same-series files={len(files)}")
+        debug_print(f"HeatmapController history same-series files={len(files)}")
         if not files:
-            debug_print("HeatmapController phase history hidden no files")
+            debug_print("HeatmapController history hidden no files")
             self.phase_fraction_history_canvas.hide()
             if self.phase_fraction_history_separator is not None:
-                debug_print("HeatmapController hiding phase history separator")
+                debug_print("HeatmapController hiding history separator")
                 self.phase_fraction_history_separator.hide()
             return
-        cache_key = self._phase_fraction_history_cache_key(files, phase_names)
-        if self._phase_fraction_history_cache and self._phase_fraction_history_cache.get("key") == cache_key:
-            debug_print("HeatmapController phase history cache hit")
-            series = self._phase_fraction_history_cache["series"]
+        is_phase_field = self._is_phase_field_dataset()
+        phase_names = self._phase_fraction_array_names() if is_phase_field else []
+        debug_print(f"HeatmapController history is_phase_field={is_phase_field}")
+        debug_print(f"HeatmapController history detected phases={phase_names}")
+        y_label = "Phase fraction (%)"
+        hover_value_label = "phase fraction"
+        if phase_names:
+            cache_key = self._phase_fraction_history_cache_key(files, phase_names)
+            if self._phase_fraction_history_cache and self._phase_fraction_history_cache.get("key") == cache_key:
+                debug_print("HeatmapController phase history cache hit")
+                series = self._phase_fraction_history_cache["series"]
+            else:
+                debug_print("HeatmapController phase history cache miss")
+                series = self._build_phase_fraction_history_series(files, phase_names)
+                self._phase_fraction_history_cache = {"key": cache_key, "series": series}
+                debug_print("HeatmapController phase history cache stored")
         else:
-            debug_print("HeatmapController phase history cache miss")
-            series = self._build_phase_fraction_history_series(files, phase_names)
-            self._phase_fraction_history_cache = {"key": cache_key, "series": series}
-            debug_print("HeatmapController phase history cache stored")
+            scalar_def = self._get_scalar_def(self.state.scalar_key)
+            if scalar_def is None:
+                debug_print("HeatmapController average history hidden no scalar")
+                self.phase_fraction_history_canvas.hide()
+                if self.phase_fraction_history_separator is not None:
+                    debug_print("HeatmapController hiding history separator")
+                    self.phase_fraction_history_separator.hide()
+                return
+            extra_scale, display_label = self._get_display_params(self.controls_widget.current_scalar_label())
+            scale = (scalar_def.get("scale", 1.0) or 1.0) * extra_scale
+            y_label = display_label
+            hover_value_label = "average"
+            debug_print(f"HeatmapController average history y_label={y_label}")
+            cache_key = self._scalar_average_history_cache_key(files, scalar_def, scale)
+            if self._scalar_average_history_cache and self._scalar_average_history_cache.get("key") == cache_key:
+                debug_print("HeatmapController average history cache hit")
+                series = self._scalar_average_history_cache["series"]
+            else:
+                debug_print("HeatmapController average history cache miss")
+                series = self._build_scalar_average_history_series(files, scalar_def, scale, self.controls_widget.current_scalar_label())
+                self._scalar_average_history_cache = {"key": cache_key, "series": series}
+                debug_print("HeatmapController average history cache stored")
         current_step = self._current_phase_history_step(files)
-        debug_print(f"HeatmapController phase history render current_step={current_step}")
+        debug_print(f"HeatmapController history render current_step={current_step}")
         series, current_step, x_label, hover_x_label = self._convert_phase_fraction_history_axis(
             series,
             current_step,
         )
-        debug_print(f"HeatmapController phase history converted x_label={x_label}")
+        debug_print(f"HeatmapController history converted x_label={x_label}")
         if self.phase_fraction_history_separator is not None:
-            debug_print("HeatmapController showing phase history separator")
+            debug_print("HeatmapController showing history separator")
             self.phase_fraction_history_separator.show()
         self.phase_fraction_history_canvas.show()
         self.phase_fraction_history_canvas.render_phase_fraction_history(
@@ -780,8 +1082,10 @@ class HeatmapController:
             current_step=current_step,
             x_label=x_label,
             hover_x_label=hover_x_label,
+            y_label=y_label,
+            hover_value_label=hover_value_label,
         )
-        debug_print("HeatmapController phase history rendered")
+        debug_print("HeatmapController history rendered")
 
     def _get_scalar_def(self, scalar_key: str) -> dict | None:
         """Return the scalar definition matching scalar_key, or the first available as a fallback."""
@@ -832,17 +1136,20 @@ class HeatmapController:
         *,
         scale_override: float | None = None,
         plot_type: str = "heatmap",
+        resolution: int | None = None,
     ):
         """Load a scalar grid, applying display scale and optional |grad| transform."""
         debug_print("HeatmapController._load_display_grid called")
         debug_print(f"HeatmapController loading scalar label={scalar_def.get('label')}")
         debug_print(f"HeatmapController loading plot_type={plot_type}")
+        selected_resolution = self._selected_resolution() if resolution is None else int(resolution)
+        debug_print(f"HeatmapController loading resolution={selected_resolution}")
         x_grid, y_grid, z_grid, stats = reader.get_interpolated_slice(
             axis=axis,
             index=slice_index,
             scalar_name=scalar_def["array"],
             component=scalar_def.get("component"),
-            resolution=self._selected_resolution(),
+            resolution=selected_resolution,
         )
         scale = scale_override if scale_override is not None else (scalar_def.get("scale", 1.0) or 1.0)
         debug_print(f"HeatmapController display grid scale={scale}")
@@ -904,7 +1211,7 @@ class HeatmapController:
             debug_print(f"HeatmapController selected phase def={scalar_def['value']}")
         return defs
 
-    def _build_phase_fraction_overlays(self, orientation: Heatmap2DOrientation, extra_scale: float) -> list[dict]:
+    def _build_phase_fraction_overlays(self, orientation: Heatmap2DOrientation, extra_scale: float, resolution: int | None = None) -> list[dict]:
         """Load thresholded grids for all checked phase fractions."""
         debug_print("HeatmapController._build_phase_fraction_overlays called")
         if self.reader is None:
@@ -928,6 +1235,7 @@ class HeatmapController:
                 self.state.axis,
                 self.state.slice_index,
                 plot_type="heatmap",
+                resolution=resolution,
             )
             if extra_scale != 1.0:
                 phase_grid = phase_grid * extra_scale
@@ -1066,6 +1374,7 @@ class HeatmapController:
         x_grid, y_grid, z_grid = display.x, display.y, display.z
         self._last_display_grids = (x_grid, y_grid, z_grid)
         phase_fraction_overlays = self._build_phase_fraction_overlays(orientation, extra_scale)
+        vector_overlay = self._build_vector_overlay(orientation)
 
         line_overlay = None
         if self.state.line_overlay_visible:
@@ -1122,13 +1431,129 @@ class HeatmapController:
             colorbar_label=colorbar_label,
             plot_type=self.controls_widget.current_plot_type(),
             phase_fraction_overlays=phase_fraction_overlays,
+            vector_overlay=vector_overlay,
         )
+
+    def _build_vector_overlay(self, orientation: Heatmap2DOrientation) -> dict | None:
+        """Build a fixed-size arrow overlay when the selected array is a vector field."""
+        debug_print("HeatmapController._build_vector_overlay called")
+        if self.vector_overlay_check is None:
+            debug_print("HeatmapController vector overlay skipped no toggle")
+            return None
+        debug_print(f"HeatmapController vector toggle checked={self.vector_overlay_check.isChecked()}")
+        if not self.vector_overlay_check.isChecked():
+            debug_print("HeatmapController vector overlay skipped toggle off")
+            return None
+        if self.reader is None:
+            debug_print("HeatmapController vector overlay skipped no reader")
+            return None
+        scalar_def = self._get_scalar_def(self.state.scalar_key)
+        if scalar_def is None:
+            debug_print("HeatmapController vector overlay skipped no scalar def")
+            return None
+        vector_name = scalar_def.get("array")
+        debug_print(f"HeatmapController vector candidate={vector_name}")
+        if vector_name not in self.reader.vector_fields:
+            debug_print("HeatmapController vector overlay skipped scalar is not vector")
+            return None
+        if self.controls_widget.current_plot_type() == "difference":
+            debug_print("HeatmapController vector overlay skipped difference plot")
+            return None
+        x_grid, y_grid, u_grid, v_grid, magnitude_grid, stats = self.reader.get_vector_overlay_grid(
+            axis=self.state.axis,
+            index=self.state.slice_index,
+            vector_name=vector_name,
+            resolution=21,
+        )
+        overlay = {
+            "x": x_grid,
+            "y": y_grid,
+            "u": u_grid,
+            "v": v_grid,
+            "magnitude": magnitude_grid,
+            "label": scalar_def.get("label", vector_name),
+            "stats": stats,
+        }
+        debug_print(f"HeatmapController vector raw shape={np.asarray(u_grid).shape}")
+        overlay = self._orient_vector_overlay(overlay, orientation)
+        overlay = self._downsample_vector_overlay(overlay, max_arrows_per_axis=21)
+        debug_print(f"HeatmapController vector final shape={np.asarray(overlay['u']).shape}")
+        debug_print(f"HeatmapController vector final count={np.asarray(overlay['u']).size}")
+        return overlay
+
+    def _orient_vector_overlay(self, overlay: dict, orientation: Heatmap2DOrientation) -> dict:
+        """Apply the heatmap rotation to vector positions and directions."""
+        debug_print("HeatmapController._orient_vector_overlay called")
+        x_values = np.asarray(overlay["x"], dtype=float)
+        y_values = np.asarray(overlay["y"], dtype=float)
+        u_source = np.asarray(overlay["u"], dtype=float)
+        v_source = np.asarray(overlay["v"], dtype=float)
+        start = orientation.apply_grid(x_values, y_values, overlay["magnitude"])
+        plot_x_values, plot_y_values = Heatmap2DOrientation.plot_axes(start.x, start.y, start.z)
+        display_x, display_y = np.meshgrid(plot_x_values, plot_y_values)
+        turns = orientation.rotation_degrees // 90
+        debug_print(f"HeatmapController vector rotation turns={turns}")
+        u_rotated = np.rot90(u_source, k=-turns) if turns else u_source
+        v_rotated = np.rot90(v_source, k=-turns) if turns else v_source
+        debug_print(f"HeatmapController vector rotated u shape={u_rotated.shape}")
+        debug_print(f"HeatmapController vector rotated v shape={v_rotated.shape}")
+        if turns == 1:
+            u_values = -v_rotated
+            v_values = u_rotated
+        elif turns == 2:
+            u_values = -u_rotated
+            v_values = -v_rotated
+        elif turns == 3:
+            u_values = v_rotated
+            v_values = -u_rotated
+        else:
+            u_values = u_rotated
+            v_values = v_rotated
+        result = dict(overlay)
+        result["x"] = display_x
+        result["y"] = display_y
+        result["u"] = u_values
+        result["v"] = v_values
+        result["magnitude"] = start.z
+        debug_print(f"HeatmapController vector display x shape={display_x.shape}")
+        debug_print(f"HeatmapController vector display y shape={display_y.shape}")
+        debug_print(f"HeatmapController vector display x sample={float(np.ravel(display_x)[0]) if display_x.size else 'empty'}")
+        debug_print(f"HeatmapController vector display y sample={float(np.ravel(display_y)[0]) if display_y.size else 'empty'}")
+        debug_print(f"HeatmapController vector oriented u sample={float(np.ravel(u_values)[0]) if u_values.size else 'empty'}")
+        debug_print(f"HeatmapController vector oriented v sample={float(np.ravel(v_values)[0]) if v_values.size else 'empty'}")
+        debug_print("HeatmapController vector orientation applied")
+        return result
+
+    def _downsample_vector_overlay(self, overlay: dict, *, max_arrows_per_axis: int) -> dict:
+        """Thin vector grids to a readable arrow density."""
+        debug_print("HeatmapController._downsample_vector_overlay called")
+        rows, cols = np.asarray(overlay["u"]).shape[:2]
+        row_step = max(1, int(np.ceil(rows / max_arrows_per_axis)))
+        col_step = max(1, int(np.ceil(cols / max_arrows_per_axis)))
+        row_offset = row_step // 2
+        col_offset = col_step // 2
+        debug_print(f"HeatmapController vector downsample rows={rows}")
+        debug_print(f"HeatmapController vector downsample cols={cols}")
+        debug_print(f"HeatmapController vector downsample row_step={row_step}")
+        debug_print(f"HeatmapController vector downsample col_step={col_step}")
+        result = dict(overlay)
+        for key in ("x", "y", "u", "v", "magnitude"):
+            result[key] = np.asarray(overlay[key])[row_offset::row_step, col_offset::col_step]
+            debug_print(f"HeatmapController vector downsampled {key} shape={result[key].shape}")
+        x_values = np.asarray(result["x"], dtype=float)
+        y_values = np.asarray(result["y"], dtype=float)
+        x_span = float(np.nanmax(x_values) - np.nanmin(x_values)) if x_values.size else 1.0
+        y_span = float(np.nanmax(y_values) - np.nanmin(y_values)) if y_values.size else 1.0
+        density = max(max(result["u"].shape), 1)
+        result["arrow_length"] = max(x_span, y_span, 1.0) / density * 0.55
+        debug_print(f"HeatmapController vector fixed arrow_length={result['arrow_length']}")
+        return result
 
     def _time_plot_marker_points(self) -> list[dict[str, float | str]]:
         """Return selected Plot Over Time points when heatmap markers are enabled."""
         debug_print("HeatmapController._time_plot_marker_points called")
         if not self.state.time_plot_points_visible:
-            debug_print("PlotOverTime markers disabled")
+            debug_print("PlotOverTime markers hidden by Show Points toggle")
             return []
         points = [
             {"label": str(point["label"]), "x": float(point["x"]), "y": float(point["y"])}
@@ -1138,16 +1563,20 @@ class HeatmapController:
             debug_print(f"PlotOverTime marker point={point}")
         return points
 
-    def _compute_difference_grid(self) -> "np.ndarray | None":
+    def _compute_difference_grid(self, current_z_grid=None, resolution: int | None = None) -> "np.ndarray | None":
         """Load the next file in the file combo and return (z_next − z_current)."""
+        debug_print("HeatmapController._compute_difference_grid called")
         current_idx = self.controls_widget.file_combo.currentIndex()
         next_idx    = current_idx + 1
         if next_idx >= self.controls_widget.file_combo.count():
+            debug_print("HeatmapController difference skipped no next file")
             return None
         next_path  = self.controls_widget.file_combo.itemData(next_idx)
+        debug_print(f"HeatmapController difference next path={next_path}")
         next_reader = get_reader(next_path)
         scalar_def  = self._get_scalar_def(self.state.scalar_key)
         if scalar_def is None or self._last_grids is None:
+            debug_print("HeatmapController difference skipped missing scalar/current grid")
             return None
         _, _, z_next, _ = self._load_display_grid(
             next_reader,
@@ -1155,8 +1584,11 @@ class HeatmapController:
             self.state.axis,
             self.state.slice_index,
             plot_type=self.controls_widget.current_plot_type(),
+            resolution=resolution,
         )
-        z_current = self._last_grids[2]
+        z_current = current_z_grid if current_z_grid is not None else self._last_grids[2]
+        debug_print(f"HeatmapController difference current shape={np.asarray(z_current).shape}")
+        debug_print(f"HeatmapController difference next shape={np.asarray(z_next).shape}")
         return z_next - z_current
 
     def _render_line_scan(self, x_grid, y_grid, z_grid, extra_scale: float, display_label: str) -> None:
@@ -1259,6 +1691,8 @@ class HeatmapController:
                 self.state.first_click = None
                 self.state.clicked_message = f"Range selected: [{lo:.6f}, {hi:.6f}]"
                 self.controls_widget.set_range_values(lo, hi)
+                self.controls_widget.set_last_trigger("range-selection")
+                debug_print("HeatmapController range selection trigger set after map clicks")
                 self.refresh_view()
         elif self.state.click_mode == "linescan":
             if self.state.line_scan_direction == "horizontal":
@@ -1308,7 +1742,7 @@ class HeatmapController:
             self.controls_widget.click_mode_range_check.setChecked(False)
             self.controls_widget.click_mode_range_check.blockSignals(False)
 
-    def _build_overlay_grid(self):
+    def _build_overlay_grid(self, resolution: int | None = None):
         """Load the PhaseField VTK file and return its grid data for drawing the interfaces overlay."""
         debug_print("HeatmapController._build_overlay_grid called")
         if not self.interfaces_check.isChecked():
@@ -1323,7 +1757,7 @@ class HeatmapController:
                 index=self.state.slice_index,
                 scalar_name="Interfaces",
                 component=None,
-                resolution=self._selected_resolution(),
+                resolution=self._selected_resolution() if resolution is None else int(resolution),
             )
             debug_print(f"Overlay band min={float(np.min(z_grid))}")
             debug_print(f"Overlay band max={float(np.max(z_grid))}")
@@ -1421,6 +1855,7 @@ class HeatmapController:
         debug_print("HeatmapController._on_time_plot_show_points_toggled called")
         debug_print(f"PlotOverTime show points toggled={checked}")
         self.state.time_plot_points_visible = bool(checked)
+        debug_print(f"PlotOverTime points visible={self.state.time_plot_points_visible}")
         self.controls_widget.set_last_trigger("time-plot-show-points")
         self.refresh_view()
 
@@ -1494,9 +1929,9 @@ class HeatmapController:
         self.controls_widget.set_status_text(f"Plot Over Time point selected: x={float(x_value):.4f}, y={float(y_value):.4f}")
         if self.time_plot_canvas is not None:
             self.time_plot_canvas.render_placeholder("Press Calculate to plot value over time")
-        if self.state.time_plot_points_visible:
-            debug_print("PlotOverTime refreshing heatmap after point add")
-            self.refresh_view()
+        debug_print("PlotOverTime refreshing heatmap after point add")
+        debug_print(f"PlotOverTime preserving points visible={self.state.time_plot_points_visible}")
+        self.refresh_view()
 
     def _refresh_time_plot_point_list(self) -> None:
         """Rebuild the selected Plot Over Time point rows."""
@@ -1903,12 +2338,11 @@ class HeatmapController:
             return
         plot_type = self.controls_widget.current_plot_type()
         debug_print(f"HeatmapController export plot_type={plot_type}")
-        if plot_type == "threshold":
-            debug_print("HeatmapController exporting exact current threshold row")
+        debug_print("HeatmapController exporting high-resolution visible-style PNG")
+        saved = self._save_high_resolution_export_png(str(output_path))
+        if not saved:
+            debug_print("HeatmapController high-resolution export failed; falling back to exact row grab")
             saved = self._save_current_export_widget_png(str(output_path))
-        else:
-            debug_print("HeatmapController exporting from heatmap data payload")
-            saved = self.heatmap_canvas.save_high_resolution_png(str(output_path))
         debug_print(f"HeatmapController export saved={saved}")
         debug_print(f"HeatmapController export output path={output_path}")
         if saved:
@@ -1917,17 +2351,225 @@ class HeatmapController:
             self.controls_widget.set_status_text("PNG export failed")
         debug_print("HeatmapController._export_png complete")
 
+    def _save_high_resolution_export_png(self, path: str) -> bool:
+        """Save a high-data-resolution PNG with the same visible layout elements."""
+        debug_print("HeatmapController._save_high_resolution_export_png called")
+        payload = self._build_high_resolution_export_payload()
+        debug_print(f"HeatmapController high-resolution payload ready={payload is not None}")
+        if payload is None:
+            debug_print("HeatmapController high-resolution export missing payload")
+            return False
+        saved = self.heatmap_canvas.save_high_resolution_png(
+            path,
+            payload=payload,
+            logo_path=HEATMAP_LOGO_PATH,
+            logo_band_width=self._export_logo_band_width(),
+            dpi=self._export_dpi(),
+        )
+        debug_print(f"HeatmapController high-resolution export saved={saved}")
+        return bool(saved)
+
+    def _build_high_resolution_export_payload(self) -> dict | None:
+        """Build an export-resolution payload matching the current visible render choices."""
+        debug_print("HeatmapController._build_high_resolution_export_payload called")
+        if self.reader is None:
+            debug_print("HeatmapController export payload skipped no reader")
+            return None
+        scalar_def = self._get_scalar_def(self.state.scalar_key)
+        if scalar_def is None:
+            debug_print("HeatmapController export payload skipped no scalar")
+            return None
+        export_resolution = int(DEFAULTS.get("export_resolution", 1000))
+        debug_print(f"HeatmapController export payload resolution={export_resolution}")
+        plot_type = self.controls_widget.current_plot_type()
+        debug_print(f"HeatmapController export payload plot_type={plot_type}")
+        extra_scale, display_label = self._get_display_params(self.controls_widget.current_scalar_label())
+        debug_print(f"HeatmapController export payload extra_scale={extra_scale}")
+        debug_print(f"HeatmapController export payload display_label={display_label}")
+        x_grid, y_grid, z_grid, _ = self._load_display_grid(
+            self.reader,
+            scalar_def,
+            self.state.axis,
+            self.state.slice_index,
+            plot_type=plot_type,
+            resolution=export_resolution,
+        )
+        debug_print(f"HeatmapController export payload raw shape={np.asarray(z_grid).shape}")
+        if plot_type == "difference":
+            debug_print("HeatmapController export payload computing high-resolution difference")
+            diff = self._compute_difference_grid(current_z_grid=z_grid, resolution=export_resolution)
+            if diff is None:
+                debug_print("HeatmapController export payload difference unavailable")
+                return None
+            z_grid = diff
+            debug_print(f"HeatmapController export payload raw difference shape={np.asarray(z_grid).shape}")
+            cmap = palette_to_cmap("ice-sunset")
+            vmin = float(np.nanmin(z_grid))
+            vmax = float(np.nanmax(z_grid))
+        elif self.state.colorscale_mode == "dynamic":
+            debug_print("HeatmapController export payload using dynamic color scale")
+            cmap = make_dynamic_colormap(
+                float(np.nanmin(z_grid)),
+                float(np.nanmax(z_grid)),
+                self.state.range_min,
+                self.state.range_max,
+                self.state.palette,
+            )
+            vmin = float(np.nanmin(z_grid))
+            vmax = float(np.nanmax(z_grid))
+        else:
+            debug_print("HeatmapController export payload using manual color scale")
+            cmap = palette_to_cmap(self.state.palette)
+            vmin = self.state.range_min
+            vmax = self.state.range_max
+        orientation = self._orientation()
+        overlay_grid = orientation.apply_overlay(self._build_overlay_grid(resolution=export_resolution))
+        display = orientation.apply_grid(x_grid, y_grid, z_grid)
+        x_grid, y_grid, z_grid = display.x, display.y, display.z
+        debug_print(f"HeatmapController export payload oriented shape={np.asarray(z_grid).shape}")
+        phase_fraction_overlays = self._build_phase_fraction_overlays(
+            orientation,
+            extra_scale,
+            resolution=export_resolution,
+        )
+        vector_overlay = self._build_vector_overlay(orientation)
+        line_overlay = None
+        if self.state.line_overlay_visible:
+            line_overlay = Heatmap2DOrientation.line_overlay(
+                self.state.line_scan_direction,
+                self.state.line_scan_x,
+                self.state.line_scan_y,
+            )
+            debug_print(f"HeatmapController export payload line_overlay={line_overlay}")
+        if extra_scale != 1.0:
+            debug_print("HeatmapController export payload applying extra scale")
+            z_grid = z_grid * extra_scale
+            vmin = vmin * extra_scale
+            vmax = vmax * extra_scale
+        colorbar_label = display_label
+        if plot_type == "difference":
+            debug_print("HeatmapController export payload finalizing difference color scale")
+            abs_max = max(abs(float(np.nanmin(z_grid))), abs(float(np.nanmax(z_grid))), 1e-12)
+            vmin = -abs_max
+            vmax = abs_max
+            colorbar_label = f"Δ {display_label}"
+        payload = {
+            "x_grid": np.asarray(x_grid),
+            "y_grid": np.asarray(y_grid),
+            "z_grid": np.asarray(z_grid),
+            "cmap": cmap,
+            "vmin": vmin,
+            "vmax": vmax,
+            "line_overlay": line_overlay,
+            "overlay_grid": overlay_grid,
+            "time_plot_points": self._time_plot_marker_points(),
+            "colorbar_label": colorbar_label,
+            "plot_type": plot_type,
+            "phase_fraction_overlays": phase_fraction_overlays,
+            "vector_overlay": vector_overlay,
+        }
+        debug_print(f"HeatmapController export payload final shape={payload['z_grid'].shape}")
+        debug_print(f"HeatmapController export payload colorbar_label={colorbar_label}")
+        debug_print("HeatmapController._build_high_resolution_export_payload complete")
+        return payload
+
     def _save_current_export_widget_png(self, path: str) -> bool:
         """Save the visible export row so logo and heatmap are captured together."""
         debug_print("HeatmapController._save_current_export_widget_png called")
         widget = self.export_widget or self.heatmap_canvas
         debug_print(f"HeatmapController current-row export widget={widget.__class__.__name__}")
         debug_print(f"HeatmapController current-row export path={path}")
-        pixmap = widget.grab()
+        source_rect = self._export_content_rect(widget)
+        debug_print(f"HeatmapController export source rect={source_rect}")
+        pixmap = widget.grab(source_rect)
         debug_print(f"HeatmapController current-row pixmap null={pixmap.isNull()}")
-        saved = pixmap.save(path, "PNG")
+        debug_print(f"HeatmapController current-row pixmap size={pixmap.width()}x{pixmap.height()}")
+        if pixmap.isNull():
+            debug_print("HeatmapController current-row export aborted null pixmap")
+            return False
+        scale = self._export_device_scale()
+        debug_print(f"HeatmapController export device scale={scale}")
+        target_size = QSize(max(1, pixmap.width() * scale), max(1, pixmap.height() * scale))
+        debug_print(f"HeatmapController export target size={target_size.width()}x{target_size.height()}")
+        scaled = pixmap.scaled(
+            target_size,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        debug_print(f"HeatmapController export scaled size={scaled.width()}x{scaled.height()}")
+        image = QImage(target_size, QImage.Format.Format_RGB32)
+        image.fill(Qt.GlobalColor.white)
+        debug_print("HeatmapController export white background filled")
+        painter = QPainter(image)
+        painter.drawPixmap(0, 0, scaled)
+        painter.end()
+        debug_print("HeatmapController export pixmap painted onto white image")
+        dpi = self._export_dpi()
+        dots_per_meter = int(round(dpi / 0.0254))
+        image.setDotsPerMeterX(dots_per_meter)
+        image.setDotsPerMeterY(dots_per_meter)
+        debug_print(f"HeatmapController export dpi={dpi}")
+        debug_print(f"HeatmapController export dots per meter={dots_per_meter}")
+        saved = image.save(path, "PNG")
         debug_print(f"HeatmapController current-row export saved={saved}")
         return bool(saved)
+
+    @staticmethod
+    def _export_content_rect(widget: QWidget) -> QRect:
+        """Return the visible child bounds so empty side margins are not exported."""
+        debug_print("HeatmapController._export_content_rect called")
+        content_rect = QRect()
+        for child in widget.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly):
+            debug_print(f"HeatmapController export child={child.__class__.__name__}")
+            debug_print(f"HeatmapController export child hidden={child.isHidden()}")
+            debug_print(f"HeatmapController export child geometry={child.geometry()}")
+            if child.isHidden() or child.width() <= 0 or child.height() <= 0:
+                debug_print("HeatmapController export child skipped")
+                continue
+            content_rect = child.geometry() if content_rect.isNull() else content_rect.united(child.geometry())
+            debug_print(f"HeatmapController export accumulated rect={content_rect}")
+        fallback_rect = widget.rect()
+        debug_print(f"HeatmapController export fallback rect={fallback_rect}")
+        if content_rect.isNull():
+            debug_print("HeatmapController export using fallback widget rect")
+            return fallback_rect
+        bounded_rect = content_rect.intersected(fallback_rect)
+        debug_print(f"HeatmapController export bounded rect={bounded_rect}")
+        return bounded_rect if not bounded_rect.isNull() else fallback_rect
+
+    @staticmethod
+    def _export_device_scale() -> int:
+        """Return pixel multiplier for exact-view PNG exports."""
+        debug_print("HeatmapController._export_device_scale called")
+        scale = int(DEFAULTS.get("export_device_scale", 2))
+        scale = max(1, scale)
+        debug_print(f"HeatmapController export device scale setting={scale}")
+        return scale
+
+    @staticmethod
+    def _export_dpi() -> int:
+        """Return PNG metadata DPI for exact-view exports."""
+        debug_print("HeatmapController._export_dpi called")
+        dpi = int(DEFAULTS.get("export_dpi", 300))
+        dpi = max(96, dpi)
+        debug_print(f"HeatmapController export dpi setting={dpi}")
+        return dpi
+
+    def _export_logo_band_width(self) -> int:
+        """Return the visible logo-band width used by the heatmap row."""
+        debug_print("HeatmapController._export_logo_band_width called")
+        widget = self.export_widget
+        if widget is None:
+            debug_print("HeatmapController export logo band skipped no widget")
+            return 0
+        children = widget.findChildren(QWidget, options=Qt.FindChildOption.FindDirectChildrenOnly)
+        debug_print(f"HeatmapController export row child count={len(children)}")
+        if not children:
+            debug_print("HeatmapController export logo band skipped no children")
+            return 0
+        logo_width = max(0, int(children[0].width()))
+        debug_print(f"HeatmapController export logo band width={logo_width}")
+        return logo_width
 
     @staticmethod
     def _default_export_filename(label: str) -> str:

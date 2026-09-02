@@ -33,6 +33,12 @@ class PlotStyleTests(unittest.TestCase):
         self.assertEqual(legend["y"], 1.02)
         self.assertEqual(legend["xanchor"], "right")
 
+    def test_panel_legend_uses_three_items_per_row(self):
+        legend = PlotStyle.panel_legend()
+
+        self.assertEqual(legend["entrywidthmode"], "fraction")
+        self.assertAlmostEqual(legend["entrywidth"], 0.33)
+
     def test_graph_legend_uses_larger_custom_graph_font(self):
         legend = PlotStyle.graph_legend(x=0.02, y=0.98)
 

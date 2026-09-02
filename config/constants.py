@@ -4,6 +4,8 @@ DEFAULTS = {
     "axis": "y",
     "interpolation_resolution": 160,
     "export_resolution": 1000,
+    "export_device_scale": 2,
+    "export_dpi": 300,
     "native_fallback_resolution": 1000,
     "palette": "aqua-fire",
 }

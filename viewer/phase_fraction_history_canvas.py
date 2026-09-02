@@ -96,11 +96,15 @@ class PhaseFractionHistoryCanvas(QWidget):
         current_step: float | None,
         x_label: str = "Timestep",
         hover_x_label: str = "timestep",
+        y_label: str = "Phase fraction (%)",
+        hover_value_label: str = "phase",
     ) -> None:
         debug_print("PhaseFractionHistoryCanvas.render_phase_fraction_history called")
         debug_print(f"PhaseFractionHistoryCanvas series count={len(series)}")
         debug_print(f"PhaseFractionHistoryCanvas current_step={current_step}")
         debug_print(f"PhaseFractionHistoryCanvas x_label={x_label}")
+        debug_print(f"PhaseFractionHistoryCanvas y_label={y_label}")
+        debug_print(f"PhaseFractionHistoryCanvas hover_value_label={hover_value_label}")
         self._last_payload = {
             "series": [
                 {
@@ -113,13 +117,15 @@ class PhaseFractionHistoryCanvas(QWidget):
             ],
             "current_step": current_step,
             "x_label": x_label,
-            "y_label": "Phase fraction (%)",
+            "y_label": y_label,
         }
         figure = self._build_figure(
             series,
             current_step=current_step,
             x_label=x_label,
             hover_x_label=hover_x_label,
+            y_label=y_label,
+            hover_value_label=hover_value_label,
         )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("PhaseFractionHistoryCanvas graph rendered")
@@ -131,9 +137,13 @@ class PhaseFractionHistoryCanvas(QWidget):
         current_step: float | None,
         x_label: str = "Timestep",
         hover_x_label: str = "timestep",
+        y_label: str = "Phase fraction (%)",
+        hover_value_label: str = "phase",
     ) -> go.Figure:
         debug_print("PhaseFractionHistoryCanvas._build_figure called")
         debug_print(f"PhaseFractionHistoryCanvas figure x_label={x_label}")
+        debug_print(f"PhaseFractionHistoryCanvas figure y_label={y_label}")
+        debug_print(f"PhaseFractionHistoryCanvas figure hover_value_label={hover_value_label}")
         figure = go.Figure()
         added = 0
         for index, item in enumerate(series):
@@ -158,7 +168,7 @@ class PhaseFractionHistoryCanvas(QWidget):
                     name=item.get("label", f"Phase {index}"),
                     line=PlotStyle.trace_line(color=color),
                     marker=dict(size=5, color=color),
-                    hovertemplate=f"{hover_x_label}=%{{x:.6g}}<br>phase=%{{y:.3f}}%<extra></extra>",
+                    hovertemplate=f"{hover_x_label}=%{{x:.6g}}<br>{hover_value_label}=%{{y:.6g}}<extra></extra>",
                     showlegend=True,
                 )
             )
@@ -204,9 +214,13 @@ class PhaseFractionHistoryCanvas(QWidget):
                 entrywidth=0.33,
             ),
             xaxis=PlotStyle.panel_axis(x_label, True),
-            yaxis=PlotStyle.panel_axis("Phase fraction (%)", True),
+            yaxis=PlotStyle.panel_axis(y_label, True),
         )
-        figure.update_yaxes(range=[0, 100])
+        if y_label == "Phase fraction (%)":
+            debug_print("PhaseFractionHistoryCanvas applying phase fraction y range 0..100")
+            figure.update_yaxes(range=[0, 100])
+        else:
+            debug_print("PhaseFractionHistoryCanvas leaving y range automatic")
         debug_print("PhaseFractionHistoryCanvas._build_figure complete")
         return figure
 

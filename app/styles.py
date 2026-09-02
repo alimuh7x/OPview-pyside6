@@ -8,6 +8,7 @@ from app.debug import debug_print
 def build_app_stylesheet() -> str:
     """Return a windows11-friendly stylesheet closer to OPView."""
     debug_print("build_app_stylesheet called")
+    debug_print("build_app_stylesheet adding sidebar accent hover and pressed states")
     _assets = Path(__file__).parent.parent / "assets"
     _arrow     = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
     _arrow_up  = str(_assets / "dropUp_icon_2.png").replace("\\", "/")
@@ -448,12 +449,39 @@ QWidget#sidebarShell QPushButton[accent="true"] {{
     border: 1px solid rgba(255, 255, 255, 0.16);
     color: #ffffff;
 }}
+QWidget#sidebarShell QPushButton[accent="true"]:hover {{
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.28);
+}}
+QWidget#sidebarShell QPushButton[accent="true"]:pressed {{
+    background: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.34);
+}}
 QPushButton[subtle="true"] {{
     background: #ffffff;
     border: 1px solid #d2dbea;
     border-radius: 10px;
     padding: 6px 12px;
     font-weight: 700;
+}}
+QPushButton#rotationIconButton,
+QPushButton#lineScanDirectionButton {{
+    background: #ffffff;
+    border: 1px solid #d2dbea;
+    border-radius: 8px;
+    padding: 0px;
+}}
+QPushButton#rotationIconButton:hover,
+QPushButton#lineScanDirectionButton:hover {{
+    background: #eef3f8;
+    border-color: #bdcad9;
+}}
+QPushButton#rotationIconButton:checked,
+QPushButton#rotationIconButton:pressed,
+QPushButton#lineScanDirectionButton:checked,
+QPushButton#lineScanDirectionButton:pressed {{
+    background: #9aabbf;
+    border-color: #8194aa;
 }}
 QPushButton#playbackTransportButton {{
     background: transparent;

@@ -332,6 +332,7 @@ class GraphCanvas(QWidget):
         debug_print(f"GraphCanvas._x_conversion_multiplier normalized={normalized}")
         multipliers = {
             "as-is": 1.0,
+            "percent": 100.0,
             "sec-to-min": 1.0 / 60.0,
             "sec-to-hour": 1.0 / 3600.0,
         }
@@ -348,6 +349,9 @@ class GraphCanvas(QWidget):
             "as is": "as-is",
             "as-is": "as-is",
             "raw": "as-is",
+            "%": "percent",
+            "percent": "percent",
+            "percentage": "percent",
             "sec": "as-is",
             "s": "as-is",
             "seconds": "as-is",
@@ -389,12 +393,20 @@ class GraphCanvas(QWidget):
         debug_print(f"GraphCanvas._legend_config position={position}")
         configs = {
             "top-left": dict(x=0.02, y=0.98, xanchor="left", yanchor="top"),
+            "middle-top": dict(x=0.5, y=0.98, xanchor="center", yanchor="top"),
             "top-right": dict(x=0.98, y=0.98, xanchor="right", yanchor="top"),
+            "middle-left": dict(x=0.02, y=0.5, xanchor="left", yanchor="middle"),
+            "middle-right": dict(x=0.98, y=0.5, xanchor="right", yanchor="middle"),
             "bottom-left": dict(x=0.02, y=0.02, xanchor="left", yanchor="bottom"),
+            "middle-bottom": dict(x=0.5, y=0.02, xanchor="center", yanchor="bottom"),
             "bottom-right": dict(x=0.98, y=0.02, xanchor="right", yanchor="bottom"),
             "right-outside": dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
         }
-        return PlotStyle.graph_legend(**configs.get(position, configs["top-left"]))
+        selected = configs.get(position, configs["top-left"])
+        debug_print(f"GraphCanvas._legend_config selected={selected}")
+        legend = PlotStyle.graph_legend(**selected)
+        debug_print(f"GraphCanvas._legend_config resolved={legend}")
+        return legend
 
     def _empty_figure(self, message: str) -> go.Figure:
         debug_print(f"GraphCanvas._empty_figure message={message}")

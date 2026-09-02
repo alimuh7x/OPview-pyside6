@@ -39,7 +39,7 @@ class ViewerState:
     time_plot_x: Optional[float] = None
     time_plot_y: Optional[float] = None
     time_plot_points: list[dict[str, float | str]] = field(default_factory=list)
-    time_plot_points_visible: bool = False
+    time_plot_points_visible: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         """Return JSON-serialisable dict."""

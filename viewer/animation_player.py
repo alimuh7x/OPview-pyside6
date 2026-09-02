@@ -361,7 +361,7 @@ class AnimationPlayer(QDialog):
     def __init__(self, file_paths, scalar_def, axis, slice_index,
                  palette, vmin, vmax, resolution=320, colorbar_label="",
                  interfaces_overlay=False, parent=None, plot_type="heatmap",
-                 phase_fraction_specs=None):
+                 phase_fraction_specs=None, rotation_degrees=0):
         super().__init__(parent)
         self.setObjectName("animationPlayer")
         self.setWindowTitle("Animation Player")
@@ -379,8 +379,10 @@ class AnimationPlayer(QDialog):
         self._interfaces_overlay = interfaces_overlay
         self._plot_type = plot_type
         self._phase_fraction_specs = phase_fraction_specs or []
+        self._rotation_degrees = int(rotation_degrees) % 360
         debug_print(f"AnimationPlayer plot_type={self._plot_type}")
         debug_print(f"AnimationPlayer phase spec count={len(self._phase_fraction_specs)}")
+        debug_print(f"AnimationPlayer rotation degrees={self._rotation_degrees}")
         self._cmap        = palette_to_cmap(palette)
 
         self._frames: list[np.ndarray | None] = [None] * len(file_paths)
@@ -663,6 +665,10 @@ QDialog#animationPlayer QProgressBar::chunk {
             z, overlay = payload
         else:
             z, overlay = payload, None
+        debug_print(f"AnimationPlayer frame rotation degrees={self._rotation_degrees}")
+        z = self._rotate_frame_array(z)
+        overlay = self._rotate_frame_array(overlay)
+        phase_fraction_overlays = self._rotate_phase_fraction_overlays(phase_fraction_overlays)
         self._ensure_frame_slots()
         self._frames[index] = z
         self._overlays[index] = overlay
@@ -672,6 +678,31 @@ QDialog#animationPlayer QProgressBar::chunk {
         if z is not None and not self._has_valid_frame_before(index):
             self._set_transport_enabled(True)
             self._show(index)
+
+    def _rotate_frame_array(self, values):
+        debug_print("AnimationPlayer._rotate_frame_array called")
+        if values is None:
+            debug_print("AnimationPlayer rotation skipped empty frame")
+            return None
+        turns = self._rotation_degrees // 90
+        debug_print(f"AnimationPlayer rotation turns={turns}")
+        if turns == 0:
+            debug_print("AnimationPlayer rotation skipped zero turns")
+            return values
+        rotated = np.rot90(np.asarray(values), k=-turns)
+        debug_print(f"AnimationPlayer rotated frame shape={rotated.shape}")
+        return rotated
+
+    def _rotate_phase_fraction_overlays(self, overlays):
+        debug_print("AnimationPlayer._rotate_phase_fraction_overlays called")
+        rotated_overlays = []
+        debug_print(f"AnimationPlayer phase overlay rotate count={len(overlays)}")
+        for overlay in overlays:
+            rotated = dict(overlay)
+            debug_print(f"AnimationPlayer rotating phase overlay label={rotated.get('label')}")
+            rotated["z"] = self._rotate_frame_array(rotated.get("z"))
+            rotated_overlays.append(rotated)
+        return rotated_overlays
 
     def _ensure_frame_slots(self):
         debug_print("AnimationPlayer._ensure_frame_slots called")

@@ -8,13 +8,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     import numpy as np
     from PySide6.QtWidgets import QApplication, QHBoxLayout
-    from multi_view.multi_view_cell import MultiViewCell
+    from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader
     from multi_view.multi_view_panel import MultiViewPanel
 except ModuleNotFoundError as exc:
     QApplication = None
     QHBoxLayout = None
     np = None
     MultiViewCell = None
+    MultiViewHeader = None
     MultiViewPanel = None
     MISSING_DEPENDENCY = exc.name
 else:
@@ -144,6 +145,14 @@ class MultiViewImprovementTests(unittest.TestCase):
 
         self.assertIsInstance(panel.analysis_card.layout(), QHBoxLayout)
 
+    def test_multiview_analysis_graphs_match_single_view_graph_height(self):
+        from viewer.heatmap_canvas import _CANVAS_HEIGHT
+
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertEqual(panel.line_scan_canvas.height(), _CANVAS_HEIGHT)
+        self.assertEqual(panel.histogram_canvas.height(), _CANVAS_HEIGHT)
+
     def test_full_scale_is_off_by_default(self):
         panel = MultiViewPanel({"label": "demo", "available_projects": []})
 
@@ -155,6 +164,12 @@ class MultiViewImprovementTests(unittest.TestCase):
         third_row = control_card.layout().itemAt(1).layout()
 
         self.assertIs(third_row.itemAt(third_row.count() - 1).widget(), panel.interfaces_on)
+
+    def test_multiview_has_vector_overlay_toggle(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertFalse(panel.vectors_on.isChecked())
+        self.assertIn("vector", panel.vectors_on.toolTip().lower())
 
     def test_selected_scalar_def_falls_back_to_first_scalar(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
@@ -321,6 +336,34 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertEqual(panel.status_label.text, "")
         self.assertEqual(panel._render_count, 1)
 
+    def test_conversion_change_preserves_range_slider_position(self):
+        selected = MultiViewPanel._range_from_position(
+            (0.2, 0.8),
+            (0.0, 100.0),
+        )
+
+        self.assertEqual(selected, (20.0, 80.0))
+
+    def test_conversion_change_stores_current_range_position_before_rerender(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.range_min = _SpinStub(2.0)
+        panel.range_max = _SpinStub(8.0)
+        panel.range_slider = _RangeSliderStub(0.0, 10.0)
+        panel._pending_range_position = None
+        panel._range_initialized = False
+        panel._render_count = 0
+
+        def render_all():
+            panel._render_count += 1
+
+        panel._render_all = render_all
+
+        MultiViewPanel._on_display_scale_changed(panel)
+
+        self.assertEqual(panel._pending_range_position, (0.2, 0.8))
+        self.assertTrue(panel._range_initialized)
+        self.assertEqual(panel._render_count, 1)
+
     def test_line_scan_horizontal_uses_nearest_y_row(self):
         x_grid = np.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
         y_grid = np.array([[0.0, 0.0, 0.0], [5.0, 5.0, 5.0], [10.0, 10.0, 10.0]])
@@ -395,32 +438,134 @@ class MultiViewImprovementTests(unittest.TestCase):
 
         self.assertEqual(scalar_def["value"], "interfaces")
 
-    def test_line_scan_series_uses_all_cached_grids(self):
+    def test_line_scan_series_uses_file_numbers_for_default_legends(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
         panel._grid_cache = {
-            "a.vts": (
+            "/tmp/VTK/PhaseField_00005000.vts": (
                 np.array([[0.0, 1.0], [0.0, 1.0]]),
                 np.array([[0.0, 0.0], [2.0, 2.0]]),
                 np.array([[1.0, 2.0], [3.0, 4.0]]),
             ),
-            "b.vts": (
+            "/tmp/VTK/PhaseField_00010000.vts": (
                 np.array([[0.0, 1.0], [0.0, 1.0]]),
                 np.array([[0.0, 0.0], [2.0, 2.0]]),
                 np.array([[5.0, 6.0], [7.0, 8.0]]),
             ),
         }
-        panel._columns = {"a.vts": None, "b.vts": None}
+        panel._columns = {
+            "/tmp/VTK/PhaseField_00005000.vts": None,
+            "/tmp/VTK/PhaseField_00010000.vts": None,
+        }
+        panel._legend_names = {}
         panel.direction_combo = _ComboStub("horizontal")
         panel._line_scan_y = 2.0
         panel._line_scan_x = None
 
         series, title, x_label = MultiViewPanel._build_line_scan_series(panel)
 
-        self.assertEqual([item["name"] for item in series], ["a.vts", "b.vts"])
+        self.assertEqual([item["name"] for item in series], ["5000", "10000"])
         np.testing.assert_array_equal(series[0]["y"], np.array([3.0, 4.0]))
         np.testing.assert_array_equal(series[1]["y"], np.array([7.0, 8.0]))
         self.assertEqual(title, "Horizontal Scan at Y=2.00")
         self.assertEqual(x_label, "X Position")
+
+    def test_histogram_series_uses_file_numbers_for_default_legends(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel._columns = {
+            "/tmp/VTK/ElasticStrains_00005000.vts": None,
+            "/tmp/VTK/ElasticStrains_00010000.vts": None,
+        }
+        panel._grid_cache = {
+            "/tmp/VTK/ElasticStrains_00005000.vts": (None, None, np.array([[1.0, 2.0]])),
+            "/tmp/VTK/ElasticStrains_00010000.vts": (None, None, np.array([[3.0, 4.0]])),
+        }
+        panel._legend_names = {}
+
+        series, label = MultiViewPanel._build_histogram_series(
+            panel,
+            {"value": "eps_xx"},
+            1.0,
+            1.0,
+            "eps_xx",
+        )
+
+        self.assertEqual([item["name"] for item in series], ["5000", "10000"])
+        self.assertEqual(label, "eps_xx")
+
+    def test_multiview_custom_legend_names_still_override_file_numbers(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        path = "/tmp/VTK/PhaseField_00005000.vts"
+        panel._grid_cache = {
+            path: (
+                np.array([[0.0, 1.0], [0.0, 1.0]]),
+                np.array([[0.0, 0.0], [2.0, 2.0]]),
+                np.array([[1.0, 2.0], [3.0, 4.0]]),
+            ),
+        }
+        panel._columns = {path: None}
+        panel._legend_names = {path: "Baseline"}
+        panel.direction_combo = _ComboStub("horizontal")
+        panel._line_scan_y = 2.0
+        panel._line_scan_x = None
+
+        series, _title, _x_label = MultiViewPanel._build_line_scan_series(panel)
+
+        self.assertEqual([item["name"] for item in series], ["Baseline"])
+
+    def test_multiview_header_defaults_legend_to_file_number(self):
+        header = MultiViewHeader("/tmp/VTK/PhaseField_00005000.vts")
+
+        self.assertEqual(header.legend_name(), "5000")
+
+    def test_multiview_vector_overlay_skips_when_toggle_is_off(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.vectors_on = _ToggleStub(False)
+        panel._rotation_degrees = 0
+
+        overlay = MultiViewPanel._build_vector_overlay_for_file(
+            panel,
+            _VectorReaderStub(),
+            {"array": "Velocity", "label": "Velocity"},
+            "z",
+            MultiViewPanel._orientation(panel),
+        )
+
+        self.assertIsNone(overlay)
+
+    def test_multiview_vector_overlay_builds_for_selected_vector_scalar(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.vectors_on = _ToggleStub(True)
+        panel._rotation_degrees = 0
+
+        overlay = MultiViewPanel._build_vector_overlay_for_file(
+            panel,
+            _VectorReaderStub(),
+            {"array": "Velocity", "label": "Velocity"},
+            "z",
+            MultiViewPanel._orientation(panel),
+        )
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay["label"], "Velocity")
+        self.assertIn("arrow_length", overlay)
+        self.assertEqual(overlay["u"].shape, (2, 2))
+
+    def test_multiview_cell_adds_vector_arrow_traces(self):
+        cell = MultiViewCell.__new__(MultiViewCell)
+        vector_overlay = {
+            "x": np.array([[0.0, 1.0]]),
+            "y": np.array([[0.0, 0.0]]),
+            "u": np.array([[1.0, 1.0]]),
+            "v": np.array([[0.0, 0.0]]),
+            "magnitude": np.array([[1.0, 2.0]]),
+            "label": "Velocity",
+            "arrow_length": 1.0,
+        }
+
+        traces = cell._build_vector_traces(vector_overlay)
+
+        self.assertTrue(any(trace.name == "Velocity arrows" for trace in traces))
+        self.assertTrue(any(trace.name == "Velocity arrow heads" for trace in traces))
 
 
 class _ComboStub:
@@ -475,6 +620,26 @@ class _SpinStub:
 
     def value(self):
         return self._value
+
+
+class _RangeSliderStub:
+    def __init__(self, minimum=0.0, maximum=1.0):
+        self._minimum = minimum
+        self._maximum = maximum
+
+
+class _VectorReaderStub:
+    vector_fields = ["Velocity"]
+
+    def get_vector_overlay_grid(self, axis, index, vector_name, resolution):
+        return (
+            np.array([[0.0, 1.0], [0.0, 1.0]]),
+            np.array([[0.0, 0.0], [1.0, 1.0]]),
+            np.ones((2, 2)),
+            np.zeros((2, 2)),
+            np.array([[1.0, 2.0], [3.0, 4.0]]),
+            {"min": 1.0, "max": 4.0},
+        )
 
 
 if __name__ == "__main__":

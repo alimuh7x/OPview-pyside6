@@ -359,6 +359,8 @@ class MainWindow(QMainWindow):
             panel.controller.invalidate_cached_reader("reload-button")
             debug_print(f"MainWindow pruning missing panel files before reload refresh={panel.dataset_info.get('label', '')}")
             panel.controller.remove_missing_file_options("reload-button")
+            debug_print(f"MainWindow discovering new panel files before reload refresh={panel.dataset_info.get('label', '')}")
+            panel.controller.discover_new_file_options("reload-button")
             panel.controller.refresh_view()
         debug_print("MainWindow._force_full_rescan complete")
 

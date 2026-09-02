@@ -87,6 +87,8 @@ class PanelControlsWidget(QWidget):
         self.dataset_info = dataset_info
         self._last_trigger = "init"
         self._layout_mode = ""
+        self._rotation_degrees = 0
+        self._selected_rotation_degrees = 0
         self._phase_fraction_keys: list[str] = []
         self._phase_fraction_aliases: dict[str, str] = {}
         self._build_ui()
@@ -151,20 +153,22 @@ class PanelControlsWidget(QWidget):
         self.range_min_spin = QDoubleSpinBox()
         self.range_min_spin.setObjectName("viewerSpin")
         self.range_min_spin.setProperty("rangeSpin", True)
-        self.range_min_spin.setDecimals(6)
+        self.range_min_spin.setDecimals(12)
         self.range_min_spin.setRange(-1e12, 1e12)
         self.range_min_spin.setKeyboardTracking(False)
         debug_print("PanelControlsWidget range_min_spin keyboard tracking disabled")
+        debug_print("PanelControlsWidget range_min_spin decimals set to 12")
         self.range_min_spin.setMinimumWidth(120)
         self.range_min_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_min_spin min width set to 120")
         self.range_max_spin = QDoubleSpinBox()
         self.range_max_spin.setObjectName("viewerSpin")
         self.range_max_spin.setProperty("rangeSpin", True)
-        self.range_max_spin.setDecimals(6)
+        self.range_max_spin.setDecimals(12)
         self.range_max_spin.setRange(-1e12, 1e12)
         self.range_max_spin.setKeyboardTracking(False)
         debug_print("PanelControlsWidget range_max_spin keyboard tracking disabled")
+        debug_print("PanelControlsWidget range_max_spin decimals set to 12")
         self.range_max_spin.setMinimumWidth(120)
         self.range_max_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_max_spin min width set to 120")
@@ -208,19 +212,30 @@ class PanelControlsWidget(QWidget):
         # ------------------------------------------------------------------------------------------------
         # Rotation in single view
         # ------------------------------------------------------------------------------------------------
-        self.rotation_combo = QComboBox()
-        self.rotation_combo.setObjectName("viewerCombo")
-        self._configure_compact_combo(self.rotation_combo, 8)
-        self.rotation_combo.addItem("0 deg", 0)
-        self.rotation_combo.addItem("90 deg", 90)
-        self.rotation_combo.addItem("180 deg", 180)
-        self.rotation_combo.addItem("270 deg", 270)
-        update_combo_popup_width(self.rotation_combo)
+        self.rotation_button_row = QWidget()
+        self.rotation_button_row.setObjectName("rotationButtonRow")
+        rotation_button_layout = QHBoxLayout(self.rotation_button_row)
+        rotation_button_layout.setContentsMargins(0, 0, 0, 0)
+        rotation_button_layout.setSpacing(2)
+        debug_print("PanelControlsWidget rotation button row created")
+        self.rotation_buttons: dict[int, QPushButton] = {}
+        for degrees, icon_name in (
+            (0, "coordinate_00.png"),
+            (90, "coordinate_90.png"),
+            (180, "coordinate_180.png"),
+            (270, "coordinate_270.png"),
+        ):
+            button = self._make_rotation_button(degrees, icon_name)
+            self.rotation_buttons[degrees] = button
+            rotation_button_layout.addWidget(button)
+            debug_print(f"PanelControlsWidget rotation button added degrees={degrees}")
+        self._sync_rotation_buttons()
+        debug_print("PanelControlsWidget rotation buttons initialized")
 
         palette_row_layout.addWidget(self.palette_combo, 1)
         palette_row_layout.addWidget(self.range_slider, 4)
         palette_row_layout.addWidget(self.full_scale_check)
-        palette_row_layout.addWidget(self.rotation_combo)
+        palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
         self._apply_layout_mode("wide", force=True)
         # ------------------------------------------------------------------------------------------------
@@ -267,6 +282,33 @@ class PanelControlsWidget(QWidget):
         debug_print(
             f"PanelControlsWidget compact combo configured length={minimum_contents_length}"
         )
+
+    def _make_rotation_button(self, degrees: int, icon_name: str) -> QPushButton:
+        debug_print("PanelControlsWidget._make_rotation_button called")
+        button = QPushButton()
+        button.setObjectName("rotationIconButton")
+        button.setCheckable(True)
+        button.setProperty("subtle", True)
+        button.setFixedSize(32, 32)
+        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIconSize(QSize(24, 24))
+        button.setToolTip(f"Rotate {degrees} degrees")
+        debug_print(f"PanelControlsWidget rotation button configured degrees={degrees}")
+        return button
+
+    def _sync_rotation_buttons(self) -> None:
+        debug_print("PanelControlsWidget._sync_rotation_buttons called")
+        for degrees, button in self.rotation_buttons.items():
+            button.setChecked(degrees == self._selected_rotation_degrees)
+            debug_print(f"PanelControlsWidget rotation button checked degrees={degrees} checked={button.isChecked()}")
+
+    @staticmethod
+    def _clockwise_to_orientation_degrees(degrees: int) -> int:
+        debug_print("PanelControlsWidget._clockwise_to_orientation_degrees called")
+        mapped_degrees = (-int(degrees)) % 360
+        debug_print(f"PanelControlsWidget clockwise degrees={degrees}")
+        debug_print(f"PanelControlsWidget orientation degrees={mapped_degrees}")
+        return mapped_degrees
 
     def _clear_layout(self, target_layout: QHBoxLayout) -> None:
         debug_print("PanelControlsWidget._clear_layout called")
@@ -364,7 +406,9 @@ class PanelControlsWidget(QWidget):
         self.click_mode_range_check.toggled.connect(lambda *_: self._emit_refresh_requested("click-mode"))
         self.palette_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("palette"))
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
-        self.rotation_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("rotation"))
+        for degrees, button in self.rotation_buttons.items():
+            button.clicked.connect(lambda _checked=False, value=degrees: self._set_rotation_degrees(value))
+            debug_print(f"PanelControlsWidget rotation button connected degrees={degrees}")
         self.plot_type_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("plot-type"))
         debug_print("PanelControlsWidget signals connected")
 
@@ -383,7 +427,7 @@ class PanelControlsWidget(QWidget):
             self.range_min_spin,
             self.range_max_spin,
             self.palette_combo,
-            self.rotation_combo,
+            self.rotation_button_row,
             self.range_slider,
             self.axis_combo,
             self.slice_slider,
@@ -658,9 +702,17 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
 
     def set_axis(self, axis: str) -> None:
         debug_print("PanelControlsWidget.set_axis called")
+        debug_print(f"PanelControlsWidget requested axis={axis}")
         index = self.axis_combo.findData(axis)
+        debug_print(f"PanelControlsWidget axis index={index}")
         if index >= 0:
+            debug_print("PanelControlsWidget blocking axis signals for programmatic sync")
+            self.axis_combo.blockSignals(True)
             self.axis_combo.setCurrentIndex(index)
+            self.axis_combo.blockSignals(False)
+            debug_print("PanelControlsWidget unblocked axis signals after programmatic sync")
+        else:
+            debug_print("PanelControlsWidget axis not found; no change applied")
 
     def set_slice_range(self, minimum: int, maximum: int) -> None:
         debug_print("PanelControlsWidget.set_slice_range called")
@@ -701,16 +753,22 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
 
     def set_range_values(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget.set_range_values called")
+        debug_print(f"PanelControlsWidget set range minimum={minimum}")
+        debug_print(f"PanelControlsWidget set range maximum={maximum}")
         self.range_min_spin.blockSignals(True)
         self.range_max_spin.blockSignals(True)
         self.range_min_spin.setValue(minimum)
         self.range_max_spin.setValue(maximum)
         self.range_min_spin.blockSignals(False)
         self.range_max_spin.blockSignals(False)
+        debug_print(f"PanelControlsWidget spin stored minimum={self.range_min_spin.value()}")
+        debug_print(f"PanelControlsWidget spin stored maximum={self.range_max_spin.value()}")
         self.set_slider_values(minimum, maximum)
 
     def set_slider_bounds(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget.set_slider_bounds called")
+        debug_print(f"PanelControlsWidget slider bounds minimum={minimum}")
+        debug_print(f"PanelControlsWidget slider bounds maximum={maximum}")
         self.range_slider.set_bounds(minimum, maximum)
 
     def set_slider_values(self, minimum: float, maximum: float) -> None:
@@ -753,7 +811,8 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
 
     def current_rotation_degrees(self) -> int:
         debug_print("PanelControlsWidget.current_rotation_degrees called")
-        return int(self.rotation_combo.currentData() or 0)
+        debug_print(f"PanelControlsWidget current rotation degrees={self._rotation_degrees}")
+        return self._rotation_degrees
 
     def current_range(self) -> tuple[float, float]:
         debug_print("PanelControlsWidget.current_range called")
@@ -784,14 +843,20 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
         self._last_trigger = trigger
         debug_print(f"PanelControlsWidget external trigger={trigger}")
 
+    def _set_rotation_degrees(self, degrees: int) -> None:
+        debug_print("PanelControlsWidget._set_rotation_degrees called")
+        self._selected_rotation_degrees = int(degrees)
+        debug_print(f"PanelControlsWidget selected icon rotation degrees={self._selected_rotation_degrees}")
+        self._rotation_degrees = self._clockwise_to_orientation_degrees(degrees)
+        debug_print(f"PanelControlsWidget internal rotation degrees={self._rotation_degrees}")
+        self._sync_rotation_buttons()
+        self._emit_refresh_requested("rotation")
+
     def _handle_range_slider_changed(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget._handle_range_slider_changed called")
         debug_print(f"PanelControlsWidget slider changed={minimum}..{maximum}")
         if self.full_scale_check.isChecked():
-            debug_print("PanelControlsWidget disabling full scale after slider range edit")
-            self.full_scale_check.blockSignals(True)
-            self.full_scale_check.setChecked(False)
-            self.full_scale_check.blockSignals(False)
+            debug_print("PanelControlsWidget preserving full scale after slider range edit")
         self.range_min_spin.blockSignals(True)
         self.range_max_spin.blockSignals(True)
         self.range_min_spin.setValue(minimum)
@@ -807,9 +872,6 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
         maximum = self.range_max_spin.value()
         debug_print(f"PanelControlsWidget spin range raw={minimum}..{maximum}")
         if self.full_scale_check.isChecked():
-            debug_print("PanelControlsWidget disabling full scale after spin range edit")
-            self.full_scale_check.blockSignals(True)
-            self.full_scale_check.setChecked(False)
-            self.full_scale_check.blockSignals(False)
+            debug_print("PanelControlsWidget preserving full scale after spin range edit")
         self.set_slider_values(minimum, maximum)
         self._emit_refresh_requested("range")

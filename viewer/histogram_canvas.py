@@ -25,6 +25,8 @@ class HistogramCanvas(QWidget):
         debug_print("HistogramCanvas.__init__ start")
         super().__init__()
         self._canvas_width = _W
+        self._canvas_height = _H
+        debug_print(f"HistogramCanvas default height={self._canvas_height}")
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
         install_save_dialog_download_handler(
@@ -32,21 +34,30 @@ class HistogramCanvas(QWidget):
             self,
             fallback_name="histogram.png",
         )
-        self._web_view.setFixedSize(_W, _H)
+        self._web_view.setFixedSize(_W, self._canvas_height)
         self._web_view.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._web_view)
-        self.setFixedSize(_W, _H)
+        self.setFixedSize(_W, self._canvas_height)
         self._web_view.setHtml(self._empty_html(), self._base_url)
         debug_print("HistogramCanvas.__init__ complete")
 
     def set_available_width(self, width: int) -> None:
         debug_print(f"HistogramCanvas.set_available_width width={width}")
         self._canvas_width = max(240, min(_W, int(width)))
-        self._web_view.setFixedSize(self._canvas_width, _H)
-        self.setFixedSize(self._canvas_width, _H)
+        self._web_view.setFixedSize(self._canvas_width, self._canvas_height)
+        self.setFixedSize(self._canvas_width, self._canvas_height)
         debug_print(f"HistogramCanvas canvas width={self._canvas_width}")
+        debug_print(f"HistogramCanvas canvas height={self._canvas_height}")
+
+    def set_canvas_height(self, height: int) -> None:
+        debug_print(f"HistogramCanvas.set_canvas_height height={height}")
+        self._canvas_height = max(240, int(height))
+        self._web_view.setFixedSize(self._canvas_width, self._canvas_height)
+        self.setFixedSize(self._canvas_width, self._canvas_height)
+        debug_print(f"HistogramCanvas applied height={self._canvas_height}")
+        debug_print(f"HistogramCanvas current size={self.width()}x{self.height()}")
 
     def render_histogram(self, values, *, label: str, bins: int) -> None:
         debug_print("HistogramCanvas.render_histogram called")
@@ -61,6 +72,18 @@ class HistogramCanvas(QWidget):
     def render_histograms(self, series, *, label: str, bins: int, show_grid: bool = True) -> None:
         debug_print("HistogramCanvas.render_histograms called")
         debug_print(f"HistogramCanvas series count={len(series)}")
+        figure = self._figure_for_histograms(
+            series,
+            label=label,
+            bins=bins,
+            show_grid=show_grid,
+        )
+        self._web_view.setHtml(self._build_html(figure), self._base_url)
+        debug_print("HistogramCanvas.render_histograms complete")
+
+    def _figure_for_histograms(self, series, *, label: str, bins: int, show_grid: bool = True) -> go.Figure:
+        debug_print("HistogramCanvas._figure_for_histograms called")
+        debug_print(f"HistogramCanvas figure series count={len(series)}")
         figure = go.Figure()
         colors = ["#183568", "#c50623", "#0f9ca6", "#f0a202", "#7b2cbf", "#2d6a4f"]
         all_values = []
@@ -120,33 +143,43 @@ class HistogramCanvas(QWidget):
                     showlegend=bool(name),
                 ))
 
+        legend_config = PlotStyle.panel_legend(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1.0,
+        )
+        debug_print(f"HistogramCanvas legend entrywidthmode={legend_config.get('entrywidthmode')}")
+        debug_print(f"HistogramCanvas legend entrywidth={legend_config.get('entrywidth')}")
+        debug_print("HistogramCanvas legend columns target=3")
+        debug_print("HistogramCanvas top margin=76 for modebar")
         figure.update_layout(
             width=self._canvas_width,
-            height=_H,
-            margin=dict(l=80, r=20, t=30, b=70),
+            height=self._canvas_height,
+            margin=dict(l=80, r=20, t=76, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
             barmode="overlay",
             font=PlotStyle.layout_font(),
-            legend=PlotStyle.panel_legend(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1.0,
-            ),
+            legend=legend_config,
             xaxis=PlotStyle.panel_axis(label, show_grid),
             yaxis=PlotStyle.panel_axis("Frequency", show_grid),
             bargap=0.05,
         )
-        self._web_view.setHtml(self._build_html(figure), self._base_url)
-        debug_print("HistogramCanvas.render_histograms complete")
+        debug_print("HistogramCanvas._figure_for_histograms complete")
+        return figure
 
     def _build_html(self, figure: go.Figure) -> str:
+        debug_print("HistogramCanvas._build_html called")
+        debug_print("HistogramCanvas modebar top offset=0px")
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}</style>
+<style>
+html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}
+.modebar{{top: 0px !important;}}
+</style>
 <script src="plotly.min.js"></script>
 </head><body>
 <div id="div"></div>

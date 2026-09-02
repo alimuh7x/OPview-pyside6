@@ -1,7 +1,10 @@
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+
+import plotly.graph_objects as go
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -11,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QScr
 from data.text_sources import GenericTextDataSource
 from app.styles import build_app_stylesheet
 from graphs.graph_canvas import GraphCanvas
+from graphs.graph_animation_player import GraphAnimationPlayer
 from graphs.graph_panel_widget import GraphPanelWidget
 from graphs.tab_widget import CustomGraphTab
 from sidebar.sidebar_widget import SidebarWidget
@@ -475,6 +479,35 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         sidebar._toggle_project_item_from_row_click(item)
         self.assertEqual(item.checkState(), Qt.CheckState.Unchecked)
 
+    def test_sidebar_text_file_check_emits_add_request_without_add_button(self):
+        root = Path(tempfile.mkdtemp()) / "TextOnlyProject"
+        textdata = root / "TextData"
+        textdata.mkdir(parents=True)
+        path = textdata / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n", encoding="utf-8")
+        sidebar = SidebarWidget()
+        emitted: list[list[str]] = []
+        sidebar.text_files_add_requested.connect(lambda files: emitted.append(files))
+        sidebar.set_projects(
+            {
+                "TextOnlyProject": {
+                    "path": root,
+                    "has_vtk": False,
+                    "vtk_path": None,
+                    "has_textdata": True,
+                    "textdata_path": textdata,
+                }
+            }
+        )
+
+        sidebar.set_mode("custom_graph")
+        sidebar.project_list.item(0).setCheckState(Qt.CheckState.Checked)
+        item = sidebar.text_file_list.item(0)
+        item.setCheckState(Qt.CheckState.Checked)
+
+        self.assertFalse(hasattr(sidebar, "add_text_files_button"))
+        self.assertEqual(emitted, [[str(path.resolve())]])
+
     def test_main_window_routes_checked_text_projects_to_custom_graph_tab_selectors(self):
         from app.main_window import MainWindow
 
@@ -508,16 +541,44 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(tabs.count(), 2)
         self.assertEqual(project_combo.currentData(), "TextOnlyProject")
         self.assertEqual(folder_combo.currentText(), "TextData")
-        self.assertEqual(file_combo.currentData(), str(path.resolve()))
+        self.assertIsNone(file_combo.currentData())
 
-    def test_graph_tab_selectors_add_checked_project_file_to_graph(self):
+    def test_main_window_adds_checked_sidebar_text_file_to_custom_graph(self):
+        from app.main_window import MainWindow
+
+        root = Path(tempfile.mkdtemp()) / "TextOnlyProject"
+        textdata = root / "TextData"
+        textdata.mkdir(parents=True)
+        path = textdata / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n", encoding="utf-8")
+        window = MainWindow()
+        window.sidebar_widget.set_projects(
+            {
+                "TextOnlyProject": {
+                    "path": root,
+                    "has_vtk": False,
+                    "vtk_path": None,
+                    "has_textdata": True,
+                    "textdata_path": textdata,
+                }
+            }
+        )
+
+        window.tab_widget.setCurrentIndex(2)
+        window.sidebar_widget.project_list.item(0).setCheckState(Qt.CheckState.Checked)
+        window.sidebar_widget.text_file_list.item(0).setCheckState(Qt.CheckState.Checked)
+
+        tabs = window.custom_graph_tab.findChild(QTabWidget, "graphPanelTabs")
+        panel = tabs.widget(0)
+        self.assertEqual(panel.state()["files"], [str(path.resolve())])
+
+    def test_graph_tab_selectors_wait_for_file_click_before_adding_to_graph(self):
         root = Path(tempfile.mkdtemp()) / "RunA"
         textdata = root / "TextData"
         textdata.mkdir(parents=True)
         path = textdata / "curves.txt"
         path.write_text("Time A\n0 1\n1 2\n", encoding="utf-8")
-        tab = CustomGraphTab()
-        tab.set_projects({
+        panel = GraphPanelWidget(panel_number=1, projects={
             "RunA": {
                 "path": root,
                 "has_vtk": False,
@@ -525,16 +586,18 @@ class CustomGraphPySide6Tests(unittest.TestCase):
                 "has_textdata": True,
                 "textdata_path": textdata,
             }
-        })
-        tab.set_selected_project_names(["RunA"])
-        panel = tab.findChild(QTabWidget, "graphPanelTabs").widget(0)
+        }, selected_project_names=["RunA"])
 
         self.assertEqual(panel.project_combo.currentData(), "RunA")
         self.assertEqual(panel.folder_combo.currentText(), "TextData")
-        self.assertEqual(panel.file_combo.currentData(), str(path.resolve()))
-        panel.add_file_button.click()
+        self.assertIsNone(panel.file_combo.currentData())
+        self.assertEqual(panel.state()["files"], [])
 
+        panel.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.file_combo.currentData(), str(path.resolve()))
         self.assertEqual(panel.state()["files"], [str(path.resolve())])
+        self.assertFalse(hasattr(panel, "add_file_button"))
 
     def test_graph_panel_exposes_png_download_button(self):
         panel = GraphPanelWidget(panel_number=1)
@@ -542,6 +605,520 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(panel.download_png_button.text(), "PNG")
         self.assertEqual(panel.download_png_button.toolTip(), "Download graph as PNG")
         self.assertFalse(panel.download_png_button.icon().isNull())
+
+    def test_graph_panel_exposes_mp4_animation_button(self):
+        panel = GraphPanelWidget(panel_number=1)
+
+        self.assertEqual(panel.download_animation_button.text(), "MP4")
+        self.assertEqual(panel.download_animation_button.toolTip(), "Open reveal animation and export as MP4")
+        self.assertFalse(panel.download_animation_button.icon().isNull())
+
+    def test_graph_panel_opens_animation_player_with_copied_state(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n", encoding="utf-8")
+        panel = GraphPanelWidget(panel_number=3)
+        panel.add_files([str(path)])
+        panel._column_checkboxes[(str(path.resolve()), "A")].setChecked(True)
+        opened = []
+
+        class FakeAnimationPlayer:
+            def __init__(self, state, panel_number, parent=None):
+                opened.append((state, panel_number, parent))
+
+            def show(self):
+                opened.append("show")
+
+        panel._animation_player_class = FakeAnimationPlayer
+
+        panel._open_animation_player()
+
+        self.assertEqual(opened[0][1], 3)
+        self.assertIs(opened[0][2], panel)
+        self.assertEqual(opened[0][0]["files"], [str(path.resolve())])
+        self.assertEqual(opened[0][0]["columns_by_file"][str(path.resolve())], ["A"])
+        self.assertIsNot(opened[0][0], panel.state())
+        self.assertEqual(opened[1], "show")
+
+    def test_graph_panel_reuses_visible_animation_player(self):
+        panel = GraphPanelWidget(panel_number=3)
+        calls = []
+
+        class FakeAnimationPlayer:
+            def __init__(self, state, panel_number, parent=None):
+                calls.append(("init", panel_number, parent))
+
+            def isVisible(self):
+                return True
+
+            def raise_(self):
+                calls.append("raise")
+
+            def activateWindow(self):
+                calls.append("activate")
+
+            def show(self):
+                calls.append("show")
+
+        panel._animation_player_class = FakeAnimationPlayer
+
+        panel._open_animation_player()
+        panel._open_animation_player()
+
+        self.assertEqual(calls.count("show"), 1)
+        self.assertEqual(calls.count("raise"), 1)
+        self.assertEqual(calls.count("activate"), 1)
+        self.assertEqual(len([call for call in calls if isinstance(call, tuple) and call[0] == "init"]), 1)
+
+    def test_graph_animation_player_builds_reveal_frames_from_graph_settings(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A B\n0 1 10\n1 2 20\n2 3 30\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A", "B"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "percent", "color": "#111111"},
+                    "B": {"legend": "Beta", "yaxis": "y2", "conversion": "as-is", "color": "#d62728"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "dash",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+
+        self.assertEqual(len(figure.frames), 3)
+        self.assertEqual(list(figure.frames[0].data[0].x), [0, 1])
+        self.assertEqual(list(figure.frames[0].data[0].y), [100, 200])
+        self.assertEqual(list(figure.frames[1].data[0].x), [0, 1])
+        self.assertEqual(list(figure.frames[-1].data[1].y), [10, 20, 30])
+        self.assertEqual(figure.data[0].name, "Alpha")
+        self.assertEqual(figure.data[1].yaxis, "y2")
+        self.assertEqual(figure.layout.xaxis.title.text, "Time")
+
+    def test_graph_animation_player_locks_ranges_to_final_graph(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A B\n0 10 100\n1 20 200\n2 30 300\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A", "B"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                    "B": {"legend": "Beta", "yaxis": "y2", "conversion": "as-is", "color": "#d62728"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+        preview = GraphAnimationPlayer.preview_figure_for_frame(figure, 0)
+
+        self.assertEqual(list(preview.layout.xaxis.range), [0, 2])
+        self.assertEqual(list(preview.layout.yaxis.range), [10, 30])
+        self.assertEqual(list(preview.layout.yaxis2.range), [100, 300])
+
+    def test_graph_animation_player_caps_large_reveal_frame_count(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        rows = ["Time A"]
+        rows.extend(f"{index} {index * 2}" for index in range(1000))
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+
+        self.assertLessEqual(len(figure.frames), 120)
+        self.assertEqual(list(figure.frames[-1].data[0].x)[-1], 999)
+        self.assertEqual(list(figure.frames[-1].data[0].y)[-1], 1998)
+
+    def test_graph_animation_player_interpolates_large_reveal_frames_for_smooth_motion(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        rows = ["Time A"]
+        rows.extend(f"{index} {index * 2}" for index in range(1000))
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+        first_frame_x = list(figure.frames[1].data[0].x)
+        first_frame_y = list(figure.frames[1].data[0].y)
+
+        self.assertNotEqual(first_frame_x[-1], int(first_frame_x[-1]))
+        self.assertAlmostEqual(first_frame_y[-1], first_frame_x[-1] * 2)
+
+    def test_graph_animation_player_reveals_by_visual_arc_length_for_stress_strain(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "stress_strain.txt"
+        path.write_text("Strain Stress\n0.0 0\n0.01 1000\n1.0 1100\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["Stress"]},
+            "column_settings": {
+                str(path): {
+                    "Stress": {"legend": "Stress", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Strain",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Strain",
+            "yaxis1_title": "Stress",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+        middle_trace = figure.frames[1].data[0]
+
+        self.assertGreater(list(middle_trace.x)[-1], 0.01)
+        self.assertLess(list(middle_trace.x)[-1], 0.1)
+        self.assertGreater(list(middle_trace.y)[-1], 1000)
+
+    def test_graph_animation_player_reveals_markers_progressively(self):
+        trace = go.Scatter(
+            x=[0, 1, 2, 3],
+            y=[0, 1, 2, 3],
+            mode="markers",
+            name="Markers",
+        )
+
+        prefix = GraphAnimationPlayer._trace_prefix(trace, 0.5)
+
+        self.assertEqual(prefix.mode, "markers")
+        self.assertEqual(list(prefix.x), [0, 1])
+        self.assertEqual(list(prefix.y), [0, 1])
+
+    def test_graph_animation_player_hides_line_markers_until_final_frame(self):
+        trace = go.Scatter(
+            x=[0, 1, 2, 3],
+            y=[0, 1, 2, 3],
+            mode="lines+markers",
+            name="Line Markers",
+        )
+
+        middle_prefix = GraphAnimationPlayer._trace_prefix(trace, 0.5)
+        final_prefix = GraphAnimationPlayer._trace_prefix(trace, 1.0)
+
+        self.assertEqual(middle_prefix.mode, "lines")
+        self.assertEqual(final_prefix.mode, "lines+markers")
+        self.assertEqual(list(final_prefix.x), [0, 1, 2, 3])
+
+    def test_graph_animation_player_does_not_build_extra_marker_trace_for_lines_plus_markers(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 0\n1 1\n2 2\n3 3\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines+markers",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+
+        self.assertEqual(len(figure.frames[1].data), 1)
+        self.assertEqual(figure.frames[1].data[0].mode, "lines")
+
+    def test_graph_animation_player_defers_frame_build_until_prepare(self):
+        original_build = GraphAnimationPlayer.build_reveal_figure
+        calls = []
+        player = None
+
+        def fake_build(state):
+            calls.append(state)
+            return go.Figure(frames=[go.Frame(data=[go.Scatter(x=[0, 1], y=[0, 1])])])
+
+        GraphAnimationPlayer.build_reveal_figure = staticmethod(fake_build)
+        try:
+            player = GraphAnimationPlayer({"files": ["slow.txt"]}, panel_number=1)
+            self.assertEqual(calls, [])
+            self.assertEqual(player._frame_count, 0)
+
+            player._prepare_animation_preview()
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(player._frame_count, 1)
+        finally:
+            GraphAnimationPlayer.build_reveal_figure = original_build
+            if player is not None:
+                player.deleteLater()
+
+    def test_graph_animation_player_opens_with_stable_dialog_size(self):
+        player = None
+        try:
+            player = GraphAnimationPlayer({}, panel_number=1)
+
+            self.assertGreaterEqual(player.minimumWidth(), 940)
+            self.assertGreaterEqual(player.minimumHeight(), 760)
+            self.assertFalse(player._preview_html_loaded)
+        finally:
+            if player is not None:
+                player.deleteLater()
+
+    def test_graph_animation_player_defaults_to_fast_smooth_fps(self):
+        player = None
+        try:
+            player = GraphAnimationPlayer({}, panel_number=1)
+
+            self.assertEqual(player._fps, 30)
+            self.assertEqual(player._fps_combo.currentData(), 30)
+        finally:
+            if player is not None:
+                player.deleteLater()
+
+    def test_graph_animation_player_defers_initial_preview_until_show_event(self):
+        original_show_frame = GraphAnimationPlayer._show_frame
+        calls = []
+        player = None
+
+        def fake_show_frame(self, index):
+            calls.append(index)
+
+        GraphAnimationPlayer._show_frame = fake_show_frame
+        try:
+            player = GraphAnimationPlayer({}, panel_number=1)
+            self.assertEqual(calls, [])
+
+            player.showEvent(None)
+
+            self.assertEqual(calls, [])
+        finally:
+            GraphAnimationPlayer._show_frame = original_show_frame
+            if player is not None:
+                player.deleteLater()
+
+    def test_graph_animation_player_creates_standalone_preview_frame(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n2 3\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+
+        preview = GraphAnimationPlayer.preview_figure_for_frame(figure, 1)
+
+        self.assertIsNot(preview, figure)
+        self.assertEqual(list(preview.data[0].x), [0, 1])
+        self.assertEqual(list(preview.data[0].y), [1, 2])
+        self.assertEqual(len(figure.frames), 3)
+
+    def test_graph_animation_player_preview_html_uses_static_graph_render_path(self):
+        figure = GraphAnimationPlayer.build_reveal_figure({})
+        player = GraphAnimationPlayer.__new__(GraphAnimationPlayer)
+
+        html = player._build_html(figure)
+
+        self.assertIn("Plotly.newPlot('graph'", html)
+        self.assertNotIn("Plotly.addFrames", html)
+        self.assertIn("OPVIEW_SHOW_FRAME", html)
+
+    def test_graph_animation_player_updates_existing_preview_without_reloading_html(self):
+        class FakeWebView:
+            def __init__(self):
+                self.html_calls = []
+                self.js_calls = []
+
+            def setHtml(self, html, base_url):
+                self.html_calls.append((html, base_url))
+
+            def page(self):
+                return self
+
+            def runJavaScript(self, script):
+                self.js_calls.append(script)
+
+        class FakeSlider:
+            def blockSignals(self, blocked):
+                pass
+
+            def setValue(self, value):
+                self.value = value
+
+        class FakeLabel:
+            def setText(self, text):
+                self.text = text
+
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n2 3\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+        player = GraphAnimationPlayer.__new__(GraphAnimationPlayer)
+        player._figure = GraphAnimationPlayer.build_reveal_figure(state)
+        player._frame_count = len(player._figure.frames)
+        player._current = 0
+        player._base_url = None
+        player._preview_html_loaded = False
+        player._web_view = FakeWebView()
+        player._slider = FakeSlider()
+        player._frame_label = FakeLabel()
+        player._status_label = FakeLabel()
+
+        player._show_frame(0)
+        player._show_frame(1)
+
+        self.assertEqual(len(player._web_view.html_calls), 1)
+        self.assertEqual(len(player._web_view.js_calls), 1)
+        self.assertIn("OPVIEW_SHOW_FRAME(1)", player._web_view.js_calls[0])
+
+    def test_graph_animation_player_does_not_add_duplicate_plotly_controls(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n2 3\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+
+        self.assertFalse(figure.layout.updatemenus)
+        self.assertFalse(figure.layout.sliders)
+
+    def test_graph_animation_player_mp4_export_uses_web_view_capture(self):
+        player = GraphAnimationPlayer.__new__(GraphAnimationPlayer)
+        calls = []
+
+        def fake_capture(path):
+            calls.append(path)
+
+        player._write_mp4_from_web_view = fake_capture
+
+        player._write_mp4(Path("graph.mp4"))
+
+        self.assertEqual(calls, [Path("graph.mp4")])
+
+    def test_graph_animation_player_encoder_check_uses_ffmpeg_command(self):
+        original_which = shutil.which
+        try:
+            shutil.which = lambda command: "/usr/bin/ffmpeg" if command == "ffmpeg" else None
+            player = GraphAnimationPlayer.__new__(GraphAnimationPlayer)
+
+            self.assertEqual(player._mp4_encoder_error(), "")
+        finally:
+            shutil.which = original_which
 
     def test_graph_panel_disambiguates_same_named_files_and_duplicate_legends(self):
         root = Path(tempfile.mkdtemp())
@@ -616,6 +1193,14 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         self.assertEqual(state["x_axis_conversion"], "sec-to-min")
 
+    def test_graph_panel_x_axis_conversion_combo_includes_percent(self):
+        panel = GraphPanelWidget(panel_number=1)
+
+        panel.x_axis_conversion_combo.setCurrentIndex(panel.x_axis_conversion_combo.findData("percent"))
+        state = panel.state()
+
+        self.assertEqual(state["x_axis_conversion"], "percent")
+
     def test_graph_panel_conversion_dropdown_updates_rendered_trace_values(self):
         temp_dir = Path(tempfile.mkdtemp())
         path = temp_dir / "curves.txt"
@@ -649,6 +1234,31 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         self.assertEqual(list(figure.data[0].x), [0, 1, 60])
 
+    def test_graph_canvas_applies_x_axis_percent_conversion(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Strain A\n0.0 10\n0.25 20\n0.5 30\n", encoding="utf-8")
+        canvas = GraphCanvas()
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "A", "yaxis": "y1", "conversion": "as-is"},
+                }
+            },
+            "x_axis_column": "Strain",
+            "x_axis_conversion": "percent",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+        }
+
+        figure = canvas._build_figure(state)
+
+        self.assertEqual(list(figure.data[0].x), [0, 25, 50])
+
     def test_graph_canvas_html_contains_converted_trace_values(self):
         temp_dir = Path(tempfile.mkdtemp())
         path = temp_dir / "curves.txt"
@@ -673,6 +1283,30 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         html = canvas._build_html(figure)
 
         self.assertIn('"y":[10.0,20.0]', html)
+
+    def test_graph_panel_legend_position_combo_includes_middle_positions(self):
+        panel = GraphPanelWidget(panel_number=1)
+        combo = panel.legend_position_combo
+
+        self.assertGreaterEqual(combo.findData("middle-right"), 0)
+        self.assertGreaterEqual(combo.findData("middle-top"), 0)
+        self.assertGreaterEqual(combo.findData("middle-left"), 0)
+        self.assertGreaterEqual(combo.findData("middle-bottom"), 0)
+
+    def test_graph_canvas_maps_middle_legend_positions_to_plotly_anchors(self):
+        canvas = GraphCanvas()
+
+        middle_right = canvas._legend_config("middle-right")
+        middle_top = canvas._legend_config("middle-top")
+
+        self.assertEqual(middle_right["x"], 0.98)
+        self.assertEqual(middle_right["y"], 0.5)
+        self.assertEqual(middle_right["xanchor"], "right")
+        self.assertEqual(middle_right["yanchor"], "middle")
+        self.assertEqual(middle_top["x"], 0.5)
+        self.assertEqual(middle_top["y"], 0.98)
+        self.assertEqual(middle_top["xanchor"], "center")
+        self.assertEqual(middle_top["yanchor"], "top")
 
     def test_graph_canvas_applies_x_axis_time_conversion_factors(self):
         temp_dir = Path(tempfile.mkdtemp())

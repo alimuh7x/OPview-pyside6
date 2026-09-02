@@ -26,6 +26,7 @@ from config.constants import DEFAULTS, PALETTES
 from multi_view.colorbar_canvas import ColorbarCanvas, _W as _CB_W
 from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader, _CELL_W
 from utils.combo_box_utils import update_combo_popup_width
+from utils.time_series import compact_timestep_label
 from utils.vtk_utils import get_reader
 from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
 from viewer.histogram_canvas import HistogramCanvas
@@ -60,10 +61,13 @@ class MultiViewPanel(QWidget):
         self._last_selected_range: tuple[float, float] | None = None
         self._line_scan_y: float | None = None
         self._line_scan_x: float | None = None
+        self._line_scan_direction = "horizontal"
         self._available_width: int | None = None
         self._rotation_degrees: int = 0
+        self._selected_rotation_degrees: int = 0
         self._cell_widths: dict[str, int] = {}
         self._range_initialized = False
+        self._pending_range_position: tuple[float, float] | None = None
         self._build_ui()
         self._connect_signals()
         self._populate_project_combo()
@@ -131,15 +135,17 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel row 2 split into two sub-rows")
 
         self.range_min = QDoubleSpinBox(); self.range_min.setObjectName("viewerSpin")
-        self.range_min.setDecimals(6); self.range_min.setRange(-1e12, 1e12)
+        self.range_min.setDecimals(12); self.range_min.setRange(-1e12, 1e12)
         self.range_min.setKeyboardTracking(False)
         debug_print("MultiViewPanel range_min keyboard tracking disabled")
+        debug_print("MultiViewPanel range_min decimals set to 12")
         self.range_min.setMinimumWidth(200)
         debug_print("MultiViewPanel range_min minimum width set to 200")
         self.range_max = QDoubleSpinBox(); self.range_max.setObjectName("viewerSpin")
-        self.range_max.setDecimals(6); self.range_max.setRange(-1e12, 1e12)
+        self.range_max.setDecimals(12); self.range_max.setRange(-1e12, 1e12)
         self.range_max.setKeyboardTracking(False)
         debug_print("MultiViewPanel range_max keyboard tracking disabled")
+        debug_print("MultiViewPanel range_max decimals set to 12")
         self.range_max.setMinimumWidth(200)
         debug_print("MultiViewPanel range_max minimum width set to 200")
         self.range_max.setValue(1.0)
@@ -171,17 +177,32 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel reset button tooltip set")
         self.full_scale    = ToggleSwitchWidget("Full Scale",         checked=False)
         self.interfaces_on = ToggleSwitchWidget("Interfaces Overlay", checked=False)
+        self.vectors_on = ToggleSwitchWidget("Vectors", checked=False)
+        self.vectors_on.setToolTip("Show fixed-size vector arrows colored by magnitude")
+        debug_print("MultiViewPanel vector overlay toggle initialized")
 
         # ------------------------------------------------------------------------------------------------
         # Rotation in Multi view
         # ------------------------------------------------------------------------------------------------
-        self.rotation_combo = QComboBox()
-        self.rotation_combo.setObjectName("viewerCombo")
-        self.rotation_combo.addItem("0 deg", 0)
-        self.rotation_combo.addItem("90 deg", 90)
-        self.rotation_combo.addItem("180 deg", 180)
-        self.rotation_combo.addItem("270 deg", 270)
-        update_combo_popup_width(self.rotation_combo)
+        self.rotation_button_row = QWidget()
+        self.rotation_button_row.setObjectName("rotationButtonRow")
+        rotation_button_layout = QHBoxLayout(self.rotation_button_row)
+        rotation_button_layout.setContentsMargins(0, 0, 0, 0)
+        rotation_button_layout.setSpacing(2)
+        debug_print("MultiViewPanel rotation button row created")
+        self.rotation_buttons: dict[int, QPushButton] = {}
+        for degrees, icon_name in (
+            (0, "coordinate_00.png"),
+            (90, "coordinate_90.png"),
+            (180, "coordinate_180.png"),
+            (270, "coordinate_270.png"),
+        ):
+            button = self._make_rotation_button(degrees, icon_name)
+            self.rotation_buttons[degrees] = button
+            rotation_button_layout.addWidget(button)
+            debug_print(f"MultiViewPanel rotation button added degrees={degrees}")
+        self._sync_rotation_buttons()
+        debug_print("MultiViewPanel rotation buttons initialized")
         # ------------------------------------------------------------------------------------------------
 
         self.export_btn = QPushButton(QIcon(str(_ASSETS / "download.png")), "Export PNG")
@@ -203,8 +224,8 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel reset button added to range row")
         r2.addWidget(self.full_scale)
         debug_print("MultiViewPanel row 2 full scale toggle added")
-        r2.addWidget(self.rotation_combo)
-        debug_print("MultiViewPanel row 2 rotate toggle added")
+        r2.addWidget(self.rotation_button_row)
+        debug_print("MultiViewPanel row 2 rotation buttons added")
         r2.addWidget(self.export_btn)
         debug_print("MultiViewPanel row 2 export button added")
 
@@ -221,6 +242,8 @@ class MultiViewPanel(QWidget):
         r2_bottom.addWidget(self.unit_scale_combo, 1)
         debug_print("MultiViewPanel row 2b unit scale combo added")
         r2_bottom.addStretch()
+        r2_bottom.addWidget(self.vectors_on)
+        debug_print("MultiViewPanel row 2b vectors toggle added")
         r2_bottom.addWidget(self.interfaces_on)
         debug_print("MultiViewPanel row 2b interfaces toggle added at end")
         root.addWidget(r2_card)
@@ -311,22 +334,36 @@ class MultiViewPanel(QWidget):
         line_toolbar_layout.setSpacing(12)
         self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
         self.show_line_check = ToggleSwitchWidget("Show Line", checked=True)
-        self.direction_combo = QComboBox()
-        self.direction_combo.setObjectName("viewerCombo")
-        self.direction_combo.addItem(QIcon(str(_ASSETS / "Horizontal.png")), "Horizontal", "horizontal")
-        self.direction_combo.addItem(QIcon(str(_ASSETS / "Vertical.png")), "Vertical", "vertical")
-        self.direction_combo.setIconSize(QSize(18, 18))
-        update_combo_popup_width(self.direction_combo)
+        self.line_direction_button_row = QWidget()
+        self.line_direction_button_row.setObjectName("lineDirectionButtonRow")
+        line_direction_layout = QHBoxLayout(self.line_direction_button_row)
+        line_direction_layout.setContentsMargins(0, 0, 0, 0)
+        line_direction_layout.setSpacing(2)
+        debug_print("MultiViewPanel line direction button row created")
+        self.line_direction_buttons: dict[str, QPushButton] = {}
+        for direction, icon_name, tooltip in (
+            ("horizontal", "Horizontal.png", "Horizontal line scan"),
+            ("vertical", "Vertical.png", "Vertical line scan"),
+        ):
+            button = self._make_line_direction_button(direction, icon_name, tooltip)
+            self.line_direction_buttons[direction] = button
+            line_direction_layout.addWidget(button)
+            debug_print(f"MultiViewPanel line direction button added direction={direction}")
+        self._sync_line_direction_buttons()
+        debug_print("MultiViewPanel line direction buttons initialized")
         direction_label = QLabel("Direction:")
         direction_label.setObjectName("mutedInfo")
         self.line_grid_check = ToggleSwitchWidget("Grid", checked=True)
         line_toolbar_layout.addWidget(self.line_mode_check)
         line_toolbar_layout.addWidget(self.show_line_check)
         line_toolbar_layout.addWidget(direction_label)
-        line_toolbar_layout.addWidget(self.direction_combo)
+        line_toolbar_layout.addWidget(self.line_direction_button_row)
         line_toolbar_layout.addWidget(self.line_grid_check)
         line_toolbar_layout.addStretch(1)
         self.line_scan_canvas = LineScanCanvas()
+        debug_print(f"MultiViewPanel setting line graph height={_CANVAS_HEIGHT}")
+        self.line_scan_canvas.set_canvas_height(_CANVAS_HEIGHT)
+        debug_print(f"MultiViewPanel line graph height now={self.line_scan_canvas.height()}")
         line_layout.addWidget(line_toolbar)
         line_layout.addWidget(self.line_scan_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
 
@@ -350,6 +387,9 @@ class MultiViewPanel(QWidget):
         self.histogram_grid_check = ToggleSwitchWidget("Grid", checked=True)
         histogram_toolbar_layout.addWidget(self.histogram_grid_check)
         self.histogram_canvas = HistogramCanvas()
+        debug_print(f"MultiViewPanel setting histogram graph height={_CANVAS_HEIGHT}")
+        self.histogram_canvas.set_canvas_height(_CANVAS_HEIGHT)
+        debug_print(f"MultiViewPanel histogram graph height now={self.histogram_canvas.height()}")
         histogram_layout.addWidget(histogram_toolbar)
         histogram_layout.addWidget(self.histogram_canvas, 1, Qt.AlignmentFlag.AlignHCenter)
 
@@ -359,6 +399,69 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel histogram card added to analysis row")
         debug_print("MultiViewPanel._build_analysis_area complete")
         return card
+
+    def _make_rotation_button(self, degrees: int, icon_name: str) -> QPushButton:
+        debug_print("MultiViewPanel._make_rotation_button called")
+        button = QPushButton()
+        button.setObjectName("rotationIconButton")
+        button.setCheckable(True)
+        button.setProperty("subtle", True)
+        button.setFixedSize(32, 32)
+        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIconSize(QSize(24, 24))
+        button.setToolTip(f"Rotate {degrees} degrees")
+        debug_print(f"MultiViewPanel rotation button configured degrees={degrees}")
+        return button
+
+    def _sync_rotation_buttons(self) -> None:
+        debug_print("MultiViewPanel._sync_rotation_buttons called")
+        for degrees, button in self.rotation_buttons.items():
+            button.setChecked(degrees == self._selected_rotation_degrees)
+            debug_print(f"MultiViewPanel rotation button checked degrees={degrees} checked={button.isChecked()}")
+
+    @staticmethod
+    def _clockwise_to_orientation_degrees(degrees: int) -> int:
+        debug_print("MultiViewPanel._clockwise_to_orientation_degrees called")
+        mapped_degrees = (-int(degrees)) % 360
+        debug_print(f"MultiViewPanel clockwise degrees={degrees}")
+        debug_print(f"MultiViewPanel orientation degrees={mapped_degrees}")
+        return mapped_degrees
+
+    def _make_line_direction_button(self, direction: str, icon_name: str, tooltip: str) -> QPushButton:
+        debug_print("MultiViewPanel._make_line_direction_button called")
+        button = QPushButton()
+        button.setObjectName("lineScanDirectionButton")
+        button.setCheckable(True)
+        button.setProperty("subtle", True)
+        button.setFixedSize(32, 32)
+        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIconSize(QSize(22, 22))
+        button.setToolTip(tooltip)
+        debug_print(f"MultiViewPanel line direction button configured direction={direction}")
+        return button
+
+    def _sync_line_direction_buttons(self) -> None:
+        debug_print("MultiViewPanel._sync_line_direction_buttons called")
+        for direction, button in self.line_direction_buttons.items():
+            button.setChecked(direction == self._line_scan_direction)
+            debug_print(f"MultiViewPanel line direction checked direction={direction} checked={button.isChecked()}")
+
+    def _set_line_scan_direction(self, direction: str) -> None:
+        debug_print("MultiViewPanel._set_line_scan_direction called")
+        self._line_scan_direction = direction
+        debug_print(f"MultiViewPanel selected line direction={self._line_scan_direction}")
+        self._sync_line_direction_buttons()
+        self._on_analysis_control_changed()
+
+    def _current_line_scan_direction(self) -> str:
+        debug_print("MultiViewPanel._current_line_scan_direction called")
+        if hasattr(self, "line_direction_buttons"):
+            debug_print(f"MultiViewPanel current line direction={self._line_scan_direction}")
+            return self._line_scan_direction
+        direction_combo = getattr(self, "direction_combo", None)
+        direction = direction_combo.currentData() if direction_combo is not None else "horizontal"
+        debug_print(f"MultiViewPanel fallback line direction={direction}")
+        return direction or "horizontal"
 
     def _connect_signals(self) -> None:
         debug_print("MultiViewPanel._connect_signals called")
@@ -376,12 +479,18 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel reset button connected")
         self.full_scale.toggled.connect(self._render_all)
         self.interfaces_on.toggled.connect(self._render_all)
-        self.rotation_combo.currentIndexChanged.connect(self._on_rotation_changed)
+        self.vectors_on.toggled.connect(self._render_all)
+        debug_print("MultiViewPanel vectors toggle connected")
+        for degrees, button in self.rotation_buttons.items():
+            button.clicked.connect(lambda _checked=False, value=degrees: self._on_rotation_changed(value))
+            debug_print(f"MultiViewPanel rotation button connected degrees={degrees}")
         self.export_btn.clicked.connect(self._export)
         self.line_mode_check.toggled.connect(self._on_line_mode_toggled)
         self.show_line_check.toggled.connect(self._render_all)
         self.line_grid_check.toggled.connect(self._render_all)
-        self.direction_combo.currentIndexChanged.connect(self._on_analysis_control_changed)
+        for direction, button in self.line_direction_buttons.items():
+            button.clicked.connect(lambda _checked=False, value=direction: self._set_line_scan_direction(value))
+            debug_print(f"MultiViewPanel line direction button connected direction={direction}")
         self.histogram_bins_slider.valueChanged.connect(self._on_analysis_control_changed)
         self.histogram_grid_check.toggled.connect(self._render_all)
 
@@ -399,6 +508,7 @@ class MultiViewPanel(QWidget):
             self.palette_combo,
             self.colorbar_label_edit,
             self.unit_scale_combo,
+            self.rotation_button_row,
             self.range_slider,
         ]
         for control in controls:
@@ -580,17 +690,18 @@ class MultiViewPanel(QWidget):
                 debug_print(f"MultiViewPanel grid max={float(np.nanmax(z))}")
                 orientation = self._orientation()
                 overlay = orientation.apply_overlay(self._build_overlay_grid(fp, axis))
+                vector_overlay = self._build_vector_overlay_for_file(reader, sd, axis, orientation)
                 z_scaled = z * total_scale
                 display = orientation.apply_grid(x, y, z_scaled)
                 self._grid_cache[fp] = (display.x, display.y, display.z)
                 self._apply_cell_width(fp, orientation.plot_width_for_height(display.x, display.y, _CANVAS_HEIGHT))
                 debug_print(f"MultiViewPanel cached grid for={fp}")
-                grids.append((fp, display.x, display.y, display.z, overlay, None))
+                grids.append((fp, display.x, display.y, display.z, overlay, vector_overlay, None))
             except Exception as exc:
                 debug_print(f"MultiViewPanel render failed for {fp}: {exc}")
-                grids.append((fp, None, None, None, None, str(exc)))
+                grids.append((fp, None, None, None, None, None, str(exc)))
 
-        valid = [z for _, _, _, z, _, _ in grids if z is not None]
+        valid = [z for _, _, _, z, _, _, _ in grids if z is not None]
         debug_print(f"MultiViewPanel valid grid count={len(valid)}")
         if valid:
             data_vmin = float(min(np.nanmin(z) for z in valid))
@@ -601,7 +712,19 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel data_vmin={data_vmin}")
         debug_print(f"MultiViewPanel data_vmax={data_vmax}")
         selected_min, selected_max = self._current_selected_range()
-        if valid and not self._range_initialized:
+        pending_range_position = getattr(self, "_pending_range_position", None)
+        if valid and pending_range_position is not None:
+            debug_print("MultiViewPanel restoring range position after conversion")
+            debug_print(f"MultiViewPanel pending range position={pending_range_position}")
+            selected_min, selected_max = self._range_from_position(
+                pending_range_position,
+                (data_vmin, data_vmax),
+            )
+            self._pending_range_position = None
+            self._range_initialized = True
+            debug_print(f"MultiViewPanel restored selected_min={selected_min}")
+            debug_print(f"MultiViewPanel restored selected_max={selected_max}")
+        elif valid and not self._range_initialized:
             selected_min = data_vmin
             selected_max = data_vmax
             self._range_initialized = True
@@ -640,12 +763,13 @@ class MultiViewPanel(QWidget):
         self.range_slider.setEnabled(True)
         debug_print("MultiViewPanel range controls synced")
 
-        for fp, x, y, z, overlay, error in grids:
+        for fp, x, y, z, overlay, vector_overlay, error in grids:
             _, cell = self._columns[fp]
             if z is not None:
                 debug_print(f"MultiViewPanel rendering cell={fp}")
                 line_overlay = self._current_line_overlay()
                 debug_print(f"MultiViewPanel line_overlay={line_overlay}")
+                debug_print(f"MultiViewPanel vector_overlay present={vector_overlay is not None}")
                 cell.render(
                     x, y, z,
                     vmin=vmin,
@@ -653,6 +777,7 @@ class MultiViewPanel(QWidget):
                     cmap=cmap,
                     overlay_grid=overlay,
                     line_overlay=line_overlay,
+                    vector_overlay=vector_overlay,
                 )
             else:
                 debug_print(f"MultiViewPanel rendering error status for={fp}")
@@ -671,7 +796,14 @@ class MultiViewPanel(QWidget):
 
     def _on_display_scale_changed(self, *_) -> None:
         debug_print("MultiViewPanel._on_display_scale_changed called")
-        self._range_initialized = False
+        selected_range = self._current_selected_range()
+        slider_bounds = self._current_slider_bounds()
+        debug_print(f"MultiViewPanel conversion old selected range={selected_range}")
+        debug_print(f"MultiViewPanel conversion old slider bounds={slider_bounds}")
+        self._pending_range_position = self._range_position(selected_range, slider_bounds)
+        debug_print(f"MultiViewPanel conversion saved range position={self._pending_range_position}")
+        self._range_initialized = True
+        debug_print("MultiViewPanel conversion keeps range initialized")
         self._render_all()
         debug_print("MultiViewPanel._on_display_scale_changed complete")
 
@@ -733,6 +865,63 @@ class MultiViewPanel(QWidget):
             lo, hi = hi, lo
         return lo, hi
 
+    def _current_slider_bounds(self) -> tuple[float, float]:
+        debug_print("MultiViewPanel._current_slider_bounds called")
+        minimum = float(getattr(self.range_slider, "_minimum", self.range_min.value()))
+        maximum = float(getattr(self.range_slider, "_maximum", self.range_max.value()))
+        if maximum < minimum:
+            minimum, maximum = maximum, minimum
+        debug_print(f"MultiViewPanel slider minimum={minimum}")
+        debug_print(f"MultiViewPanel slider maximum={maximum}")
+        return minimum, maximum
+
+    @staticmethod
+    def _range_position(
+        selected_range: tuple[float, float],
+        bounds: tuple[float, float],
+    ) -> tuple[float, float]:
+        debug_print("MultiViewPanel._range_position called")
+        lo, hi = selected_range
+        minimum, maximum = bounds
+        if maximum < minimum:
+            minimum, maximum = maximum, minimum
+        span = maximum - minimum
+        debug_print(f"MultiViewPanel range position selected={selected_range}")
+        debug_print(f"MultiViewPanel range position bounds={bounds}")
+        if span == 0:
+            debug_print("MultiViewPanel range position zero span; using full range")
+            return 0.0, 1.0
+        lower = (float(lo) - minimum) / span
+        upper = (float(hi) - minimum) / span
+        lower = max(0.0, min(1.0, lower))
+        upper = max(0.0, min(1.0, upper))
+        if upper < lower:
+            lower, upper = upper, lower
+        debug_print(f"MultiViewPanel range position lower={lower}")
+        debug_print(f"MultiViewPanel range position upper={upper}")
+        return lower, upper
+
+    @staticmethod
+    def _range_from_position(
+        position: tuple[float, float],
+        bounds: tuple[float, float],
+    ) -> tuple[float, float]:
+        debug_print("MultiViewPanel._range_from_position called")
+        lower, upper = position
+        minimum, maximum = bounds
+        if maximum < minimum:
+            minimum, maximum = maximum, minimum
+        span = maximum - minimum
+        lower = max(0.0, min(1.0, float(lower)))
+        upper = max(0.0, min(1.0, float(upper)))
+        if upper < lower:
+            lower, upper = upper, lower
+        selected = (minimum + (lower * span), minimum + (upper * span))
+        debug_print(f"MultiViewPanel range from position={position}")
+        debug_print(f"MultiViewPanel range from bounds={bounds}")
+        debug_print(f"MultiViewPanel range from selected={selected}")
+        return selected
+
     def _handle_cell_click(self, file_path: str, x_value: float, y_value: float) -> None:
         debug_print("MultiViewPanel._handle_cell_click called")
         debug_print(f"MultiViewPanel click file={file_path}")
@@ -760,7 +949,7 @@ class MultiViewPanel(QWidget):
 
     def _apply_line_scan_click(self, x_value: float, y_value: float) -> None:
         debug_print("MultiViewPanel._apply_line_scan_click called")
-        direction = self.direction_combo.currentData() or "horizontal"
+        direction = self._current_line_scan_direction()
         debug_print(f"MultiViewPanel line scan direction={direction}")
         if direction == "horizontal":
             self._line_scan_y = float(y_value)
@@ -823,7 +1012,7 @@ class MultiViewPanel(QWidget):
 
     def _on_analysis_control_changed(self, *_) -> None:
         debug_print("MultiViewPanel._on_analysis_control_changed called")
-        debug_print(f"MultiViewPanel line direction={self.direction_combo.currentData()}")
+        debug_print(f"MultiViewPanel line direction={self._current_line_scan_direction()}")
         debug_print(f"MultiViewPanel histogram bins={self.histogram_bins_slider.value()}")
         self._render_all()
         debug_print("MultiViewPanel._on_analysis_control_changed complete")
@@ -862,7 +1051,7 @@ class MultiViewPanel(QWidget):
 
     def _build_line_scan_series(self) -> tuple[list[dict], str, str]:
         debug_print("MultiViewPanel._build_line_scan_series called")
-        direction = self.direction_combo.currentData() or "horizontal"
+        direction = self._current_line_scan_direction()
         position = self._line_scan_y if direction == "horizontal" else self._line_scan_x
         debug_print(f"MultiViewPanel line direction={direction}")
         debug_print(f"MultiViewPanel line position={position}")
@@ -883,7 +1072,7 @@ class MultiViewPanel(QWidget):
                 direction,
                 position,
             )
-            legend = self._legend_names.get(fp) or Path(fp).name
+            legend = self._legend_names.get(fp) or compact_timestep_label(fp)
             series.append({"name": legend, "x": x_data, "y": z_data})
             debug_print(f"MultiViewPanel line series added={legend}")
         debug_print(f"MultiViewPanel line series final count={len(series)}")
@@ -923,7 +1112,7 @@ class MultiViewPanel(QWidget):
                 if extra_scale != 1.0:
                     debug_print("MultiViewPanel histogram applying extra scale")
                     values = values * extra_scale
-            legend = self._legend_names.get(fp) or Path(fp).name
+            legend = self._legend_names.get(fp) or compact_timestep_label(fp)
             series.append({"name": legend, "values": values})
             debug_print(f"MultiViewPanel histogram series added={legend}")
         debug_print(f"MultiViewPanel histogram final count={len(series)}")
@@ -966,7 +1155,7 @@ class MultiViewPanel(QWidget):
         if not self.show_line_check.isChecked():
             debug_print("MultiViewPanel line overlay skipped: show line off")
             return None
-        direction = self.direction_combo.currentData() or "horizontal"
+        direction = self._current_line_scan_direction()
         debug_print(f"MultiViewPanel line overlay direction={direction}")
         if direction == "horizontal":
             if self._line_scan_y is None:
@@ -977,12 +1166,20 @@ class MultiViewPanel(QWidget):
             debug_print("MultiViewPanel line overlay skipped: no position yet")
         return overlay
 
-    def _on_rotation_changed(self, *_args) -> None:
-        self._rotation_degrees = int(self.rotation_combo.currentData() or 0)
+    def _on_rotation_changed(self, degrees: int) -> None:
+        debug_print("MultiViewPanel._on_rotation_changed called")
+        self._selected_rotation_degrees = int(degrees)
+        debug_print(f"MultiViewPanel selected icon rotation degrees={self._selected_rotation_degrees}")
+        self._rotation_degrees = self._clockwise_to_orientation_degrees(degrees)
+        debug_print(f"MultiViewPanel internal rotation degrees={self._rotation_degrees}")
+        self._sync_rotation_buttons()
         self._line_scan_x = None
+        debug_print("MultiViewPanel line scan x reset after rotation")
         self._line_scan_y = None
+        debug_print("MultiViewPanel line scan y reset after rotation")
         self._reset_click_range_state("rotation changed")
         self._grid_cache.clear()
+        debug_print("MultiViewPanel grid cache cleared after rotation")
         self._render_all()
 
     # ── Export ────────────────────────────────────────────────────────────────
@@ -1072,6 +1269,120 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel nearest grid idx={idx}")
         debug_print(f"MultiViewPanel nearest grid value={value}")
         return value
+
+    def _build_vector_overlay_for_file(
+        self,
+        reader,
+        scalar_def: dict,
+        axis: str,
+        orientation: Heatmap2DOrientation,
+    ) -> dict | None:
+        debug_print("MultiViewPanel._build_vector_overlay_for_file called")
+        debug_print(f"MultiViewPanel vector toggle checked={self.vectors_on.isChecked()}")
+        if not self.vectors_on.isChecked():
+            debug_print("MultiViewPanel vector overlay skipped: toggle off")
+            return None
+        vector_name = scalar_def.get("array")
+        debug_print(f"MultiViewPanel vector candidate={vector_name}")
+        vector_fields = getattr(reader, "vector_fields", [])
+        debug_print(f"MultiViewPanel reader vector fields={vector_fields}")
+        if vector_name not in vector_fields:
+            debug_print("MultiViewPanel vector overlay skipped: scalar is not vector")
+            return None
+        type_combo = getattr(self, "type_combo", None)
+        plot_type = type_combo.currentData() if type_combo is not None else "heatmap"
+        debug_print(f"MultiViewPanel vector plot_type={plot_type}")
+        if plot_type == "difference":
+            debug_print("MultiViewPanel vector overlay skipped: difference plot")
+            return None
+        try:
+            x_grid, y_grid, u_grid, v_grid, magnitude_grid, stats = reader.get_vector_overlay_grid(
+                axis=axis,
+                index=0,
+                vector_name=vector_name,
+                resolution=21,
+            )
+            debug_print(f"MultiViewPanel vector stats={stats}")
+            overlay = {
+                "x": x_grid,
+                "y": y_grid,
+                "u": u_grid,
+                "v": v_grid,
+                "magnitude": magnitude_grid,
+                "label": scalar_def.get("label", vector_name),
+                "stats": stats,
+            }
+            debug_print(f"MultiViewPanel vector raw shape={np.asarray(u_grid).shape}")
+            overlay = self._orient_vector_overlay(overlay, orientation)
+            overlay = self._downsample_vector_overlay(overlay, max_arrows_per_axis=21)
+            debug_print(f"MultiViewPanel vector final shape={np.asarray(overlay['u']).shape}")
+            debug_print(f"MultiViewPanel vector final count={np.asarray(overlay['u']).size}")
+            return overlay
+        except Exception as exc:
+            debug_print(f"MultiViewPanel vector overlay build failed: {exc}")
+            return None
+
+    def _orient_vector_overlay(self, overlay: dict, orientation: Heatmap2DOrientation) -> dict:
+        debug_print("MultiViewPanel._orient_vector_overlay called")
+        x_values = np.asarray(overlay["x"], dtype=float)
+        y_values = np.asarray(overlay["y"], dtype=float)
+        u_source = np.asarray(overlay["u"], dtype=float)
+        v_source = np.asarray(overlay["v"], dtype=float)
+        start = orientation.apply_grid(x_values, y_values, overlay["magnitude"])
+        plot_x_values, plot_y_values = Heatmap2DOrientation.plot_axes(start.x, start.y, start.z)
+        display_x, display_y = np.meshgrid(plot_x_values, plot_y_values)
+        turns = orientation.rotation_degrees // 90
+        debug_print(f"MultiViewPanel vector rotation turns={turns}")
+        u_rotated = np.rot90(u_source, k=-turns) if turns else u_source
+        v_rotated = np.rot90(v_source, k=-turns) if turns else v_source
+        debug_print(f"MultiViewPanel vector rotated u shape={u_rotated.shape}")
+        debug_print(f"MultiViewPanel vector rotated v shape={v_rotated.shape}")
+        if turns == 1:
+            u_values = -v_rotated
+            v_values = u_rotated
+        elif turns == 2:
+            u_values = -u_rotated
+            v_values = -v_rotated
+        elif turns == 3:
+            u_values = v_rotated
+            v_values = -u_rotated
+        else:
+            u_values = u_rotated
+            v_values = v_rotated
+        result = dict(overlay)
+        result["x"] = display_x
+        result["y"] = display_y
+        result["u"] = u_values
+        result["v"] = v_values
+        result["magnitude"] = start.z
+        debug_print(f"MultiViewPanel vector display x shape={display_x.shape}")
+        debug_print(f"MultiViewPanel vector display y shape={display_y.shape}")
+        debug_print("MultiViewPanel vector orientation applied")
+        return result
+
+    def _downsample_vector_overlay(self, overlay: dict, *, max_arrows_per_axis: int) -> dict:
+        debug_print("MultiViewPanel._downsample_vector_overlay called")
+        rows, cols = np.asarray(overlay["u"]).shape[:2]
+        row_step = max(1, int(np.ceil(rows / max_arrows_per_axis)))
+        col_step = max(1, int(np.ceil(cols / max_arrows_per_axis)))
+        row_offset = row_step // 2
+        col_offset = col_step // 2
+        debug_print(f"MultiViewPanel vector downsample rows={rows}")
+        debug_print(f"MultiViewPanel vector downsample cols={cols}")
+        debug_print(f"MultiViewPanel vector downsample row_step={row_step}")
+        debug_print(f"MultiViewPanel vector downsample col_step={col_step}")
+        result = dict(overlay)
+        for key in ("x", "y", "u", "v", "magnitude"):
+            result[key] = np.asarray(overlay[key])[row_offset::row_step, col_offset::col_step]
+            debug_print(f"MultiViewPanel vector downsampled {key} shape={result[key].shape}")
+        x_values = np.asarray(result["x"], dtype=float)
+        y_values = np.asarray(result["y"], dtype=float)
+        x_span = float(np.nanmax(x_values) - np.nanmin(x_values)) if x_values.size else 1.0
+        y_span = float(np.nanmax(y_values) - np.nanmin(y_values)) if y_values.size else 1.0
+        density = max(max(result["u"].shape), 1)
+        result["arrow_length"] = max(x_span, y_span, 1.0) / density * 0.55
+        debug_print(f"MultiViewPanel vector fixed arrow_length={result['arrow_length']}")
+        return result
 
     def _build_overlay_grid(self, file_path: str, axis: str):
         debug_print("MultiViewPanel._build_overlay_grid called")

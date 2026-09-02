@@ -19,6 +19,7 @@ class VTKReader:
         self.dimensions = None
         self.is_3d = False
         self._interpolation_cache = {}
+        self._vector_overlay_cache = {}
         self.load_file()
         debug_print("VTKReader.__init__ complete")
 
@@ -129,6 +130,78 @@ class VTKReader:
         debug_print(f"VTKReader gradient max={stats['max']}")
         debug_print(f"VTKReader gradient seconds={perf_counter() - start:.3f}")
         return grad_grid, stats
+
+    def get_vector_overlay_grid(
+        self,
+        axis: str = "y",
+        index: int | None = None,
+        vector_name: str | None = None,
+        resolution: int | None = 160,
+    ):
+        """Return a 2D vector grid projected into the displayed slice plane."""
+        debug_print("VTKReader.get_vector_overlay_grid called")
+        debug_print(f"VTKReader vector axis={axis}")
+        debug_print(f"VTKReader vector index={index}")
+        debug_print(f"VTKReader vector name={vector_name}")
+        vector_name = vector_name or (self.vector_fields[0] if self.vector_fields else None)
+        if not vector_name:
+            debug_print("VTKReader vector overlay skipped no vector fields")
+            raise ValueError("No vector arrays available")
+        if resolution is None:
+            resolution = DEFAULTS["native_fallback_resolution"]
+            debug_print(f"VTKReader vector native fallback resolution={resolution}")
+        cache_key = (vector_name, axis.lower(), -1 if index is None else index, int(resolution))
+        if cache_key in self._vector_overlay_cache:
+            debug_print("VTKReader vector overlay cache hit")
+            return self._vector_overlay_cache[cache_key]
+        x_coords, y_coords, u_values, v_values, magnitudes, stats = self.get_vector_slice(
+            axis=axis,
+            index=index,
+            vector_name=vector_name,
+        )
+        debug_print(f"VTKReader vector slice points={len(np.asarray(x_coords))}")
+        x_grid, y_grid, u_grid = self.interpolate_to_grid(x_coords, y_coords, u_values, resolution)
+        _, _, v_grid = self.interpolate_to_grid(x_coords, y_coords, v_values, resolution)
+        _, _, magnitude_grid = self.interpolate_to_grid(x_coords, y_coords, magnitudes, resolution)
+        debug_print(f"VTKReader vector overlay grid shape={u_grid.shape}")
+        debug_print(f"VTKReader vector magnitude min={stats['min']}")
+        debug_print(f"VTKReader vector magnitude max={stats['max']}")
+        result = (x_grid, y_grid, u_grid, v_grid, magnitude_grid, stats)
+        self._vector_overlay_cache[cache_key] = result
+        debug_print("VTKReader vector overlay cached")
+        return result
+
+    def get_vector_slice(self, axis: str = "y", index: int | None = None, vector_name: str | None = None):
+        """Return projected 2D vector values from the requested slice."""
+        debug_print("VTKReader.get_vector_slice called")
+        vector_name = vector_name or (self.vector_fields[0] if self.vector_fields else None)
+        debug_print(f"VTKReader vector slice name={vector_name}")
+        if not vector_name:
+            debug_print("VTKReader vector slice missing vector name")
+            raise ValueError("No vector arrays available")
+        if not self.is_3d:
+            debug_print("VTKReader vector slice using 2D data")
+            return self._extract_2d_vector_data(vector_name, axis)
+        axis_map = {"x": 0, "y": 1, "z": 2}
+        axis_index = axis_map[axis.lower()]
+        if index is None:
+            index = self.dimensions[axis_index] // 2
+        index = max(0, min(index, self.dimensions[axis_index] - 1))
+        bounds = self.mesh.bounds
+        x_mid = (bounds[0] + bounds[1]) * 0.5
+        y_mid = (bounds[2] + bounds[3]) * 0.5
+        z_mid = (bounds[4] + bounds[5]) * 0.5
+        if axis.lower() == "x":
+            x_val = bounds[0] + (bounds[1] - bounds[0]) * index / max(1, self.dimensions[0] - 1)
+            slice_mesh = self.mesh.slice(normal="x", origin=(x_val, y_mid, z_mid))
+        elif axis.lower() == "y":
+            y_val = bounds[2] + (bounds[3] - bounds[2]) * index / max(1, self.dimensions[1] - 1)
+            slice_mesh = self.mesh.slice(normal="y", origin=(x_mid, y_val, z_mid))
+        else:
+            z_val = bounds[4] + (bounds[5] - bounds[4]) * index / max(1, self.dimensions[2] - 1)
+            slice_mesh = self.mesh.slice(normal="z", origin=(x_mid, y_mid, z_val))
+        debug_print(f"VTKReader vector slice created axis={axis} index={index}")
+        return self._process_vector_slice(slice_mesh, axis, vector_name)
 
     def _grid_spacing(self, grid, axis: int) -> float:
         debug_print("VTKReader._grid_spacing called")
@@ -268,6 +341,85 @@ class VTKReader:
         }
         return x_coords, y_coords, scalars, stats
 
+    def _extract_2d_vector_data(self, vector_name: str, axis: str):
+        debug_print("VTKReader._extract_2d_vector_data called")
+        points = self.mesh.points
+        vectors = np.asarray(self.mesh[vector_name], dtype=float)
+        std_devs = np.std(points, axis=0)
+        active_axes = np.where(std_devs > 1e-10)[0]
+        if len(active_axes) < 2:
+            active_axes = [0, 1]
+        x_coords = points[:, active_axes[0]]
+        y_coords = points[:, active_axes[1]]
+        u_values, v_values, magnitudes = self._project_vectors(vectors, axis, active_axes=active_axes)
+        stats = self._vector_stats(magnitudes)
+        debug_print(f"VTKReader 2D vector active_axes={list(active_axes)}")
+        debug_print(f"VTKReader 2D vector points={len(points)}")
+        return x_coords, y_coords, u_values, v_values, magnitudes, stats
+
+    def _process_vector_slice(self, slice_mesh, axis: str, vector_name: str):
+        debug_print("VTKReader._process_vector_slice called")
+        points = slice_mesh.points
+        vectors = np.asarray(slice_mesh[vector_name], dtype=float)
+        if axis.lower() == "x":
+            x_coords = points[:, 1]
+            y_coords = points[:, 2]
+        elif axis.lower() == "y":
+            x_coords = points[:, 0]
+            y_coords = points[:, 2]
+        else:
+            x_coords = points[:, 0]
+            y_coords = points[:, 1]
+        u_values, v_values, magnitudes = self._project_vectors(vectors, axis)
+        stats = self._vector_stats(magnitudes)
+        debug_print(f"VTKReader vector processed points={len(points)}")
+        return x_coords, y_coords, u_values, v_values, magnitudes, stats
+
+    def _project_vectors(self, vectors, axis: str, active_axes=None):
+        debug_print("VTKReader._project_vectors called")
+        arr = np.asarray(vectors, dtype=float)
+        if arr.ndim != 2 or arr.shape[1] < 2:
+            debug_print(f"VTKReader invalid vector shape={arr.shape}")
+            raise ValueError("Vector array must have at least two components")
+        if arr.shape[1] < 3:
+            padded = np.zeros((arr.shape[0], 3), dtype=float)
+            padded[:, :arr.shape[1]] = arr
+            arr = padded
+            debug_print("VTKReader padded 2-component vectors to 3 components")
+        magnitudes = np.linalg.norm(arr, axis=1)
+        axis = axis.lower()
+        if active_axes is not None and len(active_axes) >= 2:
+            first, second = int(active_axes[0]), int(active_axes[1])
+            u_values = arr[:, first]
+            v_values = arr[:, second]
+            debug_print(f"VTKReader vector projected active components={first},{second}")
+        elif axis == "x":
+            u_values = arr[:, 1]
+            v_values = arr[:, 2]
+            debug_print("VTKReader vector projected components=1,2")
+        elif axis == "y":
+            u_values = arr[:, 0]
+            v_values = arr[:, 2]
+            debug_print("VTKReader vector projected components=0,2")
+        else:
+            u_values = arr[:, 0]
+            v_values = arr[:, 1]
+            debug_print("VTKReader vector projected components=0,1")
+        return u_values, v_values, magnitudes
+
+    def _vector_stats(self, magnitudes) -> dict[str, float]:
+        debug_print("VTKReader._vector_stats called")
+        values = np.asarray(magnitudes, dtype=float)
+        stats = {
+            "min": float(np.nanmin(values)),
+            "max": float(np.nanmax(values)),
+            "mean": float(np.nanmean(values)),
+            "std": float(np.nanstd(values)),
+        }
+        debug_print(f"VTKReader vector stats min={stats['min']}")
+        debug_print(f"VTKReader vector stats max={stats['max']}")
+        return stats
+
 
     def sample_point_value(
         self,
@@ -317,6 +469,18 @@ class VTKReader:
     def scalar_fields(self):
         debug_print("VTKReader.scalar_fields called")
         return list(self.mesh.array_names)
+
+    @property
+    def vector_fields(self):
+        debug_print("VTKReader.vector_fields called")
+        fields = []
+        for array_name in self.mesh.array_names:
+            array = self.mesh[array_name]
+            if getattr(array, "ndim", 1) == 2 and array.shape[1] in (2, 3):
+                fields.append(array_name)
+                debug_print(f"VTKReader vector field detected={array_name}")
+        debug_print(f"VTKReader vector field count={len(fields)}")
+        return fields
 
     def _select_component(self, scalars, component: int | None):
         debug_print("VTKReader._select_component called")

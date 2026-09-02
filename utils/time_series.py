@@ -31,6 +31,20 @@ def _parse_series_name(path: str | Path):
     return parsed
 
 
+def compact_timestep_label(path: str | Path) -> str:
+    """Return a short legend label based on the timestep number in a VTK filename."""
+    debug_print("compact_timestep_label called")
+    parsed = _parse_series_name(path)
+    if parsed is None:
+        fallback = Path(path).name
+        debug_print(f"compact_timestep_label fallback={fallback}")
+        return fallback
+    _prefix, step, _suffix = parsed
+    label = str(step)
+    debug_print(f"compact_timestep_label label={label}")
+    return label
+
+
 def collect_same_series_files(current_file: str, file_paths, *, existing_only: bool = False) -> list[TimeSeriesFile]:
     """Return files matching current_file's prefix/suffix, sorted by timestep."""
 

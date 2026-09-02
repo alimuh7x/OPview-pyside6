@@ -23,9 +23,10 @@ from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from viewer.colorscale import cmap_to_plotly_scale
-from viewer.heatmap_canvas import _CANVAS_HEIGHT, _CANVAS_WIDTH
+from viewer.heatmap_canvas import HeatmapCanvas, _CANVAS_HEIGHT, _CANVAS_WIDTH
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from app.debug import debug_print
+from utils.time_series import compact_timestep_label
 
 _ASSETS     = Path(__file__).resolve().parent.parent / "assets"
 _PLOTLY_JS  = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
@@ -74,7 +75,7 @@ class MultiViewHeader(QWidget):
         legend_lbl = QLabel("Legend:")
         legend_lbl.setObjectName("mutedInfo")
 
-        self._name_edit = QLineEdit(Path(file_path).name)
+        self._name_edit = QLineEdit(compact_timestep_label(file_path))
         self._name_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._name_edit.setFixedHeight(22)
         self._name_edit.setToolTip(f"Edit legend label — file: {file_path}")
@@ -109,7 +110,7 @@ class MultiViewHeader(QWidget):
         self.setFixedWidth(_CELL_W)
 
     def legend_name(self) -> str:
-        return self._name_edit.text().strip() or Path(self.file_path).name
+        return self._name_edit.text().strip() or compact_timestep_label(self.file_path)
 
     def set_cell_width(self, width: int) -> None:
         self.setFixedWidth(width)
@@ -153,7 +154,7 @@ class MultiViewCell(QWidget):
         self.setFixedSize(width, _CANVAS_HEIGHT)
 
     def render(self, x_grid, y_grid, z_grid, *, vmin: float, vmax: float,
-               cmap, overlay_grid=None, line_overlay=None) -> None:
+               cmap, overlay_grid=None, line_overlay=None, vector_overlay=None) -> None:
         debug_print(f"MultiViewCell.render start file={self.file_path}")
         colorscale = cmap_to_plotly_scale(cmap)
         debug_print(f"MultiViewCell colorscale stops={len(colorscale)}")
@@ -209,6 +210,14 @@ class MultiViewCell(QWidget):
             ))
         else:
             debug_print("MultiViewCell no overlay_grid")
+        if vector_overlay is not None:
+            debug_print("MultiViewCell adding vector overlay")
+            arrow_traces = self._build_vector_traces(vector_overlay)
+            debug_print(f"MultiViewCell vector trace count={len(arrow_traces)}")
+            for trace in arrow_traces:
+                figure.add_trace(trace)
+        else:
+            debug_print("MultiViewCell no vector overlay")
         if line_overlay:
             debug_print("MultiViewCell adding line overlay")
             orientation, value = line_overlay
@@ -263,6 +272,18 @@ class MultiViewCell(QWidget):
         </script></body></html>"""
         self._web.setHtml(html, self._base_url)
         debug_print("MultiViewCell.render complete")
+
+    @staticmethod
+    def _build_vector_traces(vector_overlay: dict) -> list[go.Scatter]:
+        debug_print("MultiViewCell._build_vector_traces called")
+        debug_print(f"MultiViewCell vector label={vector_overlay.get('label')}")
+        debug_print(f"MultiViewCell vector arrow_length={vector_overlay.get('arrow_length')}")
+        traces = HeatmapCanvas._build_vector_arrow_traces(
+            vector_overlay,
+            arrow_length=vector_overlay.get("arrow_length"),
+        )
+        debug_print(f"MultiViewCell vector traces built={len(traces)}")
+        return traces
 
     def handle_plotly_event(self, event_type: str, payload_json: str) -> None:
         debug_print("MultiViewCell.handle_plotly_event called")

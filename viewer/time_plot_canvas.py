@@ -66,13 +66,14 @@ class TimePlotCanvas(QWidget):
         figure.update_layout(
             width=self._canvas_width,
             height=_H,
-            margin=dict(l=80, r=20, t=30, b=70),
+            margin=dict(l=80, r=20, t=76, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
             xaxis=PlotStyle.panel_axis("Timestep", True),
             yaxis=PlotStyle.panel_axis("Value", True),
         )
+        debug_print("TimePlotCanvas placeholder top margin=76 for modebar")
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("TimePlotCanvas placeholder rendered")
 
@@ -166,10 +167,11 @@ class TimePlotCanvas(QWidget):
                 showarrow=False,
                 font=PlotStyle.empty_annotation_font(),
             )
+        debug_print("TimePlotCanvas top margin=76 for modebar")
         figure.update_layout(
             width=self._canvas_width,
             height=_H,
-            margin=dict(l=80, r=20, t=30, b=70),
+            margin=dict(l=80, r=20, t=76, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
@@ -187,10 +189,15 @@ class TimePlotCanvas(QWidget):
         return figure
 
     def _build_html(self, figure: go.Figure) -> str:
+        debug_print("TimePlotCanvas._build_html called")
+        debug_print("TimePlotCanvas modebar top offset=0px")
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset=\"utf-8\"/>
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}</style>
+<style>
+html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}
+.modebar{{top: 0px !important;}}
+</style>
 <script src=\"plotly.min.js\"></script>
 </head><body>
 <div id=\"div\"></div>

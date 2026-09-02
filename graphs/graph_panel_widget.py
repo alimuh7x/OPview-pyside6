@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 from app.debug import debug_print
 from config.constants import ALLOWED_TEXTDATA_EXTENSIONS, SKIP_FOLDERS
 from data.text_sources import GenericTextDataSource
+from graphs.graph_animation_player import GraphAnimationPlayer
 from graphs.graph_canvas import GraphCanvas
 from utils.combo_box_utils import update_combo_popup_width
 from viewer.plot_style import PlotStyle
@@ -62,6 +63,8 @@ class GraphPanelWidget(QWidget):
         self._color_combos: dict[tuple[str, str], QComboBox] = {}
         self._sources_layout: QVBoxLayout | None = None
         self._settings_layout: QGridLayout | None = None
+        self._animation_player_class = GraphAnimationPlayer
+        self._animation_player = None
         self._build_ui()
         self._refresh_file_sections()
         self._refresh_graph()
@@ -138,13 +141,8 @@ class GraphPanelWidget(QWidget):
         self.file_combo = QComboBox()
         self.file_combo.setObjectName("graphCombo")
         self.file_combo.setMinimumWidth(260)
-        self.file_combo.currentIndexChanged.connect(self._sync_add_button_state)
+        self.file_combo.currentIndexChanged.connect(self._add_selected_graph_file)
         toolbar.addWidget(self.file_combo)
-
-        self.add_file_button = QPushButton("+ Add To Graph")
-        self.add_file_button.setProperty("accent", True)
-        self.add_file_button.clicked.connect(self._add_selected_graph_file)
-        toolbar.addWidget(self.add_file_button)
 
         self.external_file_button = QPushButton("Add External Text File")
         self.external_file_button.setProperty("accent", True)
@@ -156,10 +154,14 @@ class GraphPanelWidget(QWidget):
         self.download_png_button.setToolTip("Download graph as PNG")
         self.download_png_button.clicked.connect(self._download_png)
         toolbar.addWidget(self.download_png_button)
+        self.download_animation_button = QPushButton(QIcon(str(_ASSETS / "download.png")), "MP4")
+        self.download_animation_button.setIconSize(QSize(16, 16))
+        self.download_animation_button.setProperty("accent", True)
+        self.download_animation_button.setToolTip("Open reveal animation and export as MP4")
+        self.download_animation_button.clicked.connect(self._open_animation_player)
+        toolbar.addWidget(self.download_animation_button)
         toolbar.addStretch(1)
         top_layout.addLayout(toolbar)
-
-        self._refresh_project_selector()
 
         self.sources_group = QGroupBox("Data Sources")
         self.sources_group.setObjectName("graphDataSources")
@@ -190,6 +192,7 @@ class GraphPanelWidget(QWidget):
         settings = self._build_settings_panel()
         main_split.addWidget(settings, 0)
         root.addWidget(self.main_content, 1)
+        self._refresh_project_selector()
         debug_print("GraphPanelWidget._build_ui complete")
 
     def _build_settings_panel(self) -> QWidget:
@@ -264,7 +267,13 @@ class GraphPanelWidget(QWidget):
         self.x_axis_conversion_combo = QComboBox()
         self.x_axis_conversion_combo.setObjectName("graphCombo")
         self.x_axis_conversion_combo.setFixedWidth(120)
-        for label, value in [("As-is", "as-is"), ("sec -> min", "sec-to-min"), ("sec -> hour", "sec-to-hour")]:
+        for label, value in [
+            ("As-is", "as-is"),
+            ("%", "percent"),
+            ("sec -> min", "sec-to-min"),
+            ("sec -> hour", "sec-to-hour"),
+        ]:
+            debug_print(f"GraphPanelWidget adding x conversion label={label} value={value}")
             self.x_axis_conversion_combo.addItem(label, value)
         update_combo_popup_width(self.x_axis_conversion_combo)
         self.x_axis_conversion_combo.currentIndexChanged.connect(self._refresh_graph)
@@ -305,11 +314,16 @@ class GraphPanelWidget(QWidget):
         self.legend_position_combo.setMinimumWidth(170)
         for label, value in [
             ("Top Left", "top-left"),
+            ("Middle Top", "middle-top"),
             ("Top Right", "top-right"),
+            ("Middle Left", "middle-left"),
+            ("Middle Right", "middle-right"),
             ("Bottom Left", "bottom-left"),
+            ("Middle Bottom", "middle-bottom"),
             ("Bottom Right", "bottom-right"),
             ("Right Outside", "right-outside"),
         ]:
+            debug_print(f"GraphPanelWidget adding legend position label={label} value={value}")
             self.legend_position_combo.addItem(label, value)
         update_combo_popup_width(self.legend_position_combo)
         self.legend_position_combo.currentIndexChanged.connect(self._refresh_graph)
@@ -363,10 +377,12 @@ class GraphPanelWidget(QWidget):
                 continue
             self.project_combo.addItem(project_name, project_name)
             self.project_combo.setItemData(self.project_combo.count() - 1, self._project_tooltip(info), Qt.ItemDataRole.ToolTipRole)
-        index = self.project_combo.findData(current)
+        index = self.project_combo.findData(current) if current else -1
         if index < 0 and self.project_combo.count() > 1:
             index = 1
+            debug_print("GraphPanelWidget selecting first available project")
         self.project_combo.setCurrentIndex(index if index >= 0 else 0)
+        debug_print(f"GraphPanelWidget project selector index={self.project_combo.currentIndex()}")
         self.project_combo.blockSignals(False)
         update_combo_popup_width(self.project_combo)
         self._refresh_folder_selector()
@@ -384,10 +400,12 @@ class GraphPanelWidget(QWidget):
                 self._folder_files[folder_path] = files
                 self.folder_combo.addItem(label, folder_path)
                 self.folder_combo.setItemData(self.folder_combo.count() - 1, folder_path, Qt.ItemDataRole.ToolTipRole)
-        index = self.folder_combo.findData(current)
+        index = self.folder_combo.findData(current) if current else -1
         if index < 0 and self.folder_combo.count() > 1:
             index = 1
+            debug_print("GraphPanelWidget selecting first available folder")
         self.folder_combo.setCurrentIndex(index if index >= 0 else 0)
+        debug_print(f"GraphPanelWidget folder selector index={self.folder_combo.currentIndex()}")
         self.folder_combo.blockSignals(False)
         update_combo_popup_width(self.folder_combo)
         self._refresh_file_selector()
@@ -403,16 +421,14 @@ class GraphPanelWidget(QWidget):
             path = Path(file_path)
             self.file_combo.addItem(path.name, file_path)
             self.file_combo.setItemData(self.file_combo.count() - 1, str(path), Qt.ItemDataRole.ToolTipRole)
-        index = self.file_combo.findData(current)
-        if index < 0 and self.file_combo.count() > 1:
-            index = 1
+        index = self.file_combo.findData(current) if current else -1
+        if index < 0:
+            debug_print("GraphPanelWidget no previous file selection; waiting for user click")
         self.file_combo.setCurrentIndex(index if index >= 0 else 0)
+        debug_print(f"GraphPanelWidget file selector index={self.file_combo.currentIndex()}")
         self.file_combo.blockSignals(False)
         update_combo_popup_width(self.file_combo)
-        self._sync_add_button_state()
-
-    def _sync_add_button_state(self, *args) -> None:
-        self.add_file_button.setEnabled(bool(self.file_combo.currentData()))
+        debug_print("GraphPanelWidget file selector refreshed without auto-add")
 
     def _add_selected_graph_file(self) -> None:
         debug_print("GraphPanelWidget._add_selected_graph_file called")
@@ -420,11 +436,33 @@ class GraphPanelWidget(QWidget):
         if not file_path:
             debug_print("GraphPanelWidget._add_selected_graph_file no file")
             return
+        debug_print(f"GraphPanelWidget._add_selected_graph_file file={file_path}")
         self.add_files([file_path])
 
     def _download_png(self) -> None:
         debug_print("GraphPanelWidget._download_png called")
         self.canvas.download_png(f"custom_graph_{self.panel_number}")
+
+    def _open_animation_player(self) -> None:
+        debug_print("GraphPanelWidget._open_animation_player called")
+        if self._animation_player is not None and self._animation_player.isVisible():
+            debug_print("GraphPanelWidget animation player already visible")
+            self._animation_player.raise_()
+            debug_print("GraphPanelWidget animation player raised")
+            self._animation_player.activateWindow()
+            debug_print("GraphPanelWidget animation player activated")
+            return
+        state = self.state()
+        debug_print(f"GraphPanelWidget animation file count={len(state.get('files', []))}")
+        debug_print(f"GraphPanelWidget animation panel_number={self.panel_number}")
+        self._animation_player = self._animation_player_class(
+            state,
+            self.panel_number,
+            parent=self,
+        )
+        debug_print("GraphPanelWidget animation player created")
+        self._animation_player.show()
+        debug_print("GraphPanelWidget animation player shown")
 
     def _folder_options(self, project_name: str) -> list[tuple[str, str, list[str]]]:
         info = self._projects.get(project_name) or {}

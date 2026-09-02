@@ -70,6 +70,59 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertEqual(controls.layout_mode(), "wide")
         self.assertTrue(controls.range_values_row.isHidden())
 
+    def test_panel_controls_range_spins_preserve_tiny_values(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+
+        controls.set_range_values(1e-7, 2e-7)
+
+        minimum, maximum = controls.current_range()
+        self.assertEqual(minimum, 1e-7)
+        self.assertEqual(maximum, 2e-7)
+
+    def test_panel_controls_use_rotation_icon_buttons(self):
+        controls = PanelControlsWidget({"label": "PhaseField"})
+
+        self.assertFalse(hasattr(controls, "rotation_combo"))
+        self.assertEqual(sorted(controls.rotation_buttons), [0, 90, 180, 270])
+
+        controls.rotation_buttons[90].click()
+
+        self.assertEqual(controls.current_rotation_degrees(), 270)
+        self.assertTrue(controls.rotation_buttons[90].isChecked())
+
+    def test_multi_view_uses_rotation_icon_buttons(self):
+        panel = MultiViewPanel({"label": "PhaseField", "available_projects": []})
+
+        self.assertFalse(hasattr(panel, "rotation_combo"))
+        self.assertEqual(sorted(panel.rotation_buttons), [0, 90, 180, 270])
+
+        panel.rotation_buttons[90].click()
+
+        self.assertEqual(panel._rotation_degrees, 270)
+        self.assertTrue(panel.rotation_buttons[90].isChecked())
+
+    def test_panel_widget_uses_line_direction_icon_buttons(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        self.assertFalse(hasattr(panel, "direction_combo"))
+        self.assertEqual(sorted(panel.line_direction_buttons), ["horizontal", "vertical"])
+
+        panel.line_direction_buttons["vertical"].click()
+
+        self.assertEqual(panel.current_line_scan_direction(), "vertical")
+        self.assertTrue(panel.line_direction_buttons["vertical"].isChecked())
+
+    def test_multi_view_uses_line_direction_icon_buttons(self):
+        panel = MultiViewPanel({"label": "PhaseField", "available_projects": []})
+
+        self.assertFalse(hasattr(panel, "direction_combo"))
+        self.assertEqual(sorted(panel.line_direction_buttons), ["horizontal", "vertical"])
+
+        panel.line_direction_buttons["vertical"].click()
+
+        self.assertEqual(panel._current_line_scan_direction(), "vertical")
+        self.assertTrue(panel.line_direction_buttons["vertical"].isChecked())
+
     def test_panel_controls_marks_phase_fraction_scalars_checkable(self):
         controls = PanelControlsWidget({"label": "PhaseField"})
 
@@ -259,6 +312,60 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertIn(".modebar", html)
         self.assertIn("top: 0px !important", html)
 
+    def test_line_scan_and_histogram_modebars_stay_visible_at_top(self):
+        from viewer.histogram_canvas import HistogramCanvas
+        from viewer.line_scan_canvas import LineScanCanvas
+
+        line_canvas = LineScanCanvas.__new__(LineScanCanvas)
+        histogram_canvas = HistogramCanvas.__new__(HistogramCanvas)
+
+        self.assertIn("top: 0px !important", line_canvas._build_html(go.Figure()))
+        self.assertIn("top: 0px !important", histogram_canvas._build_html(go.Figure()))
+
+    def test_line_scan_and_histogram_reserve_top_space_for_modebar(self):
+        from viewer.histogram_canvas import HistogramCanvas
+        from viewer.line_scan_canvas import LineScanCanvas
+
+        line_canvas = LineScanCanvas.__new__(LineScanCanvas)
+        line_canvas._canvas_width = 800
+        line_canvas._canvas_height = 360
+        line_canvas._web_view = None
+        histogram_canvas = HistogramCanvas.__new__(HistogramCanvas)
+        histogram_canvas._canvas_width = 800
+        histogram_canvas._canvas_height = 360
+        histogram_canvas._web_view = None
+
+        line_figure = line_canvas._figure_for_lines(
+            [{"name": "5000", "x": [0.0, 1.0], "y": [2.0, 3.0]}],
+            title="Line Scan",
+            x_label="X Position",
+            y_label="PhaseFields",
+        )
+        histogram_figure = histogram_canvas._figure_for_histograms(
+            [{"name": "5000", "values": [1.0, 2.0, 3.0]}],
+            label="PhaseFields",
+            bins=10,
+        )
+
+        self.assertGreaterEqual(line_figure.layout.margin.t, 70)
+        self.assertGreaterEqual(histogram_figure.layout.margin.t, 70)
+
+    def test_time_plot_modebar_stays_visible_at_top(self):
+        canvas = TimePlotCanvas.__new__(TimePlotCanvas)
+
+        self.assertIn("top: 0px !important", canvas._build_html(go.Figure()))
+
+    def test_time_plot_reserves_top_space_for_modebar(self):
+        canvas = TimePlotCanvas.__new__(TimePlotCanvas)
+        canvas._canvas_width = 800
+
+        figure = canvas._build_time_plot_figure(
+            [{"label": "P1", "steps": [0.0, 1.0], "values": [2.0, 3.0]}],
+            y_label="PhaseFields",
+        )
+
+        self.assertGreaterEqual(figure.layout.margin.t, 70)
+
     def test_phase_fraction_history_canvas_can_use_wider_panel_space(self):
         canvas = PhaseFractionHistoryCanvas()
 
@@ -305,6 +412,28 @@ class AppWidthConstraintTests(unittest.TestCase):
 
         self.assertEqual(figure.layout.xaxis.title.text, "Timestep")
         self.assertIn("timestep=", figure.data[0].hovertemplate)
+        self.assertEqual(tuple(figure.layout.yaxis.range), (0, 100))
+
+    def test_scalar_average_history_uses_auto_y_axis_range(self):
+        canvas = PhaseFractionHistoryCanvas.__new__(PhaseFractionHistoryCanvas)
+        canvas._canvas_width = 800
+
+        figure = canvas._build_figure(
+            [
+                {
+                    "label": "CRSS 0",
+                    "steps": [0.0, 1.0],
+                    "values": [125.0, 175.0],
+                    "color": "#c50623",
+                }
+            ],
+            current_step=1.0,
+            y_label="Average CRSS 0 (MPa)",
+            hover_value_label="average",
+        )
+
+        self.assertEqual(figure.layout.yaxis.title.text, "Average CRSS 0 (MPa)")
+        self.assertIsNone(figure.layout.yaxis.range)
 
     def test_plot_over_time_uses_supplied_time_axis_label(self):
         canvas = TimePlotCanvas.__new__(TimePlotCanvas)
@@ -321,11 +450,13 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertEqual(list(figure.data[0].x), [0.0, 2.5])
         self.assertNotIn("step=", figure.data[0].hovertemplate)
 
-    def test_phase_history_dt_controls_are_wide_enough_for_timestep(self):
+    def test_single_view_toolbar_balances_label_and_dropdown_widths(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})
 
         self.assertGreaterEqual(panel.phase_history_dt_spin.width(), 120)
-        self.assertGreaterEqual(panel.phase_history_time_unit_combo.width(), 132)
+        self.assertGreaterEqual(panel.colorbar_label_edit.minimumWidth(), 300)
+        self.assertGreaterEqual(panel.phase_history_time_unit_combo.width(), 120)
+        self.assertLessEqual(panel.unit_scale_combo.width(), 86)
 
     def test_panel_widget_keeps_analysis_toolbar_compact(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})
