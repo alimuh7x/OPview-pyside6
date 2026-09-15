@@ -25,6 +25,36 @@ set -euo pipefail
 DIST="$1"
 INTERNAL="$DIST/_internal"
 
+# ICU rename-and-repatch fallback (collision-check fallback mechanism, see
+# ../../../QT6_MIGRATION_PLAN.md Phase 4): once merged with OPStudio's own
+# runtime into a single shared lib/, OPView's private ICU build collides by
+# filename with OPStudio's Qt6-vendored ICU - and unlike the Qt6 module
+# libraries themselves (Core/Gui/Widgets/...), which the Qt6-sharing spike
+# verified are ABI-compatible across the commercial/PySide6 builds, ICU was
+# never part of that spike and its content genuinely differs (a few KB off
+# in each of the three libs - most likely a different ICU point build, not
+# just a stripped/unstripped difference). Keep OPView's own copies rather
+# than risk sharing an unverified transitive dependency: rename them out of
+# collision with OPStudio's identically-named files and repoint every
+# consumer's NEEDED entry accordingly.
+ICU_LIBS="libicudata.so.73 libicui18n.so.73 libicuuc.so.73"
+for icu in $ICU_LIBS; do
+    find "$DIST" -type f -name "$icu" -print0 | while IFS= read -r -d '' f; do
+        newname="${icu}.opview"
+        mv "$f" "$(dirname "$f")/$newname"
+        patchelf --set-soname "$newname" "$(dirname "$f")/$newname"
+    done
+done
+find "$DIST" -type f -print0 | while IFS= read -r -d '' f; do
+    file "$f" | grep -q "ELF" || continue
+    needed=$(patchelf --print-needed "$f" 2>/dev/null) || continue
+    for icu in $ICU_LIBS; do
+        if grep -qx "$icu" <<< "$needed"; then
+            patchelf --replace-needed "$icu" "${icu}.opview" "$f"
+        fi
+    done
+done
+
 find "$DIST" -type f -print0 | while IFS= read -r -d '' f; do
     file "$f" | grep -q "ELF" || continue
     # Skip files with no dynamic section at all (e.g. static data files that
