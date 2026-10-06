@@ -16,14 +16,17 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
 from config.constants import DEFAULTS
+from viewer.colorbar_ticks import format_colorbar_tick, format_colorbar_ticks
 from viewer.colorscale import cmap_to_plotly_scale
+from viewer.discrete_legend import add_discrete_legend_to_figure
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.plot_style import PlotStyle
 
 _CANVAS_HEIGHT = 420
 _CANVAS_WIDTH  = 360
 _COLORBAR_WIDTH = 90
-_COLORBAR_GAP = 0.03
+_COLORBAR_GAP = 0.012
+_EXPORT_COLORBAR_GAP_VIEW_PX = 10.0
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
 
@@ -129,38 +132,34 @@ class HeatmapCanvas(QWidget):
 
     def _fmt_tick(self, v: float) -> str:
         """Format a colorbar tick value — scientific notation for large/small numbers."""
-        import math
-        if v == 0:
-            return "0"
-        try:
-            mag = math.floor(math.log10(abs(v)))
-        except ValueError:
-            return "0"
-        if -3 <= mag <= 4:
-            decimals = max(0, 3 - int(mag))
-            return f"{v:.{decimals}f}"
-        return f"{v:.2e}"
+        debug_print("HeatmapCanvas._fmt_tick called")
+        label = format_colorbar_tick(v)
+        debug_print(f"HeatmapCanvas formatted tick={label}")
+        return label
 
     def _compute_colorbar_width(self, vmin: float, vmax: float) -> int:
         """Estimate pixel width needed for the colorbar based on the widest tick label."""
-        import math
-
-        def _fmt(v: float) -> str:
-            if v == 0:
-                return "0"
-            try:
-                mag = math.floor(math.log10(abs(v)))
-            except ValueError:
-                return "0"
-            if -3 <= mag <= 4:
-                decimals = max(0, 3 - int(mag))
-                return f"{v:.{decimals}f}"
-            return f"{v:.2e}"
-
-        n_chars = max(len(_fmt(vmin)), len(_fmt(vmax)), len(_fmt(0)))
+        debug_print("HeatmapCanvas._compute_colorbar_width called")
+        ticks = self._colorbar_ticks(vmin, vmax)
+        tick_text = format_colorbar_ticks(ticks)
+        debug_print(f"HeatmapCanvas width tick_text={tick_text}")
+        n_chars = max(len(label) for label in tick_text)
         # Shared tick font is size 22; estimate roughly 11px per character.
         # bar thickness (18px) + gap (8px) + label text + right padding (14px)
         return max(_COLORBAR_WIDTH, 18 + 8 + n_chars * 11 + 14)
+
+    @staticmethod
+    def _colorbar_ticks(vmin: float, vmax: float) -> list[float]:
+        debug_print("HeatmapCanvas._colorbar_ticks called")
+        ticks = [
+            vmin,
+            vmin + (vmax - vmin) * 0.25,
+            vmin + (vmax - vmin) * 0.5,
+            vmin + (vmax - vmin) * 0.75,
+            vmax,
+        ]
+        debug_print(f"HeatmapCanvas colorbar ticks={ticks}")
+        return ticks
 
     def _update_colorbar_width(self, vmin: float, vmax: float) -> None:
         """Resize the canvas if the required colorbar width has changed."""
@@ -197,10 +196,14 @@ class HeatmapCanvas(QWidget):
         title: str = "",
         colorbar_label: str = "",
         plot_type: str = "heatmap",
+        colorbar_mode: str = "bar",
+        discrete_colors=None,
         phase_fraction_overlays=None,
         vector_overlay=None,
     ) -> None:
         debug_print("HeatmapCanvas.render_heatmap called")
+        debug_print(f"HeatmapCanvas colorbar_mode={colorbar_mode}")
+        debug_print(f"HeatmapCanvas discrete_colors={discrete_colors}")
         self._update_colorbar_width(vmin, vmax)
         extent = (
             float(np.nanmin(x_grid)),
@@ -226,6 +229,8 @@ class HeatmapCanvas(QWidget):
             "time_plot_points": time_plot_points or [],
             "colorbar_label": colorbar_label,
             "plot_type": plot_type,
+            "colorbar_mode": colorbar_mode,
+            "discrete_colors": list(discrete_colors or []),
             "phase_fraction_overlays": phase_fraction_overlays or [],
             "vector_overlay": vector_overlay,
         }
@@ -246,6 +251,8 @@ class HeatmapCanvas(QWidget):
             title=title,
             colorbar_label=colorbar_label,
             plot_type=plot_type,
+            colorbar_mode=colorbar_mode,
+            discrete_colors=discrete_colors,
             phase_fraction_overlays=phase_fraction_overlays or [],
             vector_overlay=vector_overlay,
         )
@@ -452,7 +459,7 @@ class HeatmapCanvas(QWidget):
             logo_y = max(0, int(round(12.0 * pixel_scale)))
             logo_rect = (logo_x, logo_y, logo_width, logo_height)
             debug_print(f"HeatmapCanvas export layout logo_rect={logo_rect}")
-        colorbar_gap_pixels = max(1, int(round(24.0 * pixel_scale)))
+        colorbar_gap_pixels = max(1, int(round(_EXPORT_COLORBAR_GAP_VIEW_PX * pixel_scale)))
         colorbar_thickness_pixels = max(1, int(round(18.0 * pixel_scale)))
         colorbar_right_text_pixels = max(1, int(round(170.0 * pixel_scale)))
         colorbar_panel_pixels = max(
@@ -634,14 +641,21 @@ class HeatmapCanvas(QWidget):
         title: str = "",
         colorbar_label: str = "",
         plot_type: str = "heatmap",
+        colorbar_mode: str = "bar",
+        discrete_colors=None,
         phase_fraction_overlays=None,
         vector_overlay=None,
     ) -> go.Figure:
         debug_print("HeatmapCanvas._build_figure called")
+        debug_print(f"HeatmapCanvas build colorbar_mode={colorbar_mode}")
+        debug_print(f"HeatmapCanvas build discrete_colors={discrete_colors}")
         rows, cols = np.asarray(z_grid).shape[:2]
         x_values, y_values = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
         colorscale = cmap_to_plotly_scale(cmap)
         colorbar_x = 1.0 + _COLORBAR_GAP
+        ticks = self._colorbar_ticks(vmin, vmax)
+        tick_text = format_colorbar_ticks(ticks)
+        debug_print(f"HeatmapCanvas colorbar tick text={tick_text}")
         colorbar_cfg = dict(
             x             = colorbar_x,
             xanchor       = "left",
@@ -655,20 +669,8 @@ class HeatmapCanvas(QWidget):
             title         = dict(text=colorbar_label, side="right", font=PlotStyle.colorbar_title_font()),
             tickfont      = PlotStyle.colorbar_tick_font(),
             tickmode      = "array",
-            tickvals      = [
-                vmin,
-                vmin + (vmax - vmin) * 0.25,
-                vmin + (vmax - vmin) * 0.5,
-                vmin + (vmax - vmin) * 0.75,
-                vmax,
-            ],
-            ticktext      = [
-                self._fmt_tick(vmin),
-                self._fmt_tick(vmin + (vmax - vmin) * 0.25),
-                self._fmt_tick(vmin + (vmax - vmin) * 0.5),
-                self._fmt_tick(vmin + (vmax - vmin) * 0.75),
-                self._fmt_tick(vmax),
-            ],
+            tickvals      = ticks,
+            ticktext      = tick_text,
         )
         from viewer.plot_types import PLOT_TYPE_MAP
         figure = go.Figure()
@@ -685,6 +687,16 @@ class HeatmapCanvas(QWidget):
                 x_values, y_values, z_grid, vmin, vmax, colorscale, colorbar_cfg, hovertemplate
             ):
                 figure.add_trace(trace)
+        if colorbar_mode == "boxes" and discrete_colors:
+            debug_print("HeatmapCanvas applying discrete numbered colorbar")
+            for trace in figure.data:
+                if hasattr(trace, "showscale"):
+                    trace.showscale = False
+                    debug_print(f"HeatmapCanvas disabled trace scale type={trace.type}")
+            add_discrete_legend_to_figure(figure, list(discrete_colors), colorbar_label)
+            debug_print("HeatmapCanvas discrete numbered colorbar applied")
+        else:
+            debug_print("HeatmapCanvas using full colorbar")
         if overlay_grid is not None:
             debug_print("HeatmapCanvas adding smooth contour overlay")
             overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(

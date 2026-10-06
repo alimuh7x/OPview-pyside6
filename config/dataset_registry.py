@@ -77,6 +77,9 @@ class DatasetRegistry:
         debug_print("DatasetRegistry.get_dropdown_options called")
         options: List[Dict[str, Any]] = []
         for dataset in self._datasets:
+            module_label = "" if dataset.module_id == "unconfigured" else dataset.module_label
+            option_label = dataset.label if module_label == "" else f"{module_label}: {dataset.label}"
+            debug_print(f"DatasetRegistry dropdown option label={option_label}")
             payload = {
                 "id": dataset.dataset_id,
                 "label": dataset.label,
@@ -85,9 +88,9 @@ class DatasetRegistry:
                 "files_limited": dataset.files_limited,
                 "dataset_config": dataset.dataset_config,
                 "module_id": dataset.module_id,
-                "module_label": dataset.module_label,
+                "module_label": module_label,
             }
-            options.append({"label": f"{dataset.module_label}: {dataset.label}", "value": payload})
+            options.append({"label": option_label, "value": payload})
         return options
 
     @property

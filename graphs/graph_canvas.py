@@ -115,14 +115,14 @@ class GraphCanvas(QWidget):
             x_axis_column = available_x_columns[0]
         raw_x = np.asarray(x_source.series(x_axis_column), dtype=float)
         x_conversion = state.get("x_axis_conversion", "as-is")
-        x_multiplier = self._x_conversion_multiplier(x_conversion)
-        x_data = raw_x * x_multiplier
+        x_data = self._apply_x_conversion(raw_x, x_conversion)
         debug_print(f"GraphCanvas._build_figure x_axis_column={x_axis_column} points={len(x_data)}")
-        debug_print(f"GraphCanvas._build_figure x_conversion={x_conversion} multiplier={x_multiplier}")
+        debug_print(f"GraphCanvas._build_figure x_conversion={x_conversion}")
         debug_print(f"GraphCanvas._build_figure raw_x_sample={raw_x[:3].tolist()}")
         debug_print(f"GraphCanvas._build_figure converted_x_sample={x_data[:3].tolist()}")
 
         color_index = 0
+        plotted_x_values: list[float] = []
         for file_path in files:
             debug_print(f"GraphCanvas._build_figure load y file={file_path}")
             source = GenericTextDataSource(file_path)
@@ -146,15 +146,13 @@ class GraphCanvas(QWidget):
                 yaxis_side = settings.get("yaxis", "y1")
                 legend_label = settings.get("legend", column) or column
                 conversion = settings.get("conversion", "as-is")
-                multiplier = self._conversion_multiplier(conversion)
                 yaxis = "y2" if yaxis_side == "y2" else "y"
                 raw_y = np.asarray(y_data, dtype=float)
-                converted_y = raw_y * multiplier
-                debug_print(
-                    f"GraphCanvas._build_figure conversion column={column} conversion={conversion} multiplier={multiplier}"
-                )
+                converted_y = self._apply_conversion(raw_y, conversion)
+                debug_print(f"GraphCanvas._build_figure conversion column={column} conversion={conversion}")
                 debug_print(f"GraphCanvas._build_figure raw_y_sample={raw_y[:3].tolist()}")
                 debug_print(f"GraphCanvas._build_figure converted_y_sample={converted_y[:3].tolist()}")
+                plotted_x_values.extend(float(value) for value in x_data if np.isfinite(value))
                 color = settings.get("color") or PlotStyle.series_color(color_index)
                 self._add_series_traces(
                     figure,
@@ -217,6 +215,11 @@ class GraphCanvas(QWidget):
             ),
         )
         self._apply_publication_axis_styling(figure, state)
+        if trace_mode == "lines":
+            x_range = self._padded_axis_range(plotted_x_values)
+            if x_range is not None:
+                figure.layout.xaxis.range = x_range
+                figure.layout.xaxis.autorange = False
         if self._last_trace_count == 0:
             debug_print("GraphCanvas._build_figure no traces after processing")
             figure.add_annotation(
@@ -229,6 +232,19 @@ class GraphCanvas(QWidget):
                 font=PlotStyle.empty_annotation_font(),
             )
         return figure
+
+    def _padded_axis_range(self, values: list[float]) -> list[float] | None:
+        finite_values = [float(value) for value in values if np.isfinite(value)]
+        if not finite_values:
+            return None
+        minimum = min(finite_values)
+        maximum = max(finite_values)
+        span = maximum - minimum
+        if span == 0:
+            padding = abs(minimum) * 0.05 or 1.0
+        else:
+            padding = span * 0.05
+        return [minimum - padding, maximum + padding]
 
     def _add_series_traces(
         self,
@@ -247,14 +263,25 @@ class GraphCanvas(QWidget):
         x_values = np.asarray(x_data).tolist()
         y_values = np.asarray(y_data).tolist()
         if trace_mode == "lines+markers":
+            marker_indices = PlotStyle.marker_sample_indices(len(x_values))
             figure.add_trace(
                 go.Scatter(
                     x=x_values,
                     y=y_values,
-                    mode="lines+markers",
+                    mode="lines",
                     name=legend_label,
                     yaxis=yaxis,
                     line=PlotStyle.trace_line(color=color, dash=line_style),
+                )
+            )
+            figure.add_trace(
+                go.Scatter(
+                    x=[x_values[index] for index in marker_indices],
+                    y=[y_values[index] for index in marker_indices],
+                    mode="markers",
+                    name=legend_label,
+                    yaxis=yaxis,
+                    showlegend=False,
                     marker=PlotStyle.marker_style(series_index, color=color),
                 )
             )
@@ -312,6 +339,25 @@ class GraphCanvas(QWidget):
         debug_print("GraphCanvas._publication_axis_config complete")
         return config
 
+    def _apply_conversion(self, values: np.ndarray, conversion: str | None) -> np.ndarray:
+        normalized = self._normalize_conversion(conversion)
+        if normalized == "log10":
+            return self._log10_values(values)
+        return np.asarray(values, dtype=float) * self._conversion_multiplier(normalized)
+
+    def _apply_x_conversion(self, values: np.ndarray, conversion: str | None) -> np.ndarray:
+        normalized = self._normalize_x_conversion(conversion)
+        if normalized == "log10":
+            return self._log10_values(values)
+        return np.asarray(values, dtype=float) * self._x_conversion_multiplier(normalized)
+
+    def _log10_values(self, values: np.ndarray) -> np.ndarray:
+        data = np.asarray(values, dtype=float)
+        converted = np.full(data.shape, np.nan, dtype=float)
+        positive = data > 0
+        converted[positive] = np.log10(data[positive])
+        return converted
+
     def _conversion_multiplier(self, conversion: str) -> float:
         debug_print(f"GraphCanvas._conversion_multiplier conversion={conversion}")
         normalized = self._normalize_conversion(conversion)
@@ -321,6 +367,7 @@ class GraphCanvas(QWidget):
             "percent": 100.0,
             "mpa": 1e-6,
             "gpa": 1e-9,
+            "log10": 1.0,
         }
         multiplier = multipliers.get(normalized, 1.0)
         debug_print(f"GraphCanvas._conversion_multiplier multiplier={multiplier}")
@@ -335,6 +382,7 @@ class GraphCanvas(QWidget):
             "percent": 100.0,
             "sec-to-min": 1.0 / 60.0,
             "sec-to-hour": 1.0 / 3600.0,
+            "log10": 1.0,
         }
         multiplier = multipliers.get(normalized, 1.0)
         debug_print(f"GraphCanvas._x_conversion_multiplier multiplier={multiplier}")
@@ -365,6 +413,10 @@ class GraphCanvas(QWidget):
             "seconds to hours": "sec-to-hour",
             "hour": "sec-to-hour",
             "hours": "sec-to-hour",
+            "log": "log10",
+            "log10": "log10",
+            "base 10 log": "log10",
+            "base-10 log": "log10",
         }
         normalized = aliases.get(value, "as-is")
         debug_print(f"GraphCanvas._normalize_x_conversion normalized={normalized}")
@@ -384,6 +436,10 @@ class GraphCanvas(QWidget):
             "percentage": "percent",
             "mpa": "mpa",
             "gpa": "gpa",
+            "log": "log10",
+            "log10": "log10",
+            "base 10 log": "log10",
+            "base-10 log": "log10",
         }
         normalized = aliases.get(value, "as-is")
         debug_print(f"GraphCanvas._normalize_conversion normalized={normalized}")

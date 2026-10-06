@@ -17,6 +17,7 @@ PALETTES = {
     "cool-warm-extended": ["#000059", "#295698", "#fcf5e6", "#f7d5b2", "#590c36"],
     "steel": ["#0b2545", "#3e5c76", "#f6f9ff", "#f4c06a", "#b3541e"],
     "ice-sunset": ["#1c3d5a", "#3aa0c8", "#ffffff", "#f9d976", "#f47068"],
+    "discrete-custom": ["#0066ff", "#ff1f1f"],
 }
 
 ALLOWED_VTK_EXTENSIONS = {".vts", ".vtu", ".vti", ".vtk", ".vtp"}

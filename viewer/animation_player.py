@@ -157,14 +157,34 @@ class _FrameFetcher(QObject):
 
     @staticmethod
     def _phase_overlay_file(file_path):
+        debug_print("FrameFetcher._phase_overlay_file called")
         if not file_path:
+            debug_print("FrameFetcher no file_path for phase overlay")
             return None
         path = Path(file_path)
-        if path.name.startswith("PhaseField_"):
+        file_name = path.name
+        debug_print(f"FrameFetcher overlay source filename={file_name}")
+        if file_name.startswith("PhaseField_"):
+            debug_print("FrameFetcher source is already PhaseField")
             return path
-        suffix = path.name.split("_")[-1]
-        candidate = path.with_name(f"PhaseField_{suffix}")
-        return candidate if candidate.exists() else None
+        suffix = file_name.split("_")[-1]
+        debug_print(f"FrameFetcher overlay suffix={suffix}")
+        phase_candidate = path.with_name(f"PhaseField_{suffix}")
+        debug_print(f"FrameFetcher overlay PhaseField candidate={phase_candidate}")
+        if phase_candidate.exists():
+            debug_print("FrameFetcher overlay using PhaseField candidate")
+            return phase_candidate
+        debug_print("FrameFetcher overlay PhaseField candidate missing")
+        if file_name.startswith("PhaseFieldDistorted_"):
+            debug_print("FrameFetcher source is PhaseFieldDistorted fallback")
+            return path
+        distorted_candidate = path.with_name(f"PhaseFieldDistorted_{suffix}")
+        debug_print(f"FrameFetcher overlay PhaseFieldDistorted candidate={distorted_candidate}")
+        if distorted_candidate.exists():
+            debug_print("FrameFetcher overlay using PhaseFieldDistorted fallback")
+            return distorted_candidate
+        debug_print("FrameFetcher overlay PhaseFieldDistorted fallback missing")
+        return None
 
     def _fast_load(self, mesh, array_key, component, scale):
         raw = mesh[array_key]

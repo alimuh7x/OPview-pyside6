@@ -443,7 +443,7 @@ class SidebarWidget(QWidget):
                 })
 
         for group in dataset_groups.values():
-            label = f"{group['module_label']}: {group['label']}"
+            label = self._dataset_display_label(group)
             self.dataset_combo.addItem(label, group)
             item = QListWidgetItem(label)
             item.setToolTip(self._dataset_tooltip(group))
@@ -464,6 +464,14 @@ class SidebarWidget(QWidget):
             self.dataset_status_label.setText("Check a project to load datasets")
         debug_print(f"SidebarWidget dataset combo rebuilt with {total_datasets} options")
 
+    def _dataset_display_label(self, group: dict) -> str:
+        debug_print("SidebarWidget._dataset_display_label called")
+        module_label = str(group.get("module_label", "")).strip()
+        label = str(group.get("label", "")).strip()
+        display = f"{module_label}: {label}" if module_label else label
+        debug_print(f"SidebarWidget dataset display label={display}")
+        return display
+
     def _dataset_tooltip(self, group: dict) -> str:
         projects = [
             project.get("project_name", "")
@@ -474,7 +482,8 @@ class SidebarWidget(QWidget):
         total_files = sum(project.get("file_count", len(project.get("files", []))) for project in group.get("available_projects", []))
         shown_files = sum(len(project.get("files", [])) for project in group.get("available_projects", []))
         limit_text = f"\nShowing first {shown_files} of {total_files} files" if shown_files < total_files else f"\n{total_files} files"
-        return f"{group.get('module_label', '')}: {group.get('label', '')}\n{project_text}{limit_text}".strip()
+        label = self._dataset_display_label(group)
+        return f"{label}\n{project_text}{limit_text}".strip()
 
     def _is_text_project(self, project_info: dict) -> bool:
         debug_print("SidebarWidget._is_text_project called")

@@ -1,15 +1,18 @@
 import os
+import tempfile
 import unittest
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
     import numpy as np
     from PySide6.QtWidgets import QApplication
-    from viewer.animation_player import AnimationPlayer, _MatplotlibCanvas
+    from viewer.animation_player import AnimationPlayer, _FrameFetcher, _MatplotlibCanvas
 except ModuleNotFoundError as exc:
     QApplication = None
     AnimationPlayer = None
+    _FrameFetcher = None
     _MatplotlibCanvas = None
     np = None
     MISSING_DEPENDENCY = exc.name
@@ -147,6 +150,38 @@ class AnimationPlayerTests(unittest.TestCase):
             )
         finally:
             player.close()
+
+    def test_animation_overlay_file_prefers_phasefield_over_distorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            source = vtk_dir / "ElasticStrains_00005000.vts"
+            phase = vtk_dir / "PhaseField_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            source.write_text("", encoding="utf-8")
+            phase.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(_FrameFetcher._phase_overlay_file(str(source)), phase)
+
+    def test_animation_overlay_file_falls_back_to_distorted_phasefield(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            source = vtk_dir / "ElasticStrains_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            source.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(_FrameFetcher._phase_overlay_file(str(source)), distorted)
+
+    def test_animation_overlay_file_prefers_phasefield_when_source_is_distorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            phase = vtk_dir / "PhaseField_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            phase.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(_FrameFetcher._phase_overlay_file(str(distorted)), phase)
 
     def test_matplotlib_canvas_draws_phase_fraction_overlays_with_legend(self):
         canvas = _MatplotlibCanvas()

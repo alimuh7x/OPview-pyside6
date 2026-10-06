@@ -21,6 +21,7 @@ from app.debug import debug_print
 from app.menu_bar import AppMenuBar
 from app.resources import APP_LOGO_PATH, DOCUMENTATION_PATH
 from graphs.tab_widget import CustomGraphTab
+from multi_property.multi_property_tab import MultiPropertyTab
 from multi_view.multi_view_tab import MultiViewTab
 from sidebar.sidebar_widget import SidebarWidget
 from single_view.tab_widget import SingleViewTab
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
         self.sidebar_widget: SidebarWidget | None = None
         self.single_view_tab: SingleViewTab | None = None
         self.multi_view_tab: MultiViewTab | None = None
+        self.multi_property_tab: MultiPropertyTab | None = None
         self.custom_graph_tab: CustomGraphTab | None = None
         self.content_tabs: dict[str, QWidget] = {}
         self.app_menu_bar: AppMenuBar | None = None
@@ -75,6 +77,8 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow added Single View tab")
         tabs.addTab("Multi View")
         debug_print("MainWindow added Multi View tab")
+        tabs.addTab("Multi Property")
+        debug_print("MainWindow added Multi Property tab")
         tabs.addTab("Custom Graph")
         debug_print("MainWindow added Custom Graph tab")
         tabs.setCurrentIndex(0)
@@ -102,6 +106,8 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow created SingleViewTab")
         self.multi_view_tab = MultiViewTab()
         debug_print("MainWindow created MultiViewTab")
+        self.multi_property_tab = MultiPropertyTab()
+        debug_print("MainWindow created MultiPropertyTab")
         self.custom_graph_tab = CustomGraphTab()
         debug_print("MainWindow created CustomGraphTab")
         self.content_stack = QStackedWidget()
@@ -110,6 +116,8 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow added SingleViewTab to content stack")
         self.content_stack.addWidget(self.multi_view_tab)
         debug_print("MainWindow added MultiViewTab to content stack")
+        self.content_stack.addWidget(self.multi_property_tab)
+        debug_print("MainWindow added MultiPropertyTab to content stack")
         self.content_stack.addWidget(self.custom_graph_tab)
         debug_print("MainWindow added CustomGraphTab to content stack")
         self.content_stack.setCurrentIndex(0)
@@ -130,6 +138,7 @@ class MainWindow(QMainWindow):
         self.content_tabs = {
             "single_view": self.single_view_tab,
             "multi_view": self.multi_view_tab,
+            "multi_property": self.multi_property_tab,
             "custom_graph": self.custom_graph_tab,
         }
         content_layout.addWidget(self.content_scroll, 1)
@@ -189,6 +198,7 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow._connect_signals called")
         assert self.sidebar_widget is not None
         assert self.single_view_tab is not None
+        assert self.multi_property_tab is not None
         assert self.custom_graph_tab is not None
         assert self.app_menu_bar is not None
         self.sidebar_widget.add_panel_requested.connect(self._on_add_panel_requested)
@@ -290,7 +300,7 @@ class MainWindow(QMainWindow):
         if viewport_width <= 0:
             debug_print("MainWindow._sync_content_width skipped: viewport width unavailable")
             return
-        custom_graph_active = getattr(self, "tab_widget", None) is not None and self.tab_widget.currentIndex() == 2
+        custom_graph_active = getattr(self, "tab_widget", None) is not None and self.tab_widget.currentIndex() == 3
         debug_print(f"MainWindow custom graph active={custom_graph_active}")
         self.content_stack.setMinimumWidth(0)
         if custom_graph_active:
@@ -316,10 +326,14 @@ class MainWindow(QMainWindow):
     def _on_add_panel_requested(self, dataset_info: dict) -> None:
         assert self.single_view_tab is not None
         assert self.multi_view_tab is not None
+        assert self.multi_property_tab is not None
         active_index = self.tab_widget.currentIndex()
         if active_index == 1:
             # Multi View tab is active — load dataset into multi view
             self.multi_view_tab.set_dataset(dataset_info)
+        elif active_index == 2:
+            debug_print("MainWindow routing dataset to Multi Property")
+            self.multi_property_tab.set_dataset(dataset_info)
         else:
             # Single View (default)
             self.single_view_tab.add_panel(dataset_info)
@@ -330,7 +344,7 @@ class MainWindow(QMainWindow):
         self.content_stack.setCurrentIndex(index)
         self._sync_content_width()
         debug_print("MainWindow synced content width after tab change")
-        mode = "custom_graph" if index == 2 else "vtk"
+        mode = "custom_graph" if index == 3 else "vtk"
         self.sidebar_widget.set_mode(mode)
         debug_print(f"MainWindow._on_main_tab_changed sidebar_mode={mode}")
 

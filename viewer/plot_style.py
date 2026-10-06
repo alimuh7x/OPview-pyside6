@@ -20,7 +20,7 @@ class PlotStyle:
     PANEL_AXIS_TITLE_SIZE   = 22
     PANEL_TICK_FONT_SIZE    = 18
     TRACE_LINE_WIDTH        = 3.5
-    MAX_MARKER_POINTS       = 15
+    MAX_MARKER_POINTS       = 20
     MARKER_SIZE             = 12
     MARKER_SYMBOLS          = (
         "circle",
@@ -165,14 +165,15 @@ class PlotStyle:
         return indices
 
     @classmethod
-    def marker_style(cls, series_index: int, **overrides: Any) -> dict[str, Any]:
+    def marker_style(cls, series_index: int, *, limit_displayed: bool = True, **overrides: Any) -> dict[str, Any]:
         symbol = cls.MARKER_SYMBOLS[int(series_index) % len(cls.MARKER_SYMBOLS)]
         config = {
             "size": cls.MARKER_SIZE,
             "symbol": symbol,
-            "maxdisplayed": cls.MAX_MARKER_POINTS,
             "line": {"color": "white", "width": 1.5},
         }
+        if limit_displayed:
+            config["maxdisplayed"] = cls.MAX_MARKER_POINTS
         config.update(overrides)
         return config
 

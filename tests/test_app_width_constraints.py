@@ -350,6 +350,30 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertGreaterEqual(line_figure.layout.margin.t, 70)
         self.assertGreaterEqual(histogram_figure.layout.margin.t, 70)
 
+    def test_line_scan_legend_is_outside_right_side(self):
+        from viewer.line_scan_canvas import LineScanCanvas
+
+        canvas = LineScanCanvas.__new__(LineScanCanvas)
+        canvas._canvas_width = 800
+        canvas._canvas_height = 360
+        canvas._web_view = None
+
+        figure = canvas._figure_for_lines(
+            [
+                {"name": "Stresses[0]", "x": [0.0, 1.0], "y": [2.0, 3.0]},
+                {"name": "Stresses[1]", "x": [0.0, 1.0], "y": [4.0, 5.0]},
+            ],
+            title="Line Scan",
+            x_label="X Position",
+            y_label="Value",
+        )
+
+        self.assertEqual(figure.layout.legend.orientation, "v")
+        self.assertGreater(figure.layout.legend.x, 1.0)
+        self.assertEqual(figure.layout.legend.y, 1.0)
+        self.assertEqual(figure.layout.legend.yanchor, "top")
+        self.assertGreaterEqual(figure.layout.margin.r, 180)
+
     def test_time_plot_modebar_stays_visible_at_top(self):
         canvas = TimePlotCanvas.__new__(TimePlotCanvas)
 
@@ -465,7 +489,7 @@ class AppWidthConstraintTests(unittest.TestCase):
         panel.show()
         QApplication.processEvents()
 
-        self.assertLessEqual(panel.line_toolbar.height(), 44)
+        self.assertLessEqual(panel.line_toolbar.height(), 32)
         self.assertEqual(panel.line_card.layout().stretch(1), 0)
 
     def test_panel_widget_keeps_heatmap_logo_visible_when_narrow(self):

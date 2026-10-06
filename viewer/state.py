@@ -27,6 +27,8 @@ class ViewerState:
     first_click: Optional[float] = None
     clicked_message: Optional[str] = None
     colorscale_mode: str = "normal"
+    discrete_band_count: int = 2
+    colorbar_mode: str = "bar"
     line_scan_y: Optional[float] = None
     line_scan_x: Optional[float] = None
     line_scan_direction: str = "horizontal"

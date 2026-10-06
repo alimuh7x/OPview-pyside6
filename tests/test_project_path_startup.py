@@ -29,6 +29,16 @@ class ProjectPathStartupTests(unittest.TestCase):
         self.assertIn("DemoProject/VTK", projects)
         self.assertEqual(projects["DemoProject"]["vtk_path"], vtk)
 
+    def test_linux_launcher_honors_no_gpu_mode(self):
+        launcher = Path("opview.sh").read_text(encoding="utf-8")
+
+        self.assertIn("OPVIEW_NO_GPU", launcher)
+        self.assertIn("QT_OPENGL=software", launcher)
+        self.assertIn("QT_QUICK_BACKEND=software", launcher)
+        self.assertIn("QTWEBENGINE_DISABLE_GPU=1", launcher)
+        self.assertIn("--disable-gpu-compositing", launcher)
+        self.assertIn("[DEBUG] QTWEBENGINE_CHROMIUM_FLAGS=", launcher)
+
 
 if __name__ == "__main__":
     unittest.main()

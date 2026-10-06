@@ -58,10 +58,10 @@ class PlotStyleTests(unittest.TestCase):
         self.assertEqual(PlotStyle.series_color(1), "#d62728")
         self.assertEqual(PlotStyle.series_color(len(PlotStyle.SERIES_COLORS)), "#111111")
 
-    def test_marker_sample_indices_keep_at_most_15_points_including_ends(self):
+    def test_marker_sample_indices_keep_at_most_20_points_including_ends(self):
         indices = PlotStyle.marker_sample_indices(40)
 
-        self.assertEqual(len(indices), 15)
+        self.assertEqual(len(indices), 20)
         self.assertEqual(indices[0], 0)
         self.assertEqual(indices[-1], 39)
 

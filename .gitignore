@@ -24,6 +24,12 @@ build-*/
 *.png
 *.jpg
 !assets/*.png
+!doc/images/*.png
+
+# Documentation image sources (full-size slides)
+doc/images/Images/
+doc/images/*.pptx
+doc/images/~$*
 
 # VTK simulation outputs
 *.vtk

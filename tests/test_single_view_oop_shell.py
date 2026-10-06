@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QSizePolicy, QS
 from app.application_bootstrap import ApplicationBootstrap
 from app.main_window import MainWindow
 from app.styles import build_app_stylesheet
+from multi_property.multi_property_tab import MultiPropertyTab
 from single_view.tab_widget import SingleViewTab
 from viewer.histogram_canvas import HistogramCanvas
 from viewer.panel_widget import PanelWidget, PlaybackTickMarksWidget
@@ -33,6 +34,8 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertIsInstance(window, MainWindow)
         self.assertIs(window.single_view_tab, window.content_tabs["single_view"])
+        self.assertIsInstance(window.content_tabs["multi_property"], MultiPropertyTab)
+        self.assertEqual(window.tab_widget.tabText(2), "Multi Property")
 
     def test_application_bootstrap_uses_windows11_style(self):
         bootstrap = ApplicationBootstrap()
@@ -62,6 +65,15 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIn("QPushButton#lineScanDirectionButton:hover", stylesheet)
         self.assertIn("QPushButton#lineScanDirectionButton:checked", stylesheet)
         self.assertIn("background: #9aabbf;", stylesheet)
+
+    def test_discrete_band_buttons_have_prominent_styles(self):
+        stylesheet = build_app_stylesheet()
+
+        self.assertIn("QPushButton#discreteBandButton", stylesheet)
+        self.assertIn("color: #111827;", stylesheet)
+        self.assertIn("border: 2px solid #8a96a8;", stylesheet)
+        self.assertIn("font-size: 18px;", stylesheet)
+        self.assertIn("font-weight: 900;", stylesheet)
 
     def test_main_window_wires_sidebar_to_single_view(self):
         window = MainWindow()
@@ -207,6 +219,82 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertFalse(panel.time_plot_use_same_points_check.isChecked())
         self.assertTrue(panel.time_plot_show_points_check.isChecked())
         self.assertTrue(panel.time_plot_show_points_check.isEnabled())
+
+    def test_single_view_line_frequency_and_plot_over_time_share_default_width(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        self.assertEqual(panel.line_scan_canvas.width(), 600)
+        self.assertEqual(panel.histogram_canvas.width(), 600)
+        self.assertEqual(panel.time_plot_canvas.width(), 600)
+        self.assertFalse(panel.line_scan_canvas._show_legend)
+        self.assertFalse(panel.histogram_canvas._show_legend)
+
+    def test_single_view_discrete_palette_controls_show_only_for_discrete_custom(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        controls = panel.controls_widget
+
+        self.assertTrue(controls.discrete_minus_button.isHidden())
+        self.assertTrue(controls.discrete_band_label.isHidden())
+        self.assertTrue(controls.discrete_plus_button.isHidden())
+        self.assertTrue(controls.colorbar_mode_combo.isHidden())
+
+        index = controls.palette_combo.findData("discrete-custom")
+        controls.palette_combo.setCurrentIndex(index)
+        QApplication.processEvents()
+
+        self.assertFalse(controls.discrete_minus_button.isHidden())
+        self.assertFalse(controls.discrete_band_label.isHidden())
+        self.assertFalse(controls.discrete_plus_button.isHidden())
+        self.assertFalse(controls.colorbar_mode_combo.isHidden())
+        self.assertEqual(controls.discrete_minus_button.objectName(), "discreteBandButton")
+        self.assertEqual(controls.discrete_plus_button.objectName(), "discreteBandButton")
+
+    def test_single_view_discrete_palette_can_choose_bar_or_numbered_boxes(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        controls = panel.controls_widget
+
+        index = controls.palette_combo.findData("discrete-custom")
+        controls.palette_combo.setCurrentIndex(index)
+        QApplication.processEvents()
+
+        self.assertEqual(controls.current_colorbar_mode(), "bar")
+        self.assertGreaterEqual(controls.colorbar_mode_combo.findData("bar"), 0)
+        boxes_index = controls.colorbar_mode_combo.findData("boxes")
+        self.assertGreaterEqual(boxes_index, 0)
+
+        controls.colorbar_mode_combo.setCurrentIndex(boxes_index)
+
+        self.assertEqual(controls.current_colorbar_mode(), "boxes")
+
+    def test_single_view_discrete_band_buttons_clamp_between_two_and_ten(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        controls = panel.controls_widget
+
+        controls._change_discrete_band_count(-1)
+        self.assertEqual(controls.current_discrete_band_count(), 2)
+        controls._change_discrete_band_count(20)
+        self.assertEqual(controls.current_discrete_band_count(), 10)
+        self.assertEqual(controls.discrete_band_label.text(), "10")
+
+    def test_single_view_line_and_frequency_hide_legend_margin(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        line_figure = panel.line_scan_canvas._figure_for_lines(
+            [{"name": "PhaseField", "x": [0.0, 1.0], "y": [2.0, 3.0]}],
+            title="Line Scan",
+            x_label="X Position",
+            y_label="Value",
+        )
+        histogram_figure = panel.histogram_canvas._figure_for_histograms(
+            [{"name": "PhaseField", "values": [1.0, 2.0, 3.0]}],
+            label="Value",
+            bins=10,
+        )
+
+        self.assertFalse(line_figure.layout.showlegend)
+        self.assertFalse(histogram_figure.layout.showlegend)
+        self.assertEqual(line_figure.layout.margin.r, 20)
+        self.assertEqual(histogram_figure.layout.margin.r, 20)
 
     def test_plot_over_time_show_points_defaults_on_but_can_be_disabled(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})
@@ -946,6 +1034,95 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertEqual(figure.data[0].type, "heatmap")
         self.assertNotEqual(figure.data[0].opacity, 0)
         self.assertIsNotNone(figure.data[0].colorbar)
+
+    def test_live_heatmap_can_replace_colorbar_with_discrete_numbered_boxes(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        payload = panel.heatmap_canvas._last_export_payload
+
+        figure = panel.heatmap_canvas._build_figure(
+            x_grid=payload["x_grid"],
+            y_grid=payload["y_grid"],
+            z_grid=payload["z_grid"],
+            cmap=payload["cmap"],
+            vmin=payload["vmin"],
+            vmax=payload["vmax"],
+            line_overlay=payload["line_overlay"],
+            overlay_grid=payload["overlay_grid"],
+            title="",
+            colorbar_label="Phase",
+            plot_type="heatmap",
+            colorbar_mode="boxes",
+            discrete_colors=["#0066ff", "#ff1f1f", "#00c853"],
+        )
+
+        self.assertFalse(figure.data[0].showscale)
+        labels = [
+            annotation.text
+            for annotation in figure.layout.annotations
+            if annotation.name == "Discrete Colorbar Label"
+        ]
+        self.assertEqual(labels, ["1", "2", "3"])
+        titles = [
+            annotation
+            for annotation in figure.layout.annotations
+            if annotation.name == "Discrete Colorbar Title"
+        ]
+        self.assertEqual(len(titles), 1)
+        self.assertEqual(titles[0].text, "Phase")
+        self.assertEqual(titles[0].textangle, 90)
+        label_annotations = [
+            annotation
+            for annotation in figure.layout.annotations
+            if annotation.name == "Discrete Colorbar Label"
+        ]
+        label_positions = [annotation.y for annotation in label_annotations]
+        expected_side_label_y = sum(label_positions) / len(label_positions)
+        self.assertAlmostEqual(titles[0].y, expected_side_label_y)
+        self.assertGreater(titles[0].x, label_annotations[0].x)
+        self.assertGreaterEqual(titles[0].x - label_annotations[0].x, 0.09)
+
+    def test_single_view_custom_palette_boxes_mode_reaches_render_payload(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        controls = panel.controls_widget
+        controls.palette_combo.setCurrentIndex(controls.palette_combo.findData("discrete-custom"))
+        controls.colorbar_mode_combo.setCurrentIndex(controls.colorbar_mode_combo.findData("boxes"))
+
+        panel.controller.refresh_view()
+        payload = panel.heatmap_canvas._last_export_payload
+
+        self.assertEqual(panel.controller.state.colorbar_mode, "boxes")
+        self.assertEqual(payload["colorbar_mode"], "boxes")
+        self.assertEqual(len(payload["discrete_colors"]), controls.current_discrete_band_count())
 
     def test_png_export_uses_automatic_good_resolution(self):
         from matplotlib import image as mpimg

@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QPushButton, QScrollArea, QTabWidget, QWidget
 
 from data.text_sources import GenericTextDataSource
@@ -198,6 +198,18 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         )
         self.assertFalse(sidebar.panel_group.isHidden())
         self.assertTrue(sidebar.text_files_group.isHidden())
+
+    def test_sidebar_dataset_display_label_omits_empty_module_label(self):
+        sidebar = SidebarWidget()
+
+        self.assertEqual(
+            sidebar._dataset_display_label({"module_label": "", "label": "OtherThing"}),
+            "OtherThing",
+        )
+        self.assertEqual(
+            sidebar._dataset_display_label({"module_label": "Mechanics", "label": "Elastic"}),
+            "Mechanics: Elastic",
+        )
 
     def test_sidebar_vtk_status_counts_visible_projects_only(self):
         root = Path(tempfile.mkdtemp())
@@ -529,7 +541,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
             }
         )
 
-        window.tab_widget.setCurrentIndex(2)
+        window.tab_widget.setCurrentIndex(3)
         window.sidebar_widget.project_list.item(0).setCheckState(Qt.CheckState.Checked)
 
         tabs = window.custom_graph_tab.findChild(QTabWidget, "graphPanelTabs")
@@ -564,7 +576,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
             }
         )
 
-        window.tab_widget.setCurrentIndex(2)
+        window.tab_widget.setCurrentIndex(3)
         window.sidebar_widget.project_list.item(0).setCheckState(Qt.CheckState.Checked)
         window.sidebar_widget.text_file_list.item(0).setCheckState(Qt.CheckState.Checked)
 
@@ -599,6 +611,25 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(panel.state()["files"], [str(path.resolve())])
         self.assertFalse(hasattr(panel, "add_file_button"))
 
+    def test_graph_file_combo_shows_scrollbar_for_many_text_files(self):
+        root = Path(tempfile.mkdtemp()) / "RunA"
+        textdata = root / "TextData"
+        textdata.mkdir(parents=True)
+        for index in range(30):
+            (textdata / f"curve_{index:02d}.txt").write_text("Time A\n0 1\n", encoding="utf-8")
+        panel = GraphPanelWidget(panel_number=1, projects={
+            "RunA": {
+                "path": root,
+                "has_vtk": False,
+                "vtk_path": None,
+                "has_textdata": True,
+                "textdata_path": textdata,
+            }
+        }, selected_project_names=["RunA"])
+
+        self.assertEqual(panel.file_combo.maxVisibleItems(), 12)
+        self.assertEqual(panel.file_combo.view().verticalScrollBarPolicy(), Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+
     def test_graph_panel_exposes_png_download_button(self):
         panel = GraphPanelWidget(panel_number=1)
 
@@ -606,12 +637,51 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(panel.download_png_button.toolTip(), "Download graph as PNG")
         self.assertFalse(panel.download_png_button.icon().isNull())
 
-    def test_graph_panel_exposes_mp4_animation_button(self):
+    def test_graph_panel_exposes_animate_button(self):
         panel = GraphPanelWidget(panel_number=1)
 
-        self.assertEqual(panel.download_animation_button.text(), "MP4")
-        self.assertEqual(panel.download_animation_button.toolTip(), "Open reveal animation and export as MP4")
+        self.assertEqual(panel.download_animation_button.text(), "Animate")
+        self.assertEqual(panel.download_animation_button.toolTip(), "Open reveal animation")
         self.assertFalse(panel.download_animation_button.icon().isNull())
+
+    def test_graph_panel_exposes_settings_collapse_button(self):
+        panel = GraphPanelWidget(panel_number=1)
+
+        self.assertEqual(panel.settings_toggle_button.text(), "")
+        self.assertEqual(panel.settings_toggle_button.parent().objectName(), "graphSettingsHeader")
+        self.assertTrue(panel.settings_toggle_button.isCheckable())
+        self.assertTrue(panel.settings_toggle_button.isChecked())
+        self.assertTrue(panel.settings_toggle_button.isFlat())
+        self.assertEqual(panel.settings_toggle_button.iconSize(), QSize(28, 28))
+        self.assertEqual(panel.settings_toggle_button.toolTip(), "Hide settings")
+        self.assertEqual(panel.settings_toggle_button.property("icon_asset"), "show_sidebar.png")
+        self.assertFalse(panel.settings_toggle_button.icon().isNull())
+        self.assertFalse(panel.settings_scroll.isHidden())
+        self.assertTrue(panel.settings_collapsed_rail.isHidden())
+        self.assertEqual(panel.settings_collapsed_label.text(), "Settings")
+        self.assertNotIn("\n", panel.settings_collapsed_label.text())
+        self.assertEqual(panel.settings_collapsed_label.rotation_degrees(), 90)
+        self.assertGreater(panel.settings_collapsed_label.sizeHint().height(), panel.settings_collapsed_label.sizeHint().width())
+
+    def test_graph_panel_settings_icon_collapses_to_right_rail_and_restores_settings(self):
+        panel = GraphPanelWidget(panel_number=1)
+
+        panel.settings_toggle_button.setChecked(False)
+
+        self.assertTrue(panel.settings_scroll.isHidden())
+        self.assertFalse(panel.settings_collapsed_rail.isHidden())
+        self.assertTrue(panel.settings_collapsed_toggle_button.isFlat())
+        self.assertEqual(panel.settings_collapsed_toggle_button.toolTip(), "Show settings")
+        self.assertEqual(panel.settings_collapsed_toggle_button.property("icon_asset"), "hide_sidebar.png")
+        self.assertEqual(panel.settings_collapsed_label.text(), "Settings")
+        self.assertNotIn("\n", panel.settings_collapsed_label.text())
+
+        panel.settings_collapsed_toggle_button.setChecked(True)
+
+        self.assertFalse(panel.settings_scroll.isHidden())
+        self.assertTrue(panel.settings_collapsed_rail.isHidden())
+        self.assertEqual(panel.settings_toggle_button.toolTip(), "Hide settings")
+        self.assertEqual(panel.settings_toggle_button.property("icon_asset"), "show_sidebar.png")
 
     def test_graph_panel_opens_animation_player_with_copied_state(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -734,7 +804,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         figure = GraphAnimationPlayer.build_reveal_figure(state)
         preview = GraphAnimationPlayer.preview_figure_for_frame(figure, 0)
 
-        self.assertEqual(list(preview.layout.xaxis.range), [0, 2])
+        self.assertEqual(list(preview.layout.xaxis.range), [-0.1, 2.1])
         self.assertEqual(list(preview.layout.yaxis.range), [10, 30])
         self.assertEqual(list(preview.layout.yaxis2.range), [100, 300])
 
@@ -769,6 +839,41 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertLessEqual(len(figure.frames), 120)
         self.assertEqual(list(figure.frames[-1].data[0].x)[-1], 999)
         self.assertEqual(list(figure.frames[-1].data[0].y)[-1], 1998)
+
+    def test_graph_animation_player_downsamples_large_traces_to_1000_points(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        rows = ["Time A"]
+        rows.extend(f"{index} {index * 2}" for index in range(1000))
+        path.write_text("\n".join(rows) + "\n", encoding="utf-8")
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "Alpha", "yaxis": "y1", "conversion": "as-is", "color": "#111111"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "as-is",
+            "x_axis_title": "Time",
+            "yaxis1_title": "Y1",
+            "yaxis2_title": "Y2",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+            "legend_position": "top-left",
+        }
+
+        figure = GraphAnimationPlayer.build_reveal_figure(state)
+        final_trace = figure.frames[-1].data[0]
+
+        self.assertEqual(len(final_trace.x), 1000)
+        self.assertEqual(list(final_trace.x)[0], 0)
+        self.assertEqual(list(final_trace.y)[0], 0)
+        self.assertEqual(list(final_trace.x)[-1], 999)
+        self.assertEqual(list(final_trace.y)[-1], 1998)
 
     def test_graph_animation_player_interpolates_large_reveal_frames_for_smooth_motion(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -863,7 +968,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(final_prefix.mode, "lines+markers")
         self.assertEqual(list(final_prefix.x), [0, 1, 2, 3])
 
-    def test_graph_animation_player_does_not_build_extra_marker_trace_for_lines_plus_markers(self):
+    def test_graph_animation_player_animates_sampled_marker_trace_for_lines_plus_markers(self):
         temp_dir = Path(tempfile.mkdtemp())
         path = temp_dir / "curves.txt"
         path.write_text("Time A\n0 0\n1 1\n2 2\n3 3\n", encoding="utf-8")
@@ -889,8 +994,10 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         figure = GraphAnimationPlayer.build_reveal_figure(state)
 
-        self.assertEqual(len(figure.frames[1].data), 1)
+        self.assertEqual(len(figure.frames[1].data), 2)
         self.assertEqual(figure.frames[1].data[0].mode, "lines")
+        self.assertEqual(figure.frames[1].data[1].mode, "markers")
+        self.assertEqual(figure.frames[-1].data[1].showlegend, False)
 
     def test_graph_animation_player_defers_frame_build_until_prepare(self):
         original_build = GraphAnimationPlayer.build_reveal_figure
@@ -924,6 +1031,33 @@ class CustomGraphPySide6Tests(unittest.TestCase):
             self.assertGreaterEqual(player.minimumWidth(), 940)
             self.assertGreaterEqual(player.minimumHeight(), 760)
             self.assertFalse(player._preview_html_loaded)
+        finally:
+            if player is not None:
+                player.deleteLater()
+
+    def test_graph_animation_player_has_no_stop_button(self):
+        player = None
+        try:
+            player = GraphAnimationPlayer({}, panel_number=1)
+
+            self.assertFalse(hasattr(player, "_stop_btn"))
+        finally:
+            if player is not None:
+                player.deleteLater()
+
+    def test_graph_animation_player_play_restarts_from_final_frame(self):
+        player = None
+        try:
+            player = GraphAnimationPlayer({}, panel_number=1)
+            player._frame_count = 3
+            player._current = 2
+            calls = []
+            player._show_frame = lambda index: calls.append(index)
+
+            player._start_play()
+
+            self.assertEqual(calls, [0])
+            self.assertTrue(player._playing)
         finally:
             if player is not None:
                 player.deleteLater()
@@ -1001,6 +1135,8 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertIn("Plotly.newPlot('graph'", html)
         self.assertNotIn("Plotly.addFrames", html)
         self.assertIn("OPVIEW_SHOW_FRAME", html)
+        self.assertIn("displayModeBar:false", html)
+        self.assertNotIn("displayModeBar:true", html)
 
     def test_graph_animation_player_updates_existing_preview_without_reloading_html(self):
         class FakeWebView:
@@ -1184,6 +1320,50 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         self.assertEqual(state["column_settings"][str(path.resolve())]["A"]["conversion"], "percent")
 
+    def test_graph_panel_legend_edit_renders_only_after_editing_finished(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 2\n", encoding="utf-8")
+        tab = CustomGraphTab()
+        panel = tab.add_graph_panel()
+
+        panel.add_files([str(path)])
+        resolved = str(path.resolve())
+        panel._column_checkboxes[(resolved, "A")].setChecked(True)
+        render_calls = []
+        panel.canvas.render = lambda state: render_calls.append(state)
+
+        legend = panel._legend_edits[(resolved, "A")]
+        legend.setText("Alpha")
+
+        self.assertEqual(render_calls, [])
+
+        legend.editingFinished.emit()
+
+        self.assertEqual(len(render_calls), 1)
+        self.assertEqual(panel.state()["column_settings"][resolved]["A"]["legend"], "Alpha")
+
+    def test_graph_panel_axis_title_edits_render_only_after_editing_finished(self):
+        tab = CustomGraphTab()
+        panel = tab.add_graph_panel()
+        render_calls = []
+        panel.canvas.render = lambda state: render_calls.append(state)
+
+        panel.x_title_edit.setText("Simulation Time")
+        panel.y1_title_edit.setText("Stress")
+        panel.y2_title_edit.setText("Strain")
+
+        self.assertEqual(render_calls, [])
+
+        panel.x_title_edit.editingFinished.emit()
+        panel.y1_title_edit.editingFinished.emit()
+        panel.y2_title_edit.editingFinished.emit()
+
+        self.assertEqual(len(render_calls), 3)
+        self.assertEqual(panel.state()["x_axis_title"], "Simulation Time")
+        self.assertEqual(panel.state()["yaxis1_title"], "Stress")
+        self.assertEqual(panel.state()["yaxis2_title"], "Strain")
+
     def test_graph_panel_updates_x_axis_conversion_state(self):
         tab = CustomGraphTab()
         panel = tab.add_graph_panel()
@@ -1200,6 +1380,27 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         state = panel.state()
 
         self.assertEqual(state["x_axis_conversion"], "percent")
+
+    def test_graph_panel_conversion_dropdown_includes_log10(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 10\n", encoding="utf-8")
+        panel = GraphPanelWidget(panel_number=1)
+
+        panel.add_files([str(path)])
+        resolved = str(path.resolve())
+        panel._column_checkboxes[(resolved, "A")].setChecked(True)
+        combo = panel._conversion_combos[(resolved, "A")]
+
+        self.assertGreaterEqual(combo.findData("log10"), 0)
+
+    def test_graph_panel_x_axis_conversion_combo_includes_log10(self):
+        panel = GraphPanelWidget(panel_number=1)
+
+        panel.x_axis_conversion_combo.setCurrentIndex(panel.x_axis_conversion_combo.findData("log10"))
+        state = panel.state()
+
+        self.assertEqual(state["x_axis_conversion"], "log10")
 
     def test_graph_panel_conversion_dropdown_updates_rendered_trace_values(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -1258,6 +1459,55 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         figure = canvas._build_figure(state)
 
         self.assertEqual(list(figure.data[0].x), [0, 25, 50])
+
+    def test_graph_canvas_applies_x_axis_log10_conversion(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n1 10\n10 20\n100 30\n", encoding="utf-8")
+        canvas = GraphCanvas()
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "A", "yaxis": "y1", "conversion": "as-is"},
+                }
+            },
+            "x_axis_column": "Time",
+            "x_axis_conversion": "log10",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+        }
+
+        figure = canvas._build_figure(state)
+
+        self.assertEqual(list(figure.data[0].x), [0, 1, 2])
+
+    def test_graph_canvas_applies_column_log10_conversion(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "curves.txt"
+        path.write_text("Time A\n0 1\n1 10\n2 100\n", encoding="utf-8")
+        canvas = GraphCanvas()
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "A", "yaxis": "y1", "conversion": "log10"},
+                }
+            },
+            "x_axis_column": "Time",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+        }
+
+        figure = canvas._build_figure(state)
+
+        self.assertEqual(list(figure.data[0].y), [0, 1, 2])
 
     def test_graph_canvas_html_contains_converted_trace_values(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -1363,7 +1613,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertEqual(list(figure.data[2].y), [3000, 6000])
         self.assertEqual(list(figure.data[3].y), [3, 6])
 
-    def test_graph_canvas_limits_lines_plus_markers_to_15_marker_points(self):
+    def test_graph_canvas_lines_plus_markers_uses_full_line_and_20_sampled_markers(self):
         temp_dir = Path(tempfile.mkdtemp())
         path = temp_dir / "many_points.txt"
         rows = ["Time A"] + [f"{index} {index * 2}" for index in range(40)]
@@ -1386,12 +1636,67 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         figure = canvas._build_figure(state)
 
-        self.assertEqual(len(figure.data), 1)
-        self.assertEqual(figure.data[0].mode, "lines+markers")
+        self.assertEqual(len(figure.data), 2)
+        self.assertEqual(figure.data[0].mode, "lines")
         self.assertEqual(len(figure.data[0].x), 40)
-        self.assertEqual(figure.data[0].marker.size, PlotStyle.MARKER_SIZE)
-        self.assertEqual(figure.data[0].marker.maxdisplayed, PlotStyle.MAX_MARKER_POINTS)
-        self.assertEqual(figure.data[0].marker.line.width, 1.5)
+        self.assertEqual(figure.data[0].name, "A")
+        self.assertEqual(figure.data[1].mode, "markers")
+        self.assertEqual(len(figure.data[1].x), 20)
+        self.assertEqual(figure.data[1].showlegend, False)
+        self.assertEqual(figure.data[1].marker.size, PlotStyle.MARKER_SIZE)
+        self.assertEqual(figure.data[1].marker.line.width, 1.5)
+
+    def test_graph_canvas_lines_mode_pads_x_axis_range(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "many_points.txt"
+        rows = ["Time A"] + [f"{index} {index * 2}" for index in range(40)]
+        path.write_text("\n".join(rows), encoding="utf-8")
+        canvas = GraphCanvas()
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "A", "yaxis": "y1", "conversion": "as-is"},
+                }
+            },
+            "x_axis_column": "Time",
+            "trace_mode": "lines",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+        }
+
+        figure = canvas._build_figure(state)
+
+        self.assertEqual(list(figure.layout.xaxis.range), [-1.9500000000000002, 40.95])
+        self.assertFalse(figure.layout.xaxis.autorange)
+
+    def test_graph_canvas_lines_plus_markers_keeps_x_axis_autorange(self):
+        temp_dir = Path(tempfile.mkdtemp())
+        path = temp_dir / "many_points.txt"
+        rows = ["Time A"] + [f"{index} {index * 2}" for index in range(40)]
+        path.write_text("\n".join(rows), encoding="utf-8")
+        canvas = GraphCanvas()
+        state = {
+            "files": [str(path)],
+            "columns_by_file": {str(path): ["A"]},
+            "column_settings": {
+                str(path): {
+                    "A": {"legend": "A", "yaxis": "y1", "conversion": "as-is"},
+                }
+            },
+            "x_axis_column": "Time",
+            "trace_mode": "lines+markers",
+            "line_style": "solid",
+            "show_grid": True,
+            "show_legend": True,
+        }
+
+        figure = canvas._build_figure(state)
+
+        self.assertIsNone(figure.layout.xaxis.range)
+        self.assertIsNone(figure.layout.xaxis.autorange)
 
     def test_graph_canvas_accepts_display_conversion_labels(self):
         canvas = GraphCanvas()
@@ -1429,6 +1734,13 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         self.assertIn("#graph{width:800px;height:620px;", html)
         self.assertIn("display:flex;align-items:flex-start;justify-content:center;", html)
+
+    def test_custom_graph_combo_dropdown_items_have_hover_style(self):
+        stylesheet = build_app_stylesheet()
+
+        self.assertIn("QComboBox#graphCombo QAbstractItemView::item:hover", stylesheet)
+        self.assertIn("QComboBox#graphCombo QAbstractItemView::item:selected", stylesheet)
+        self.assertIn("background: #1e4a8a;\n    color: #ffffff;", stylesheet)
 
     def test_graph_canvas_uses_publication_quality_axis_styling(self):
         canvas = GraphCanvas()
@@ -1473,6 +1785,8 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertIn("QGroupBox#graphSettingsSection QRadioButton::indicator", stylesheet)
         self.assertIn("QGroupBox#graphSettingsSection QRadioButton::indicator:checked", stylesheet)
         self.assertIn("checkbox-tick.svg", stylesheet)
+        self.assertIn("QPushButton#graphSettingsToggleButton,\nQPushButton#graphSettingsCollapsedToggleButton", stylesheet)
+        self.assertIn("background: transparent;\n    border: none;\n    padding: 0px;", stylesheet)
         self.assertNotIn("QGroupBox#graphSettingsSection QCheckBox::indicator:checked {\n    background: #c50623", stylesheet)
         self.assertNotIn("QGroupBox#graphSettingsSection QCheckBox::indicator,\nQFrame#graphFileSection QCheckBox::indicator {\n    width: 18px;\n    height: 18px;\n    background: #ffffff;\n    border: 2px solid #c50623", stylesheet)
         self.assertIn("border: 2px solid #ccd7e8", stylesheet)
@@ -1489,7 +1803,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         window = MainWindow()
         window.resize(760, 620)
-        window.tab_widget.setCurrentIndex(2)
+        window.tab_widget.setCurrentIndex(3)
         QApplication.processEvents()
 
         viewport_width = window.content_scroll.viewport().width()

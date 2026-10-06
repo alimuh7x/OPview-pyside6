@@ -35,6 +35,11 @@ from viewer.phase_fraction_history_canvas import PhaseFractionHistoryCanvas
 from viewer.time_plot_canvas import TimePlotCanvas
 from viewer.toggle_switch_widget import ToggleSwitchWidget
 
+_HEATMAP_LOGO_BAND_W = 52
+_HEATMAP_LOGO_PIXMAP_W = 52
+_HEATMAP_LOGO_GAP = 4
+_HEATMAP_LOGO_BOTTOM_PAD = 12
+
 
 class HeatmapAlignmentRow(QWidget):
     """Position logo and heatmap from the heatmap center."""
@@ -44,7 +49,7 @@ class HeatmapAlignmentRow(QWidget):
         logo_widget: QWidget,
         heatmap_widget: QWidget,
         *,
-        gap: int = 8,
+        gap: int = _HEATMAP_LOGO_GAP,
     ) -> None:
         debug_print("HeatmapAlignmentRow.__init__ start")
         super().__init__()
@@ -94,7 +99,7 @@ class HeatmapAlignmentRow(QWidget):
         heatmap_x = max(min_heatmap_x, centered_heatmap_x)
         heatmap_y = row_height - heatmap_height
         logo_x = heatmap_x - self._gap - logo_width
-        logo_y = max(0, row_height - logo_height - 12)
+        logo_y = max(0, row_height - logo_height - _HEATMAP_LOGO_BOTTOM_PAD)
         debug_print(f"HeatmapAlignmentRow row_height={row_height}")
         debug_print(f"HeatmapAlignmentRow available_width={self.width()}")
         debug_print(f"HeatmapAlignmentRow required_width={required_width}")
@@ -197,9 +202,14 @@ class PanelWidget(QWidget):
         self.projects = projects or {}
         self.controls_widget = PanelControlsWidget(dataset_info)
         self.heatmap_canvas  = HeatmapCanvas()
-        self.line_scan_canvas = LineScanCanvas()
-        self.histogram_canvas = HistogramCanvas()
+        self.line_scan_canvas = LineScanCanvas(show_legend=False)
+        debug_print("PanelWidget single line graph max width=600")
+        debug_print("PanelWidget single line graph legend hidden")
+        self.histogram_canvas = HistogramCanvas(show_legend=False)
+        debug_print("PanelWidget single histogram graph max width=600")
+        debug_print("PanelWidget single histogram graph legend hidden")
         self.time_plot_canvas = TimePlotCanvas()
+        debug_print("PanelWidget plot over time graph max width=600")
         self.phase_fraction_history_canvas = PhaseFractionHistoryCanvas()
         self.phase_fraction_history_canvas.hide()
         debug_print("PanelWidget phase fraction history canvas initialized hidden")
@@ -743,7 +753,7 @@ class PanelWidget(QWidget):
         debug_print(f"PanelWidget heatmap logo exists={logo_path.exists()}")
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path)).scaledToWidth(
-                52, Qt.TransformationMode.SmoothTransformation
+                _HEATMAP_LOGO_PIXMAP_W, Qt.TransformationMode.SmoothTransformation
             )
             debug_print(f"PanelWidget heatmap logo pixmap isNull={pixmap.isNull()}")
             self.logo_label.setPixmap(pixmap)
@@ -752,11 +762,11 @@ class PanelWidget(QWidget):
             debug_print("PanelWidget heatmap logo missing; pixmap not applied")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
         self.logo_label.setParent(logo_card)
-        logo_card.setFixedWidth(58)
+        logo_card.setFixedWidth(_HEATMAP_LOGO_BAND_W)
         logo_card.setFixedHeight(self.heatmap_canvas.canvas_height())
         logo_width = logo_card.width()
         logo_height = self.logo_label.sizeHint().height()
-        logo_y = max(0, logo_card.height() - logo_height - 12)
+        logo_y = max(0, logo_card.height() - logo_height - _HEATMAP_LOGO_BOTTOM_PAD)
         debug_print(f"PanelWidget heatmap logo card width={logo_width}")
         debug_print(f"PanelWidget heatmap logo label height={logo_height}")
         debug_print(f"PanelWidget heatmap logo label y={logo_y}")
@@ -888,7 +898,7 @@ class PanelWidget(QWidget):
         self.line_toolbar = QWidget()
         self.line_toolbar.setObjectName("toolbarStrip")
         self.line_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.line_toolbar.setFixedHeight(44)
+        debug_print("PanelWidget line toolbar using natural compact height")
         line_toolbar_layout = QHBoxLayout(self.line_toolbar)
         line_toolbar_layout.setContentsMargins(0, 0, 0, 0)
         line_toolbar_layout.setSpacing(12)
@@ -899,6 +909,7 @@ class PanelWidget(QWidget):
         line_toolbar_layout.addWidget(scan_dir_label)
         line_toolbar_layout.addWidget(self.line_direction_button_row)
         line_toolbar_layout.addStretch(1)
+        debug_print(f"PanelWidget line toolbar size hint height={self.line_toolbar.sizeHint().height()}")
         line_layout.addWidget(self.line_toolbar)
         line_layout.addWidget(self.line_scan_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.line_card)

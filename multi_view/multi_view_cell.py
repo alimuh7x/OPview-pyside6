@@ -8,7 +8,7 @@ import numpy as np
 import plotly
 import plotly.graph_objects as go
 from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -69,39 +69,48 @@ class MultiViewHeader(QWidget):
         super().__init__(parent)
         self.file_path = file_path
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 2, 4, 2)
-        layout.setSpacing(4)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+        debug_print("MultiViewHeader layout margins set to 6,4,6,4")
+        debug_print("MultiViewHeader layout spacing set to 6")
 
         legend_lbl = QLabel("Legend:")
         legend_lbl.setObjectName("mutedInfo")
 
         self._name_edit = QLineEdit(compact_timestep_label(file_path))
         self._name_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self._name_edit.setFixedHeight(22)
+        self._name_edit.setFixedHeight(30)
+        name_font = QFont(self._name_edit.font())
+        name_font.setPointSize(13)
+        name_font.setWeight(QFont.Weight.DemiBold)
+        self._name_edit.setFont(name_font)
         self._name_edit.setToolTip(f"Edit legend label — file: {file_path}")
         self._name_edit.setStyleSheet(
             "QLineEdit {"
             "  background: #f0f4fa;"
             "  color: #0d2b55;"
-            "  font-size: 11px;"
-            "  font-weight: 500;"
+            "  font-size: 13px;"
+            "  font-weight: 600;"
             "  border: 1px solid #c2d0e8;"
-            "  border-radius: 3px;"
-            "  padding: 1px 5px;"
+            "  border-radius: 4px;"
+            "  padding: 4px 7px;"
             "}"
             "QLineEdit:focus {"
             "  border: 1.5px solid #1e4a8a;"
             "  background: #ffffff;"
             "}"
         )
+        debug_print("MultiViewHeader legend edit fixed height=30")
+        debug_print("MultiViewHeader legend edit font-size=13")
         self._name_edit.editingFinished.connect(self._on_name_edited)
 
         btn = QPushButton()
         btn.setObjectName("panelTabCloseButton")
         btn.setFlat(True)
-        btn.setFixedSize(12, 12)
+        btn.setFixedSize(18, 18)
         btn.setIcon(QIcon(str(_ASSETS / "remove.png")))
         btn.setIconSize(btn.size())
+        debug_print("MultiViewHeader close button fixed size=18")
         btn.clicked.connect(lambda: self.close_requested.emit(self.file_path))
 
         layout.addWidget(legend_lbl)
@@ -149,15 +158,28 @@ class MultiViewCell(QWidget):
             self._base_url,
         )
 
+    def set_cell_size(self, width: int, height: int | None = None) -> None:
+        debug_print("MultiViewCell.set_cell_size called")
+        safe_width = max(1, int(width))
+        safe_height = _CANVAS_HEIGHT if height is None else max(1, int(height))
+        debug_print(f"MultiViewCell requested width={width}")
+        debug_print(f"MultiViewCell requested height={height}")
+        debug_print(f"MultiViewCell safe width={safe_width}")
+        debug_print(f"MultiViewCell safe height={safe_height}")
+        self._web.setFixedSize(safe_width, safe_height)
+        self.setFixedSize(safe_width, safe_height)
+        debug_print("MultiViewCell size applied")
+
     def set_cell_width(self, width: int) -> None:
-        self._web.setFixedSize(width, _CANVAS_HEIGHT)
-        self.setFixedSize(width, _CANVAS_HEIGHT)
+        debug_print("MultiViewCell.set_cell_width called")
+        self.set_cell_size(width, _CANVAS_HEIGHT)
 
     def render(self, x_grid, y_grid, z_grid, *, vmin: float, vmax: float,
-               cmap, overlay_grid=None, line_overlay=None, vector_overlay=None) -> None:
+               cmap, plot_type: str = "heatmap", overlay_grid=None, line_overlay=None, vector_overlay=None,
+               fill_canvas: bool = False) -> None:
         debug_print(f"MultiViewCell.render start file={self.file_path}")
-        colorscale = cmap_to_plotly_scale(cmap)
-        debug_print(f"MultiViewCell colorscale stops={len(colorscale)}")
+        debug_print(f"MultiViewCell fill_canvas={fill_canvas}")
+        debug_print(f"MultiViewCell selected plot_type={plot_type}")
         rows, cols  = np.asarray(z_grid).shape[:2]
         debug_print(f"MultiViewCell grid shape rows={rows} cols={cols}")
         x_vals, y_vals = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
@@ -165,15 +187,20 @@ class MultiViewCell(QWidget):
         debug_print(f"MultiViewCell y range={y_vals[0]}..{y_vals[-1]}")
 
         figure = go.Figure()
-        debug_print("MultiViewCell adding heatmap trace")
-        figure.add_trace(go.Heatmap(
-            x=x_vals, y=y_vals,
-            z=np.asarray(z_grid),
-            zmin=vmin, zmax=vmax,
-            colorscale=colorscale,
-            showscale=False,
-            hovertemplate="x=%{x:.4f}<br>y=%{y:.4f}<br>value=%{z:.4f}<extra></extra>",
-        ))
+        debug_print("MultiViewCell building selected plot traces")
+        plot_traces = self._build_plot_traces(
+            x_grid,
+            y_grid,
+            z_grid,
+            vmin=vmin,
+            vmax=vmax,
+            cmap=cmap,
+            plot_type=plot_type,
+        )
+        debug_print(f"MultiViewCell plot trace count={len(plot_traces)}")
+        for trace in plot_traces:
+            debug_print(f"MultiViewCell adding plot trace type={getattr(trace, 'type', 'unknown')}")
+            figure.add_trace(trace)
         if overlay_grid is not None:
             debug_print("MultiViewCell overlay_grid received")
             overlay_z = np.asarray(overlay_grid["z"])
@@ -230,16 +257,16 @@ class MultiViewCell(QWidget):
         else:
             debug_print("MultiViewCell no line overlay")
         debug_print("MultiViewCell updating layout")
+        canvas_width = max(1, self.width())
+        canvas_height = max(1, self.height())
+        debug_print(f"MultiViewCell canvas width={canvas_width}")
+        debug_print(f"MultiViewCell canvas height={canvas_height}")
         figure.update_layout(
-            width=self.width(), height=_CANVAS_HEIGHT,
+            width=canvas_width, height=canvas_height,
             margin=dict(l=0, r=0, t=0, b=0),
             paper_bgcolor="white", plot_bgcolor="white",
         )
-        figure.update_xaxes(visible=False, constrain="domain", automargin=False)
-        figure.update_yaxes(
-            visible=False, scaleanchor="x", scaleratio=1.0,
-            constrain="domain", automargin=False,
-        )
+        self._configure_axes(figure, fill_canvas=fill_canvas)
 
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>
@@ -274,6 +301,65 @@ class MultiViewCell(QWidget):
         debug_print("MultiViewCell.render complete")
 
     @staticmethod
+    def _build_plot_traces(x_grid, y_grid, z_grid, *, vmin: float, vmax: float, cmap, plot_type: str):
+        debug_print("MultiViewCell._build_plot_traces called")
+        debug_print(f"MultiViewCell plot_type requested={plot_type}")
+        colorscale = cmap_to_plotly_scale(cmap)
+        debug_print(f"MultiViewCell colorscale stops={len(colorscale)}")
+        x_vals, y_vals = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+        debug_print(f"MultiViewCell trace x count={len(x_vals)}")
+        debug_print(f"MultiViewCell trace y count={len(y_vals)}")
+        from viewer.plot_types import PLOT_TYPE_MAP
+        renderer = PLOT_TYPE_MAP.get(plot_type, PLOT_TYPE_MAP["heatmap"])
+        debug_print(f"MultiViewCell renderer key={renderer.key}")
+        hovertemplate = "x=%{x:.4f}<br>y=%{y:.4f}<br>value=%{z:.4f}<extra></extra>"
+        traces = renderer.build_traces(
+            x_vals,
+            y_vals,
+            z_grid,
+            vmin,
+            vmax,
+            colorscale,
+            {},
+            hovertemplate,
+        )
+        for trace in traces:
+            if hasattr(trace, "showscale"):
+                trace.showscale = False
+                debug_print(f"MultiViewCell disabled trace colorbar type={getattr(trace, 'type', 'unknown')}")
+        debug_print(f"MultiViewCell built trace count={len(traces)}")
+        return traces
+
+    @staticmethod
+    def _configure_axes(figure: go.Figure, *, fill_canvas: bool = False) -> None:
+        debug_print("MultiViewCell._configure_axes called")
+        debug_print(f"MultiViewCell configure fill_canvas={fill_canvas}")
+        if fill_canvas:
+            figure.update_xaxes(
+                visible=False,
+                automargin=False,
+                constrain="domain",
+                domain=[0, 1],
+            )
+            figure.update_yaxes(
+                visible=False,
+                automargin=False,
+                constrain="domain",
+                domain=[0, 1],
+            )
+            debug_print("MultiViewCell axes configured edge-to-edge")
+            return
+        figure.update_xaxes(visible=False, constrain="domain", automargin=False)
+        figure.update_yaxes(
+            visible=False,
+            scaleanchor="x",
+            scaleratio=1.0,
+            constrain="domain",
+            automargin=False,
+        )
+        debug_print("MultiViewCell axes configured aspect-preserving")
+
+    @staticmethod
     def _build_vector_traces(vector_overlay: dict) -> list[go.Scatter]:
         debug_print("MultiViewCell._build_vector_traces called")
         debug_print(f"MultiViewCell vector label={vector_overlay.get('label')}")
@@ -305,11 +391,13 @@ class MultiViewCell(QWidget):
         debug_print(f"MultiViewCell.render_status file={self.file_path}")
         debug_print(f"MultiViewCell status message={message}")
         safe_message = escape(message).replace("&lt;br&gt;", "<br>")
+        canvas_height = max(1, self.height())
+        debug_print(f"MultiViewCell status canvas height={canvas_height}")
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
 <style>
 html,body{{margin:0;padding:0;background:#f7f9fc;color:#102a52;font-family:sans-serif;}}
-.box{{height:{_CANVAS_HEIGHT}px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box;}}
+.box{{height:{canvas_height}px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px;box-sizing:border-box;}}
 .msg{{max-width:360px;font-size:15px;line-height:1.35;color:#526987;}}
 </style></head><body><div class="box"><div class="msg">{safe_message}</div></div></body></html>"""
         self._web.setHtml(html, self._base_url)

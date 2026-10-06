@@ -314,6 +314,25 @@ QPushButton#timePlotRemovePointButton:hover {{
     color: #cc0c24;
     border-color: #f2b9c1;
 }}
+QPushButton#discreteBandButton {{
+    background: #ffffff;
+    color: #111827;
+    border: 2px solid #8a96a8;
+    border-radius: 8px;
+    padding: 0px;
+    font-size: 18px;
+    font-weight: 900;
+}}
+QPushButton#discreteBandButton:hover {{
+    background: #f3f6fa;
+    border-color: #5f6b7a;
+    color: #000000;
+}}
+QPushButton#discreteBandButton:pressed {{
+    background: #d8dde6;
+    border-color: #4b5563;
+    color: #000000;
+}}
 QWidget#controlsRow {{
     background: transparent;
 }}
@@ -632,6 +651,22 @@ QLabel#graphSettingsTitle {{
     font-size: 16px;
     font-weight: 800;
 }}
+QPushButton#graphSettingsToggleButton,
+QPushButton#graphSettingsCollapsedToggleButton {{
+    background: transparent;
+    border: none;
+    padding: 0px;
+}}
+QPushButton#graphSettingsToggleButton:hover,
+QPushButton#graphSettingsCollapsedToggleButton:hover {{
+    background: transparent;
+    border: none;
+}}
+QWidget#graphSettingsCollapsedLabel {{
+    color: #0d2b55;
+    font-size: 16px;
+    font-weight: 800;
+}}
 QGroupBox#graphSettingsSection {{
     background: #ffffff;
     border: 1px solid #d5deeb;
@@ -706,6 +741,44 @@ QComboBox#graphCombo QAbstractItemView {{
     background: #ffffff;
     color: #102a52;
     border: 1px solid #ccd7e8;
+    selection-background-color: #1e4a8a;
+    selection-color: #ffffff;
+}}
+QComboBox#graphCombo QAbstractItemView::item {{
+    background: #ffffff;
+    color: #102a52;
+    min-height: 28px;
+    padding: 4px 8px;
+}}
+QComboBox#graphCombo QAbstractItemView::item:hover,
+QComboBox#graphCombo QAbstractItemView::item:selected {{
+    background: #1e4a8a;
+    color: #ffffff;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar:vertical {{
+    background: #edf2f8;
+    border-left: 1px solid #ccd7e8;
+    margin: 0px;
+    width: 13px;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::handle:vertical {{
+    background: #6f89ad;
+    border-radius: 5px;
+    min-height: 24px;
+    margin: 2px;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::handle:vertical:hover {{
+    background: #526f98;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::add-line:vertical,
+QComboBox#graphCombo QAbstractItemView QScrollBar::sub-line:vertical {{
+    background: transparent;
+    border: none;
+    height: 0px;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::add-page:vertical,
+QComboBox#graphCombo QAbstractItemView QScrollBar::sub-page:vertical {{
+    background: transparent;
 }}
 QWidget#panelTabHeader {{
     background: transparent;

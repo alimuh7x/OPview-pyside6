@@ -17,7 +17,13 @@ from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS
 from utils.time_series import collect_same_series_files
 from utils.vtk_utils import get_reader, list_vtk_files
-from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
+from viewer.colorscale import (
+    DISCRETE_CUSTOM_PALETTE,
+    discrete_palette_colors,
+    make_discrete_colormap,
+    make_dynamic_colormap,
+    palette_to_cmap,
+)
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.manual_point_dialog import ManualPointDialog
@@ -436,6 +442,11 @@ class HeatmapController:
         self.state.slice_index                = slice_index
         self.state.file_path                  = file_path
         self.state.palette                    = palette
+        self.state.discrete_band_count        = self.controls_widget.current_discrete_band_count()
+        debug_print(f"Controller discrete band count={self.state.discrete_band_count}")
+        current_colorbar_mode = getattr(self.controls_widget, "current_colorbar_mode", lambda: "bar")
+        self.state.colorbar_mode              = current_colorbar_mode()
+        debug_print(f"Controller colorbar mode={self.state.colorbar_mode}")
         self.state.rotation_degrees           = self.controls_widget.current_rotation_degrees()
         self.state.scale                      = scalar_def.get("scale", 1.0) or 1.0
         self.state.units                      = scalar_def.get("units")
@@ -1349,7 +1360,12 @@ class HeatmapController:
     def _render_heatmap(self, x_grid, y_grid, z_grid, extra_scale: float, display_label: str) -> None:
         """Build the colormap and pass all grid/overlay data to the heatmap canvas for drawing."""
         debug_print("HeatmapController._render_heatmap called")
-        if self.state.colorscale_mode == "dynamic":
+        if self.state.palette == DISCRETE_CUSTOM_PALETTE:
+            debug_print("Controller using discrete custom render range")
+            cmap = self._current_palette_cmap()
+            vmin = self.state.range_min
+            vmax = self.state.range_max
+        elif self.state.colorscale_mode == "dynamic":
             debug_print("Controller using full-scale render range")
             cmap = make_dynamic_colormap(
                 float(np.nanmin(z_grid)),
@@ -1362,7 +1378,7 @@ class HeatmapController:
             vmax = float(np.nanmax(z_grid))
         else:
             debug_print("Controller using manual render range")
-            cmap = palette_to_cmap(self.state.palette)
+            cmap = self._current_palette_cmap()
             vmin = self.state.range_min
             vmax = self.state.range_max
         debug_print(f"Controller render vmin={vmin}")
@@ -1430,9 +1446,28 @@ class HeatmapController:
             time_plot_points=time_plot_points,
             colorbar_label=colorbar_label,
             plot_type=self.controls_widget.current_plot_type(),
+            colorbar_mode=self._current_colorbar_mode(),
+            discrete_colors=self._current_discrete_legend_colors(),
             phase_fraction_overlays=phase_fraction_overlays,
             vector_overlay=vector_overlay,
         )
+
+    def _current_colorbar_mode(self) -> str:
+        debug_print("HeatmapController._current_colorbar_mode called")
+        if self.state.palette == DISCRETE_CUSTOM_PALETTE:
+            debug_print(f"HeatmapController using state colorbar mode={self.state.colorbar_mode}")
+            return self.state.colorbar_mode
+        debug_print("HeatmapController normal palette uses bar colorbar mode")
+        return "bar"
+
+    def _current_discrete_legend_colors(self) -> list[str]:
+        debug_print("HeatmapController._current_discrete_legend_colors called")
+        if self.state.palette != DISCRETE_CUSTOM_PALETTE:
+            debug_print("HeatmapController no discrete colors for normal palette")
+            return []
+        colors = discrete_palette_colors(self.state.discrete_band_count)
+        debug_print(f"HeatmapController discrete legend colors={colors}")
+        return colors
 
     def _build_vector_overlay(self, orientation: Heatmap2DOrientation) -> dict | None:
         """Build a fixed-size arrow overlay when the selected array is a vector field."""
@@ -1775,14 +1810,31 @@ class HeatmapController:
         """Resolve the PhaseField_*.vts file that corresponds to the currently loaded data file."""
         debug_print("HeatmapController._phase_overlay_file called")
         if not file_path:
+            debug_print("HeatmapController no file_path for phase overlay")
             return None
-        file_name = Path(file_path).name
+        path = Path(file_path)
+        file_name = path.name
+        debug_print(f"HeatmapController overlay source filename={file_name}")
         if file_name.startswith("PhaseField_"):
-            return Path(file_path)
+            debug_print("HeatmapController source is already PhaseField")
+            return path
         suffix = file_name.split("_")[-1]
-        candidate = Path(file_path).with_name(f"PhaseField_{suffix}")
-        if candidate.exists():
-            return candidate
+        debug_print(f"HeatmapController overlay suffix={suffix}")
+        phase_candidate = path.with_name(f"PhaseField_{suffix}")
+        debug_print(f"HeatmapController overlay PhaseField candidate={phase_candidate}")
+        if phase_candidate.exists():
+            debug_print("HeatmapController overlay using PhaseField candidate")
+            return phase_candidate
+        debug_print("HeatmapController overlay PhaseField candidate missing")
+        if file_name.startswith("PhaseFieldDistorted_"):
+            debug_print("HeatmapController source is PhaseFieldDistorted fallback")
+            return path
+        distorted_candidate = path.with_name(f"PhaseFieldDistorted_{suffix}")
+        debug_print(f"HeatmapController overlay PhaseFieldDistorted candidate={distorted_candidate}")
+        if distorted_candidate.exists():
+            debug_print("HeatmapController overlay using PhaseFieldDistorted fallback")
+            return distorted_candidate
+        debug_print("HeatmapController overlay PhaseFieldDistorted fallback missing")
         return None
 
     def _on_time_plot_add_point_toggled(self, checked: bool) -> None:
@@ -2406,6 +2458,11 @@ class HeatmapController:
             cmap = palette_to_cmap("ice-sunset")
             vmin = float(np.nanmin(z_grid))
             vmax = float(np.nanmax(z_grid))
+        elif self.state.palette == DISCRETE_CUSTOM_PALETTE:
+            debug_print("HeatmapController export payload using discrete custom color scale")
+            cmap = self._current_palette_cmap()
+            vmin = self.state.range_min
+            vmax = self.state.range_max
         elif self.state.colorscale_mode == "dynamic":
             debug_print("HeatmapController export payload using dynamic color scale")
             cmap = make_dynamic_colormap(
@@ -2419,7 +2476,7 @@ class HeatmapController:
             vmax = float(np.nanmax(z_grid))
         else:
             debug_print("HeatmapController export payload using manual color scale")
-            cmap = palette_to_cmap(self.state.palette)
+            cmap = self._current_palette_cmap()
             vmin = self.state.range_min
             vmax = self.state.range_max
         orientation = self._orientation()
@@ -2472,6 +2529,16 @@ class HeatmapController:
         debug_print(f"HeatmapController export payload colorbar_label={colorbar_label}")
         debug_print("HeatmapController._build_high_resolution_export_payload complete")
         return payload
+
+    def _current_palette_cmap(self):
+        debug_print("HeatmapController._current_palette_cmap called")
+        debug_print(f"HeatmapController palette={self.state.palette}")
+        if self.state.palette == DISCRETE_CUSTOM_PALETTE:
+            count = getattr(self.state, "discrete_band_count", 2)
+            debug_print(f"HeatmapController building discrete cmap count={count}")
+            return make_discrete_colormap(discrete_palette_colors(count))
+        debug_print("HeatmapController building normal cmap")
+        return palette_to_cmap(self.state.palette)
 
     def _save_current_export_widget_png(self, path: str) -> bool:
         """Save the visible export row so logo and heatmap are captured together."""

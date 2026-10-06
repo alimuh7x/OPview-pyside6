@@ -4,8 +4,9 @@ from pathlib import Path
 from PySide6.QtCore import QRect
 from PySide6.QtWidgets import QApplication, QWidget
 
-from viewer.heatmap_canvas import HeatmapCanvas
+from viewer.heatmap_canvas import HeatmapCanvas, _COLORBAR_GAP
 from viewer.heatmap_controller import HeatmapController
+from viewer.panel_widget import _HEATMAP_LOGO_BAND_W, _HEATMAP_LOGO_GAP
 
 
 class SingleViewExportTests(unittest.TestCase):
@@ -44,17 +45,27 @@ class SingleViewExportTests(unittest.TestCase):
         self.assertGreaterEqual(HeatmapController._export_dpi(), 300)
 
     def test_high_resolution_export_layout_keeps_logo_and_colorbar_inside_image(self):
-        layout = HeatmapCanvas._export_layout_metrics(rows=1000, cols=1000, logo_band_width=58)
+        layout = HeatmapCanvas._export_layout_metrics(rows=1000, cols=1000, logo_band_width=_HEATMAP_LOGO_BAND_W)
         logo_x, logo_y, logo_width, logo_height = layout["logo_rect"]
         cbar_x, cbar_y, cbar_width, cbar_height = layout["colorbar_rect"]
 
-        self.assertGreater(layout["logo_band_pixels"], logo_width)
+        self.assertGreaterEqual(layout["logo_band_pixels"], logo_width)
         self.assertGreater(logo_y, 0)
         self.assertLess(logo_height, layout["height_pixels"])
         self.assertGreater(cbar_width, 28)
         self.assertEqual(cbar_height, 700)
         self.assertLess(cbar_x + cbar_width, layout["width_pixels"])
         self.assertGreater(layout["width_pixels"] - (cbar_x + cbar_width), 300)
+
+    def test_single_view_live_colorbar_and_logo_spacing_stays_compact(self):
+        self.assertLessEqual(_COLORBAR_GAP, 0.015)
+        self.assertLessEqual(_HEATMAP_LOGO_GAP, 4)
+        self.assertLessEqual(_HEATMAP_LOGO_BAND_W, 54)
+
+    def test_high_resolution_export_keeps_colorbar_close_to_heatmap(self):
+        layout = HeatmapCanvas._export_layout_metrics(rows=1000, cols=1000, logo_band_width=_HEATMAP_LOGO_BAND_W)
+
+        self.assertLessEqual(layout["colorbar_gap_pixels"], 26)
 
     def test_export_font_conversion_matches_view_pixels_at_png_dpi(self):
         points = HeatmapCanvas._export_font_points(view_font_pixels=24, dpi=300, pixel_scale=1000 / 420)

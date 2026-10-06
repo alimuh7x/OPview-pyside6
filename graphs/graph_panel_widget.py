@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, QRect, QSize
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,6 +33,37 @@ from utils.combo_box_utils import update_combo_popup_width
 from viewer.plot_style import PlotStyle
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
+_FILE_COMBO_MAX_VISIBLE_ITEMS = 12
+
+
+class _RotatedSettingsLabel(QWidget):
+    """Paints a single word rotated for the collapsed settings rail."""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = text
+        self.setObjectName("graphSettingsCollapsedLabel")
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def text(self) -> str:
+        return self._text
+
+    def rotation_degrees(self) -> int:
+        return 90
+
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        return QSize(metrics.height() + 8, metrics.horizontalAdvance(self._text) + 8)
+
+    def paintEvent(self, event) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setPen(QColor("#0d2b55"))
+        painter.setFont(self.font())
+        painter.translate(self.width(), 0)
+        painter.rotate(self.rotation_degrees())
+        painter.drawText(QRect(0, 0, self.height(), self.width()), Qt.AlignmentFlag.AlignCenter, self._text)
 
 
 class GraphPanelWidget(QWidget):
@@ -141,6 +172,7 @@ class GraphPanelWidget(QWidget):
         self.file_combo = QComboBox()
         self.file_combo.setObjectName("graphCombo")
         self.file_combo.setMinimumWidth(260)
+        self.file_combo.setMaxVisibleItems(_FILE_COMBO_MAX_VISIBLE_ITEMS)
         self.file_combo.currentIndexChanged.connect(self._add_selected_graph_file)
         toolbar.addWidget(self.file_combo)
 
@@ -154,10 +186,10 @@ class GraphPanelWidget(QWidget):
         self.download_png_button.setToolTip("Download graph as PNG")
         self.download_png_button.clicked.connect(self._download_png)
         toolbar.addWidget(self.download_png_button)
-        self.download_animation_button = QPushButton(QIcon(str(_ASSETS / "download.png")), "MP4")
+        self.download_animation_button = QPushButton(QIcon(str(_ASSETS / "play.png")), "Animate")
         self.download_animation_button.setIconSize(QSize(16, 16))
         self.download_animation_button.setProperty("accent", True)
-        self.download_animation_button.setToolTip("Open reveal animation and export as MP4")
+        self.download_animation_button.setToolTip("Open reveal animation")
         self.download_animation_button.clicked.connect(self._open_animation_player)
         toolbar.addWidget(self.download_animation_button)
         toolbar.addStretch(1)
@@ -197,6 +229,13 @@ class GraphPanelWidget(QWidget):
 
     def _build_settings_panel(self) -> QWidget:
         debug_print("GraphPanelWidget._build_settings_panel called")
+        container = QWidget()
+        container.setObjectName("graphSettingsContainer")
+        container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
         scroll = QScrollArea()
         scroll.setObjectName("graphSettingsScroll")
         scroll.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -215,9 +254,24 @@ class GraphPanelWidget(QWidget):
         self._settings_layout.setColumnStretch(0, 1)
         self._settings_layout.setColumnStretch(1, 1)
 
+        header = QWidget()
+        header.setObjectName("graphSettingsHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
         title = QLabel("SETTINGS")
         title.setObjectName("graphSettingsTitle")
-        self._settings_layout.addWidget(title, 0, 0, 1, 2)
+        header_layout.addWidget(title)
+        header_layout.addStretch(1)
+        self.settings_toggle_button = QPushButton(header)
+        self.settings_toggle_button.setObjectName("graphSettingsToggleButton")
+        self.settings_toggle_button.setCheckable(True)
+        self.settings_toggle_button.setChecked(True)
+        self.settings_toggle_button.setFlat(True)
+        self.settings_toggle_button.setIconSize(QSize(28, 28))
+        self.settings_toggle_button.toggled.connect(self._set_settings_visible)
+        header_layout.addWidget(self.settings_toggle_button)
+        self._settings_layout.addWidget(header, 0, 0, 1, 2)
 
         self._settings_layout.addWidget(self._build_axis_group(), 1, 0)
         self._settings_layout.addWidget(self._build_display_group(), 1, 1)
@@ -230,7 +284,30 @@ class GraphPanelWidget(QWidget):
         self._settings_layout.addWidget(self.column_settings_group, 2, 0, 1, 2)
         self._settings_layout.setRowStretch(3, 1)
         scroll.setWidget(content)
-        return scroll
+        container_layout.addWidget(scroll)
+
+        self.settings_collapsed_rail = QWidget()
+        self.settings_collapsed_rail.setObjectName("graphSettingsCollapsedRail")
+        self.settings_collapsed_rail.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.settings_collapsed_rail.setFixedWidth(56)
+        rail_layout = QVBoxLayout(self.settings_collapsed_rail)
+        rail_layout.setContentsMargins(8, 18, 8, 8)
+        rail_layout.setSpacing(8)
+        self.settings_collapsed_toggle_button = QPushButton(self.settings_collapsed_rail)
+        self.settings_collapsed_toggle_button.setObjectName("graphSettingsCollapsedToggleButton")
+        self.settings_collapsed_toggle_button.setCheckable(True)
+        self.settings_collapsed_toggle_button.setChecked(False)
+        self.settings_collapsed_toggle_button.setFlat(True)
+        self.settings_collapsed_toggle_button.setIconSize(QSize(28, 28))
+        self.settings_collapsed_toggle_button.toggled.connect(self._set_settings_visible)
+        self.settings_collapsed_label = _RotatedSettingsLabel("Settings", self.settings_collapsed_rail)
+        rail_layout.addWidget(self.settings_collapsed_toggle_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        rail_layout.addWidget(self.settings_collapsed_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        rail_layout.addStretch(1)
+        self.settings_collapsed_rail.hide()
+        container_layout.addWidget(self.settings_collapsed_rail)
+        self._update_settings_toggle_button(True)
+        return container
 
     def set_available_width(self, width: int) -> None:
         debug_print(f"GraphPanelWidget.set_available_width width={width}")
@@ -246,6 +323,28 @@ class GraphPanelWidget(QWidget):
         self.settings_scroll.setMinimumWidth(min(280, settings_width))
         self.settings_scroll.setMaximumWidth(settings_width)
         debug_print(f"GraphPanelWidget settings max width={settings_width}")
+
+    def _set_settings_visible(self, visible: bool) -> None:
+        debug_print(f"GraphPanelWidget._set_settings_visible visible={visible}")
+        settings_visible = bool(visible)
+        self.settings_scroll.setVisible(settings_visible)
+        self.settings_collapsed_rail.setVisible(not settings_visible)
+        for button in (self.settings_toggle_button, self.settings_collapsed_toggle_button):
+            was_blocked = button.blockSignals(True)
+            button.setChecked(settings_visible)
+            button.blockSignals(was_blocked)
+        self._update_settings_toggle_button(settings_visible)
+
+    def _update_settings_toggle_button(self, settings_visible: bool) -> None:
+        asset_name = "show_sidebar.png" if settings_visible else "hide_sidebar.png"
+        icon = QIcon(str(_ASSETS / asset_name))
+        self.settings_toggle_button.setIcon(icon)
+        self.settings_collapsed_toggle_button.setIcon(icon)
+        self.settings_toggle_button.setProperty("icon_asset", asset_name)
+        self.settings_collapsed_toggle_button.setProperty("icon_asset", asset_name)
+        tooltip = "Hide settings" if settings_visible else "Show settings"
+        self.settings_toggle_button.setToolTip(tooltip)
+        self.settings_collapsed_toggle_button.setToolTip(tooltip)
 
     def _build_axis_group(self) -> QWidget:
         debug_print("GraphPanelWidget._build_axis_group called")
@@ -272,6 +371,7 @@ class GraphPanelWidget(QWidget):
             ("%", "percent"),
             ("sec -> min", "sec-to-min"),
             ("sec -> hour", "sec-to-hour"),
+            ("Log10", "log10"),
         ]:
             debug_print(f"GraphPanelWidget adding x conversion label={label} value={value}")
             self.x_axis_conversion_combo.addItem(label, value)
@@ -282,19 +382,19 @@ class GraphPanelWidget(QWidget):
         self.x_title_edit = QLineEdit("Time")
         self.x_title_edit.setObjectName("graphLineEdit")
         self.x_title_edit.setFixedWidth(120)
-        self.x_title_edit.textChanged.connect(self._refresh_graph)
+        self.x_title_edit.editingFinished.connect(self._refresh_graph)
         layout.addWidget(self.x_title_edit, 2, 1)
         layout.addWidget(QLabel("Y-Axis 1 Title:"), 3, 0)
         self.y1_title_edit = QLineEdit("Y1")
         self.y1_title_edit.setObjectName("graphLineEdit")
         self.y1_title_edit.setFixedWidth(120)
-        self.y1_title_edit.textChanged.connect(self._refresh_graph)
+        self.y1_title_edit.editingFinished.connect(self._refresh_graph)
         layout.addWidget(self.y1_title_edit, 3, 1)
         layout.addWidget(QLabel("Y-Axis 2 Title:"), 4, 0)
         self.y2_title_edit = QLineEdit("Y2")
         self.y2_title_edit.setObjectName("graphLineEdit")
         self.y2_title_edit.setFixedWidth(120)
-        self.y2_title_edit.textChanged.connect(self._refresh_graph)
+        self.y2_title_edit.editingFinished.connect(self._refresh_graph)
         layout.addWidget(self.y2_title_edit, 4, 1)
         return group
 
@@ -427,8 +527,22 @@ class GraphPanelWidget(QWidget):
         self.file_combo.setCurrentIndex(index if index >= 0 else 0)
         debug_print(f"GraphPanelWidget file selector index={self.file_combo.currentIndex()}")
         self.file_combo.blockSignals(False)
+        self._update_file_combo_scrollbar()
         update_combo_popup_width(self.file_combo)
         debug_print("GraphPanelWidget file selector refreshed without auto-add")
+
+    def _update_file_combo_scrollbar(self) -> None:
+        item_count = self.file_combo.count()
+        debug_print(f"GraphPanelWidget._update_file_combo_scrollbar count={item_count}")
+        debug_print(f"GraphPanelWidget._update_file_combo_scrollbar max_visible={_FILE_COMBO_MAX_VISIBLE_ITEMS}")
+        scrollbar_policy = (
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if item_count > _FILE_COMBO_MAX_VISIBLE_ITEMS
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        debug_print(f"GraphPanelWidget._update_file_combo_scrollbar policy={scrollbar_policy}")
+        self.file_combo.view().setVerticalScrollBarPolicy(scrollbar_policy)
+        debug_print("GraphPanelWidget._update_file_combo_scrollbar applied")
 
     def _add_selected_graph_file(self) -> None:
         debug_print("GraphPanelWidget._add_selected_graph_file called")
@@ -639,7 +753,7 @@ class GraphPanelWidget(QWidget):
         legend.setObjectName("graphLineEdit")
         legend.setFixedWidth(145)
         legend.setFixedHeight(30)
-        legend.textChanged.connect(lambda text, f=file_path, c=column: self._set_legend(f, c, text))
+        legend.editingFinished.connect(lambda f=file_path, c=column, edit=legend: self._set_legend(f, c, edit.text()))
         self._legend_edits[(file_path, column)] = legend
         layout.addWidget(legend, 2, 0)
 
@@ -667,7 +781,7 @@ class GraphPanelWidget(QWidget):
         conversion_combo.setObjectName("graphCombo")
         conversion_combo.setFixedWidth(125)
         conversion_combo.setFixedHeight(30)
-        for label, value in [("As-is", "as-is"), ("%", "percent"), ("MPa", "mpa"), ("GPa", "gpa")]:
+        for label, value in [("As-is", "as-is"), ("%", "percent"), ("MPa", "mpa"), ("GPa", "gpa"), ("Log10", "log10")]:
             conversion_combo.addItem(label, value)
         update_combo_popup_width(conversion_combo)
         conversion_index = conversion_combo.findData(settings.get("conversion", "as-is"))

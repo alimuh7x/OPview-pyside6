@@ -208,6 +208,28 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
+        self.discrete_band_count = 2
+        self.discrete_minus_button = QPushButton("-")
+        self.discrete_minus_button.setObjectName("discreteBandButton")
+        self.discrete_minus_button.setFixedSize(28, 28)
+        self.discrete_minus_button.setToolTip("Remove a discrete color band")
+        self.discrete_band_label = QLabel(str(self.discrete_band_count))
+        self.discrete_band_label.setObjectName("mutedInfo")
+        self.discrete_band_label.setFixedWidth(18)
+        self.discrete_band_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.discrete_plus_button = QPushButton("+")
+        self.discrete_plus_button.setObjectName("discreteBandButton")
+        self.discrete_plus_button.setFixedSize(28, 28)
+        self.discrete_plus_button.setToolTip("Add a discrete color band")
+        self.colorbar_mode_combo = QComboBox()
+        self.colorbar_mode_combo.setObjectName("viewerCombo")
+        self._configure_compact_combo(self.colorbar_mode_combo, 5)
+        self.colorbar_mode_combo.addItem("Bar", "bar")
+        self.colorbar_mode_combo.addItem("Boxes", "boxes")
+        self.colorbar_mode_combo.setToolTip("Custom legend display")
+        update_combo_popup_width(self.colorbar_mode_combo)
+        debug_print("PanelControlsWidget colorbar mode combo initialized")
+        debug_print(f"PanelControlsWidget discrete bands initial={self.discrete_band_count}")
 
         # ------------------------------------------------------------------------------------------------
         # Rotation in single view
@@ -233,10 +255,15 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget rotation buttons initialized")
 
         palette_row_layout.addWidget(self.palette_combo, 1)
+        palette_row_layout.addWidget(self.discrete_minus_button)
+        palette_row_layout.addWidget(self.discrete_band_label)
+        palette_row_layout.addWidget(self.discrete_plus_button)
+        palette_row_layout.addWidget(self.colorbar_mode_combo)
         palette_row_layout.addWidget(self.range_slider, 4)
         palette_row_layout.addWidget(self.full_scale_check)
         palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
+        self._sync_discrete_controls()
         self._apply_layout_mode("wide", force=True)
         # ------------------------------------------------------------------------------------------------
 
@@ -404,7 +431,10 @@ class PanelControlsWidget(QWidget):
         self.range_slider.values_changed.connect(self._handle_range_slider_changed)
         self.reset_button.clicked.connect(lambda *_: self._emit_refresh_requested("reset"))
         self.click_mode_range_check.toggled.connect(lambda *_: self._emit_refresh_requested("click-mode"))
-        self.palette_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("palette"))
+        self.palette_combo.currentIndexChanged.connect(lambda *_: self._on_palette_changed())
+        self.discrete_minus_button.clicked.connect(lambda *_: self._change_discrete_band_count(-1))
+        self.discrete_plus_button.clicked.connect(lambda *_: self._change_discrete_band_count(1))
+        self.colorbar_mode_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("colorbar-mode"))
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
         for degrees, button in self.rotation_buttons.items():
             button.clicked.connect(lambda _checked=False, value=degrees: self._set_rotation_degrees(value))
@@ -427,6 +457,7 @@ class PanelControlsWidget(QWidget):
             self.range_min_spin,
             self.range_max_spin,
             self.palette_combo,
+            self.colorbar_mode_combo,
             self.rotation_button_row,
             self.range_slider,
             self.axis_combo,
@@ -808,6 +839,44 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
     def current_palette(self) -> str:
         debug_print("PanelControlsWidget.current_palette called")
         return self.palette_combo.currentData() or "aqua-fire"
+
+    def _on_palette_changed(self) -> None:
+        debug_print("PanelControlsWidget._on_palette_changed called")
+        self._sync_discrete_controls()
+        self._emit_refresh_requested("palette")
+
+    def _sync_discrete_controls(self) -> None:
+        debug_print("PanelControlsWidget._sync_discrete_controls called")
+        visible = self.current_palette() == "discrete-custom"
+        debug_print(f"PanelControlsWidget discrete controls visible={visible}")
+        self.discrete_minus_button.setVisible(visible)
+        self.discrete_band_label.setVisible(visible)
+        self.discrete_plus_button.setVisible(visible)
+        self.colorbar_mode_combo.setVisible(visible)
+
+    def current_colorbar_mode(self) -> str:
+        debug_print("PanelControlsWidget.current_colorbar_mode called")
+        mode = self.colorbar_mode_combo.currentData() or "bar"
+        debug_print(f"PanelControlsWidget current colorbar mode={mode}")
+        return mode
+
+    def current_discrete_band_count(self) -> int:
+        debug_print("PanelControlsWidget.current_discrete_band_count called")
+        debug_print(f"PanelControlsWidget current discrete bands={self.discrete_band_count}")
+        return self.discrete_band_count
+
+    def _change_discrete_band_count(self, delta: int) -> None:
+        debug_print("PanelControlsWidget._change_discrete_band_count called")
+        debug_print(f"PanelControlsWidget discrete delta={delta}")
+        next_count = max(2, min(10, self.discrete_band_count + int(delta)))
+        debug_print(f"PanelControlsWidget discrete next_count={next_count}")
+        if next_count == self.discrete_band_count:
+            debug_print("PanelControlsWidget discrete count unchanged")
+            return
+        self.discrete_band_count = next_count
+        self.discrete_band_label.setText(str(next_count))
+        debug_print(f"PanelControlsWidget discrete label={self.discrete_band_label.text()}")
+        self._emit_refresh_requested("discrete-bands")
 
     def current_rotation_degrees(self) -> int:
         debug_print("PanelControlsWidget.current_rotation_degrees called")

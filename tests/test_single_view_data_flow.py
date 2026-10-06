@@ -20,6 +20,41 @@ from viewer.time_plot_canvas import TimePlotCanvas
 
 
 class SingleViewDataFlowTests(unittest.TestCase):
+    def test_single_view_phase_overlay_file_prefers_phasefield_over_distorted(self):
+        controller = HeatmapController.__new__(HeatmapController)
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            source = vtk_dir / "ElasticStrains_00005000.vts"
+            phase = vtk_dir / "PhaseField_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            source.write_text("", encoding="utf-8")
+            phase.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(controller._phase_overlay_file(str(source)), phase)
+
+    def test_single_view_phase_overlay_file_falls_back_to_distorted_phasefield(self):
+        controller = HeatmapController.__new__(HeatmapController)
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            source = vtk_dir / "ElasticStrains_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            source.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(controller._phase_overlay_file(str(source)), distorted)
+
+    def test_single_view_phase_overlay_file_prefers_phasefield_when_source_is_distorted(self):
+        controller = HeatmapController.__new__(HeatmapController)
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            phase = vtk_dir / "PhaseField_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            phase.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(controller._phase_overlay_file(str(distorted)), phase)
+
     def test_heatmap_hover_formats_tiny_values_scientifically(self):
         canvas = HeatmapCanvas.__new__(HeatmapCanvas)
 
@@ -85,6 +120,24 @@ class SingleViewDataFlowTests(unittest.TestCase):
             self.assertEqual(dataset.matched_count, 4)
             self.assertEqual(len(dataset.matched_files), 2)
             self.assertTrue(dataset.files_limited)
+
+    def test_dataset_registry_keeps_unconfigured_files_without_other_files_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp) / "VTK"
+            vtk_dir.mkdir()
+            for index in range(2):
+                (vtk_dir / f"OtherThing_{index:08d}.vts").touch()
+
+            registry = DatasetRegistry(vtk_dir, TAB_CONFIGS)
+            registry.detect(verbose=False)
+            options = registry.get_dropdown_options()
+
+        self.assertTrue(any(dataset.module_id == "unconfigured" for dataset in registry.all_datasets))
+        self.assertEqual(len(options), 1)
+        self.assertEqual(options[0]["label"], "OtherThing")
+        self.assertEqual(options[0]["value"]["label"], "OtherThing")
+        self.assertEqual(options[0]["value"]["module_label"], "")
+        self.assertEqual(options[0]["value"]["module_id"], "unconfigured")
 
     def test_vtk_reader_extracts_interpolated_slice(self):
         sample_file = Path("Project1/VTK/ElasticStrains_00000000.vts").resolve()

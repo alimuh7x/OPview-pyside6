@@ -10,7 +10,9 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from app.debug import debug_print
+from viewer.colorbar_ticks import format_colorbar_tick, format_colorbar_ticks
 from viewer.colorscale import cmap_to_plotly_scale
+from viewer.discrete_legend import build_discrete_legend_html
 from viewer.plot_style import PlotStyle
 
 _PLOTLY_JS = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
@@ -22,20 +24,7 @@ _BAR_THICKNESS = 30
 def _format_tick(v: float) -> str:
     debug_print("MultiView ColorbarCanvas._format_tick called")
     debug_print(f"MultiView ColorbarCanvas tick value={v}")
-    import math
-    if v == 0:
-        debug_print("MultiView ColorbarCanvas tick formatted=0")
-        return "0"
-    try:
-        mag = math.floor(math.log10(abs(v)))
-    except ValueError:
-        debug_print("MultiView ColorbarCanvas tick format fallback=0")
-        return "0"
-    if -3 <= mag <= 4:
-        formatted = f"{v:.{max(0, 3 - int(mag))}f}"
-        debug_print(f"MultiView ColorbarCanvas tick formatted={formatted}")
-        return formatted
-    formatted = f"{v:.2e}"
+    formatted = format_colorbar_tick(v)
     debug_print(f"MultiView ColorbarCanvas tick formatted={formatted}")
     return formatted
 
@@ -55,6 +44,8 @@ def _build_colorbar_figure(colorscale, vmin: float, vmax: float, label: str) -> 
         vmax,
     ]
     debug_print(f"MultiView ColorbarCanvas tick count={len(tick_vals)}")
+    tick_text = format_colorbar_ticks(tick_vals)
+    debug_print(f"MultiView ColorbarCanvas tick text={tick_text}")
     figure = go.Figure()
     figure.add_trace(go.Heatmap(
         z=[[vmin, vmax]],
@@ -77,7 +68,7 @@ def _build_colorbar_figure(colorscale, vmin: float, vmax: float, label: str) -> 
             tickfont=PlotStyle.colorbar_tick_font(),
             tickmode="array",
             tickvals=tick_vals,
-            ticktext=[_format_tick(v) for v in tick_vals],
+            ticktext=tick_text,
         ),
     ))
     figure.update_layout(
@@ -91,6 +82,15 @@ def _build_colorbar_figure(colorscale, vmin: float, vmax: float, label: str) -> 
     figure.update_yaxes(visible=False)
     debug_print("MultiView ColorbarCanvas figure built")
     return figure
+
+
+def _build_discrete_legend_html(colors: list[str], label: str = "") -> str:
+    debug_print("MultiView ColorbarCanvas._build_discrete_legend_html called")
+    debug_print(f"MultiView ColorbarCanvas discrete color count={len(colors)}")
+    debug_print(f"MultiView ColorbarCanvas discrete label={label}")
+    html = build_discrete_legend_html(colors, label, width=_W, height=_H)
+    debug_print("MultiView ColorbarCanvas discrete html built")
+    return html
 
 
 class ColorbarCanvas(QWidget):
@@ -142,3 +142,12 @@ class ColorbarCanvas(QWidget):
 	</body></html>"""
         self._web.setHtml(html, self._base_url)
         debug_print("MultiView ColorbarCanvas.update_colorbar complete")
+
+    def update_discrete_colorbar(self, colors: list[str], label: str = "") -> None:
+        debug_print("MultiView ColorbarCanvas.update_discrete_colorbar called")
+        debug_print(f"MultiView ColorbarCanvas discrete colors={colors}")
+        debug_print(f"MultiView ColorbarCanvas discrete label={label}")
+        html = _build_discrete_legend_html(colors, label)
+        debug_print("MultiView ColorbarCanvas discrete html ready")
+        self._web.setHtml(html, self._base_url)
+        debug_print("MultiView ColorbarCanvas.update_discrete_colorbar complete")

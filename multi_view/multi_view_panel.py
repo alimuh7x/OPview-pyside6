@@ -28,7 +28,13 @@ from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader, _CELL_W
 from utils.combo_box_utils import update_combo_popup_width
 from utils.time_series import compact_timestep_label
 from utils.vtk_utils import get_reader
-from viewer.colorscale import make_dynamic_colormap, palette_to_cmap
+from viewer.colorscale import (
+    DISCRETE_CUSTOM_PALETTE,
+    discrete_palette_colors,
+    make_discrete_colormap,
+    make_dynamic_colormap,
+    palette_to_cmap,
+)
 from viewer.histogram_canvas import HistogramCanvas
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
 from viewer.heatmap_orientation import Heatmap2DOrientation
@@ -38,6 +44,8 @@ from viewer.toggle_switch_widget import ToggleSwitchWidget
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _LOGO_W = 58
+_LINE_ANALYSIS_CANVAS_W = 800
+_HISTOGRAM_ANALYSIS_CANVAS_W = 800
 
 
 class MultiViewPanel(QWidget):
@@ -100,12 +108,39 @@ class MultiViewPanel(QWidget):
         self.type_combo.addItem("Heatmap",         "heatmap")
         self.type_combo.addItem("Contour Lines",   "contour_lines")
         self.type_combo.addItem("Contour Filled",  "contour_filled")
+        debug_print("MultiViewPanel plot type added=contour_filled")
+        self.type_combo.addItem("Contour Filled + Values", "contour_filled_values")
+        debug_print("MultiViewPanel plot type added=contour_filled_values")
         self.type_combo.addItem("Heatmap+Contour", "heatmap_contour")
+        debug_print("MultiViewPanel plot type added=heatmap_contour")
         self.palette_combo = QComboBox(); self.palette_combo.setObjectName("viewerCombo")
         for key in PALETTES:
             self.palette_combo.addItem(key.replace("-", " ").title(), key)
         update_combo_popup_width(self.type_combo)
         update_combo_popup_width(self.palette_combo)
+        self.discrete_band_count = 2
+        self.discrete_minus_button = QPushButton("-")
+        self.discrete_minus_button.setObjectName("discreteBandButton")
+        self.discrete_minus_button.setFixedSize(28, 28)
+        self.discrete_minus_button.setToolTip("Remove a discrete color band")
+        self.discrete_band_label = QLabel(str(self.discrete_band_count))
+        self.discrete_band_label.setObjectName("mutedInfo")
+        self.discrete_band_label.setFixedWidth(18)
+        self.discrete_band_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.discrete_plus_button = QPushButton("+")
+        self.discrete_plus_button.setObjectName("discreteBandButton")
+        self.discrete_plus_button.setFixedSize(28, 28)
+        self.discrete_plus_button.setToolTip("Add a discrete color band")
+        self.colorbar_mode_combo = QComboBox()
+        self.colorbar_mode_combo.setObjectName("viewerCombo")
+        self.colorbar_mode_combo.setMinimumContentsLength(5)
+        self.colorbar_mode_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.colorbar_mode_combo.addItem("Bar", "bar")
+        self.colorbar_mode_combo.addItem("Boxes", "boxes")
+        self.colorbar_mode_combo.setToolTip("Custom legend display")
+        update_combo_popup_width(self.colorbar_mode_combo)
+        debug_print("MultiViewPanel colorbar mode combo initialized")
+        debug_print(f"MultiViewPanel discrete bands initial={self.discrete_band_count}")
 
         r1.addWidget(self.project_combo, 2)
         debug_print("MultiViewPanel row 1 project combo added")
@@ -117,6 +152,12 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel row 1 type combo added")
         r1.addWidget(self.palette_combo, 2)
         debug_print("MultiViewPanel row 1 palette combo added")
+        r1.addWidget(self.discrete_minus_button)
+        r1.addWidget(self.discrete_band_label)
+        r1.addWidget(self.discrete_plus_button)
+        r1.addWidget(self.colorbar_mode_combo)
+        debug_print("MultiViewPanel row 1 discrete controls added")
+        self._sync_discrete_controls()
         root.addWidget(r1_card)
 
         # Row 2: range controls
@@ -360,7 +401,8 @@ class MultiViewPanel(QWidget):
         line_toolbar_layout.addWidget(self.line_direction_button_row)
         line_toolbar_layout.addWidget(self.line_grid_check)
         line_toolbar_layout.addStretch(1)
-        self.line_scan_canvas = LineScanCanvas()
+        self.line_scan_canvas = LineScanCanvas(max_width=_LINE_ANALYSIS_CANVAS_W)
+        debug_print(f"MultiViewPanel line max width={_LINE_ANALYSIS_CANVAS_W}")
         debug_print(f"MultiViewPanel setting line graph height={_CANVAS_HEIGHT}")
         self.line_scan_canvas.set_canvas_height(_CANVAS_HEIGHT)
         debug_print(f"MultiViewPanel line graph height now={self.line_scan_canvas.height()}")
@@ -386,7 +428,8 @@ class MultiViewPanel(QWidget):
         histogram_toolbar_layout.addWidget(self.histogram_bins_slider, 1)
         self.histogram_grid_check = ToggleSwitchWidget("Grid", checked=True)
         histogram_toolbar_layout.addWidget(self.histogram_grid_check)
-        self.histogram_canvas = HistogramCanvas()
+        self.histogram_canvas = HistogramCanvas(max_width=_HISTOGRAM_ANALYSIS_CANVAS_W)
+        debug_print(f"MultiViewPanel histogram max width={_HISTOGRAM_ANALYSIS_CANVAS_W}")
         debug_print(f"MultiViewPanel setting histogram graph height={_CANVAS_HEIGHT}")
         self.histogram_canvas.set_canvas_height(_CANVAS_HEIGHT)
         debug_print(f"MultiViewPanel histogram graph height now={self.histogram_canvas.height()}")
@@ -469,7 +512,10 @@ class MultiViewPanel(QWidget):
         self.file_combo.activated.connect(self._on_file_activated)
         self.scalar_combo.currentIndexChanged.connect(self._on_scalar_changed)
         self.type_combo.currentIndexChanged.connect(self._render_all)
-        self.palette_combo.currentIndexChanged.connect(self._render_all)
+        self.palette_combo.currentIndexChanged.connect(self._on_palette_changed)
+        self.discrete_minus_button.clicked.connect(lambda *_: self._change_discrete_band_count(-1))
+        self.discrete_plus_button.clicked.connect(lambda *_: self._change_discrete_band_count(1))
+        self.colorbar_mode_combo.currentIndexChanged.connect(self._render_all)
         self.colorbar_label_edit.editingFinished.connect(self._render_all)
         self.unit_scale_combo.currentIndexChanged.connect(self._on_display_scale_changed)
         self.range_min.valueChanged.connect(self._on_range_spin_changed)
@@ -487,12 +533,12 @@ class MultiViewPanel(QWidget):
         self.export_btn.clicked.connect(self._export)
         self.line_mode_check.toggled.connect(self._on_line_mode_toggled)
         self.show_line_check.toggled.connect(self._render_all)
-        self.line_grid_check.toggled.connect(self._render_all)
+        self.line_grid_check.toggled.connect(self._on_analysis_control_changed)
         for direction, button in self.line_direction_buttons.items():
             button.clicked.connect(lambda _checked=False, value=direction: self._set_line_scan_direction(value))
             debug_print(f"MultiViewPanel line direction button connected direction={direction}")
         self.histogram_bins_slider.valueChanged.connect(self._on_analysis_control_changed)
-        self.histogram_grid_check.toggled.connect(self._render_all)
+        self.histogram_grid_check.toggled.connect(self._on_analysis_control_changed)
 
     def set_available_width(self, width: int) -> None:
         """Constrain this panel to the app content viewport width."""
@@ -519,8 +565,14 @@ class MultiViewPanel(QWidget):
             )
         self._area.setMaximumWidth(self._available_width)
         self.analysis_card.setMaximumWidth(self._available_width)
-        self.line_scan_canvas.set_available_width(max(240, self._available_width - 56))
-        self.histogram_canvas.set_available_width(max(240, self._available_width - 56))
+        line_width = max(240, self._available_width - 56)
+        histogram_width = max(240, self._available_width - 56)
+        debug_print(f"MultiViewPanel line analysis requested width={line_width}")
+        debug_print(f"MultiViewPanel histogram analysis requested width={histogram_width}")
+        self.line_scan_canvas.set_available_width(line_width)
+        self.histogram_canvas.set_available_width(histogram_width)
+        debug_print(f"MultiViewPanel line canvas width={self.line_scan_canvas.width()}")
+        debug_print(f"MultiViewPanel histogram canvas width={self.histogram_canvas.width()}")
         self._update_area_size()
         debug_print("MultiViewPanel.set_available_width complete")
 
@@ -661,8 +713,10 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel scalar array={sd.get('array')}")
         debug_print(f"MultiViewPanel scalar component={sd.get('component')}")
         palette_name = self.palette_combo.currentData() or "aqua-fire"
-        cmap  = palette_to_cmap(palette_name)
+        cmap  = self._palette_cmap(palette_name)
         debug_print(f"MultiViewPanel palette={palette_name}")
+        plot_type = self.type_combo.currentData() or "heatmap"
+        debug_print(f"MultiViewPanel selected plot_type={plot_type}")
         scale = sd.get("scale", 1.0) or 1.0
         label = sd.get("label", "")
         units = sd.get("units")
@@ -733,7 +787,11 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel selected_max={selected_max}")
 
         full_scale_enabled = self.full_scale.isChecked() and valid
-        if full_scale_enabled:
+        if full_scale_enabled and palette_name == DISCRETE_CUSTOM_PALETTE:
+            debug_print("MultiViewPanel full scale with discrete custom uses manual discrete cmap")
+            vmin = data_vmin
+            vmax = data_vmax
+        elif full_scale_enabled:
             debug_print("MultiViewPanel full scale enabled")
             vmin = data_vmin
             vmax = data_vmax
@@ -775,6 +833,7 @@ class MultiViewPanel(QWidget):
                     vmin=vmin,
                     vmax=vmax,
                     cmap=cmap,
+                    plot_type=plot_type,
                     overlay_grid=overlay,
                     line_overlay=line_overlay,
                     vector_overlay=vector_overlay,
@@ -783,9 +842,64 @@ class MultiViewPanel(QWidget):
                 debug_print(f"MultiViewPanel rendering error status for={fp}")
                 cell.render_status(f"Could not render {Path(fp).name}<br>{error or 'Unknown error'}")
 
-        self.colorbar.update_colorbar(cmap, vmin, vmax, cb_label)
+        colorbar_mode = self._current_colorbar_mode()
+        debug_print(f"MultiViewPanel colorbar mode={colorbar_mode}")
+        if palette_name == DISCRETE_CUSTOM_PALETTE and colorbar_mode == "boxes":
+            debug_print("MultiViewPanel rendering discrete custom colorbar boxes")
+            discrete_colors = discrete_palette_colors(self.discrete_band_count)
+            debug_print(f"MultiViewPanel discrete colorbar color count={len(discrete_colors)}")
+            debug_print(f"MultiViewPanel discrete colorbar colors={discrete_colors}")
+            self.colorbar.update_discrete_colorbar(discrete_colors, cb_label)
+            debug_print("MultiViewPanel discrete custom colorbar boxes rendered")
+        else:
+            debug_print("MultiViewPanel rendering continuous colorbar")
+            self.colorbar.update_colorbar(cmap, vmin, vmax, cb_label)
+            debug_print("MultiViewPanel continuous colorbar rendered")
         self._render_analysis(sd, total_scale, extra_scale, cb_label)
         debug_print("MultiViewPanel._render_all complete")
+
+    def _palette_cmap(self, palette_name: str):
+        debug_print("MultiViewPanel._palette_cmap called")
+        debug_print(f"MultiViewPanel palette cmap name={palette_name}")
+        if palette_name == DISCRETE_CUSTOM_PALETTE:
+            debug_print(f"MultiViewPanel building discrete cmap bands={self.discrete_band_count}")
+            return make_discrete_colormap(discrete_palette_colors(self.discrete_band_count))
+        debug_print("MultiViewPanel building normal cmap")
+        return palette_to_cmap(palette_name)
+
+    def _on_palette_changed(self, *_) -> None:
+        debug_print("MultiViewPanel._on_palette_changed called")
+        self._sync_discrete_controls()
+        self._render_all()
+
+    def _sync_discrete_controls(self) -> None:
+        debug_print("MultiViewPanel._sync_discrete_controls called")
+        visible = (self.palette_combo.currentData() or "aqua-fire") == DISCRETE_CUSTOM_PALETTE
+        debug_print(f"MultiViewPanel discrete controls visible={visible}")
+        self.discrete_minus_button.setVisible(visible)
+        self.discrete_band_label.setVisible(visible)
+        self.discrete_plus_button.setVisible(visible)
+        self.colorbar_mode_combo.setVisible(visible)
+
+    def _current_colorbar_mode(self) -> str:
+        debug_print("MultiViewPanel._current_colorbar_mode called")
+        mode = self.colorbar_mode_combo.currentData() if hasattr(self, "colorbar_mode_combo") else "bar"
+        mode = mode or "bar"
+        debug_print(f"MultiViewPanel current colorbar mode={mode}")
+        return mode
+
+    def _change_discrete_band_count(self, delta: int) -> None:
+        debug_print("MultiViewPanel._change_discrete_band_count called")
+        debug_print(f"MultiViewPanel discrete delta={delta}")
+        next_count = max(2, min(10, self.discrete_band_count + int(delta)))
+        debug_print(f"MultiViewPanel discrete next_count={next_count}")
+        if next_count == self.discrete_band_count:
+            debug_print("MultiViewPanel discrete count unchanged")
+            return
+        self.discrete_band_count = next_count
+        self.discrete_band_label.setText(str(next_count))
+        debug_print(f"MultiViewPanel discrete label={self.discrete_band_label.text()}")
+        self._render_all()
 
     def _on_scalar_changed(self, *_) -> None:
         debug_print("MultiViewPanel._on_scalar_changed called")
@@ -1014,8 +1128,35 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel._on_analysis_control_changed called")
         debug_print(f"MultiViewPanel line direction={self._current_line_scan_direction()}")
         debug_print(f"MultiViewPanel histogram bins={self.histogram_bins_slider.value()}")
-        self._render_all()
+        self._refresh_analysis_only()
         debug_print("MultiViewPanel._on_analysis_control_changed complete")
+
+    def _refresh_analysis_only(self) -> None:
+        debug_print("MultiViewPanel._refresh_analysis_only called")
+        column_count = len(getattr(self, "_columns", {}))
+        debug_print(f"MultiViewPanel analysis-only column count={column_count}")
+        scalar_count = len(getattr(self, "_scalar_defs", []))
+        debug_print(f"MultiViewPanel analysis-only scalar count={scalar_count}")
+        grid_count = len(getattr(self, "_grid_cache", {}))
+        debug_print(f"MultiViewPanel analysis-only grid count={grid_count}")
+        if column_count == 0 or scalar_count == 0 or grid_count == 0:
+            debug_print("MultiViewPanel analysis-only skipped missing cached data")
+            return
+        sd = self._selected_scalar_def()
+        debug_print(f"MultiViewPanel analysis-only scalar array={sd.get('array')}")
+        scale = sd.get("scale", 1.0) or 1.0
+        debug_print(f"MultiViewPanel analysis-only base scale={scale}")
+        label = sd.get("label", "")
+        debug_print(f"MultiViewPanel analysis-only label={label}")
+        units = sd.get("units")
+        debug_print(f"MultiViewPanel analysis-only units={units}")
+        extra_scale, display_label = self._get_display_params(label, units)
+        debug_print(f"MultiViewPanel analysis-only extra scale={extra_scale}")
+        debug_print(f"MultiViewPanel analysis-only display label={display_label}")
+        total_scale = scale * extra_scale
+        debug_print(f"MultiViewPanel analysis-only total scale={total_scale}")
+        self._render_analysis(sd, total_scale, extra_scale, display_label)
+        debug_print("MultiViewPanel._refresh_analysis_only complete")
 
     def _render_analysis(
         self,
@@ -1209,25 +1350,121 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel scalar projects count={len(projects)}")
         cfg = projects[0].get("dataset_config", {}) if projects else {}
         scalars = cfg.get("scalars")
+        files = [f for p in projects for f in p.get("files", [])]
+        debug_print(f"MultiViewPanel scalar source files count={len(files)}")
         if scalars:
             debug_print(f"MultiViewPanel using configured scalars count={len(scalars)}")
-            return [{"label": d["label"], "value": f"s-{i}", "array": d["array"],
-                     "component": d.get("component"),
-                     "scale": 1.0, "units": None}
-                    for i, d in enumerate(scalars)]
-        files = [f for p in projects for f in p.get("files", [])]
+            scalar_defs = [
+                {
+                    "label": d["label"],
+                    "value": f"s-{i}",
+                    "array": d["array"],
+                    "component": d.get("component"),
+                    "scale": 1.0,
+                    "units": None,
+                }
+                for i, d in enumerate(scalars)
+            ]
+            debug_print(f"MultiViewPanel configured scalar_defs count={len(scalar_defs)}")
+            if files:
+                try:
+                    reader = get_reader(files[0])
+                    debug_print(f"MultiViewPanel configured scalar source={files[0]}")
+                    configured_arrays = {scalar_def["array"] for scalar_def in scalar_defs}
+                    debug_print(f"MultiViewPanel configured array count={len(configured_arrays)}")
+                    for array_name in MultiViewPanel._phase_fraction_array_names(reader):
+                        if array_name in configured_arrays:
+                            debug_print(f"MultiViewPanel phase fraction already configured={array_name}")
+                            continue
+                        scalar_defs.append(
+                            {
+                                "label": array_name,
+                                "value": array_name,
+                                "array": array_name,
+                                "component": None,
+                                "scale": 1.0,
+                                "units": None,
+                            }
+                        )
+                        debug_print(f"MultiViewPanel added phase fraction scalar={array_name}")
+                except Exception as exc:
+                    debug_print(f"MultiViewPanel configured scalar discovery failed: {exc}")
+            debug_print(f"MultiViewPanel final configured scalar_defs count={len(scalar_defs)}")
+            return scalar_defs
         if not files:
             debug_print("MultiViewPanel no files for auto scalar defs")
             return []
         try:
             reader = get_reader(files[0])
             debug_print(f"MultiViewPanel auto scalar source={files[0]}")
-            return [{"label": n, "value": n, "array": n, "component": None,
-                     "scale": 1.0, "units": None}
-                    for n in reader.scalar_fields]
+            scalar_defs = MultiViewPanel._auto_scalar_defs(reader)
+            debug_print(f"MultiViewPanel auto scalar_defs count={len(scalar_defs)}")
+            return scalar_defs
         except Exception as exc:
             debug_print(f"MultiViewPanel auto scalar defs failed: {exc}")
             return []
+
+    @staticmethod
+    def _auto_scalar_defs(reader) -> list[dict]:
+        debug_print("MultiViewPanel._auto_scalar_defs called")
+        auto_defs: list[dict] = []
+        for array_name in reader.scalar_fields:
+            debug_print(f"MultiViewPanel auto scalar array={array_name}")
+            array = reader.mesh[array_name]
+            ndim = getattr(array, "ndim", 1)
+            debug_print(f"MultiViewPanel auto scalar ndim={ndim}")
+            if ndim == 1:
+                auto_defs.append(
+                    {
+                        "label": array_name,
+                        "value": array_name,
+                        "array": array_name,
+                        "component": None,
+                        "scale": 1.0,
+                        "units": None,
+                    }
+                )
+                debug_print(f"MultiViewPanel added scalar array={array_name}")
+            elif ndim == 2:
+                auto_defs.append(
+                    {
+                        "label": f"{array_name} (norm)",
+                        "value": f"{array_name}-norm",
+                        "array": array_name,
+                        "component": None,
+                        "scale": 1.0,
+                        "units": None,
+                    }
+                )
+                debug_print(f"MultiViewPanel added vector norm={array_name}")
+                for component_index in range(array.shape[1]):
+                    auto_defs.append(
+                        {
+                            "label": f"{array_name}[{component_index}]",
+                            "value": f"{array_name}-{component_index}",
+                            "array": array_name,
+                            "component": component_index,
+                            "scale": 1.0,
+                            "units": None,
+                        }
+                    )
+                    debug_print(f"MultiViewPanel added component={array_name}[{component_index}]")
+        debug_print(f"MultiViewPanel _auto_scalar_defs count={len(auto_defs)}")
+        return auto_defs
+
+    @staticmethod
+    def _phase_fraction_array_names(reader) -> list[str]:
+        debug_print("MultiViewPanel._phase_fraction_array_names called")
+        names = [name for name in reader.scalar_fields if str(name).startswith("PhaseFraction_")]
+        debug_print(f"MultiViewPanel raw phase fraction names={names}")
+
+        def sort_key(name: str):
+            suffix = str(name).removeprefix("PhaseFraction_")
+            return (0, int(suffix)) if suffix.isdigit() else (1, str(name))
+
+        ordered = sorted(names, key=sort_key)
+        debug_print(f"MultiViewPanel ordered phase fraction names={ordered}")
+        return ordered
 
     def _selected_scalar_def(self) -> dict:
         debug_print("MultiViewPanel._selected_scalar_def called")
@@ -1432,17 +1669,27 @@ class MultiViewPanel(QWidget):
         if not file_path:
             debug_print("MultiViewPanel no file_path for phase overlay")
             return None
-        file_name = Path(file_path).name
+        path = Path(file_path)
+        file_name = path.name
         debug_print(f"MultiViewPanel overlay source filename={file_name}")
         if file_name.startswith("PhaseField_"):
             debug_print("MultiViewPanel source is already PhaseField")
-            return Path(file_path)
+            return path
         suffix = file_name.split("_")[-1]
         debug_print(f"MultiViewPanel overlay suffix={suffix}")
-        candidate = Path(file_path).with_name(f"PhaseField_{suffix}")
-        debug_print(f"MultiViewPanel overlay candidate={candidate}")
-        if candidate.exists():
-            debug_print("MultiViewPanel overlay candidate exists")
-            return candidate
-        debug_print("MultiViewPanel overlay candidate missing")
+        phase_candidate = path.with_name(f"PhaseField_{suffix}")
+        debug_print(f"MultiViewPanel overlay PhaseField candidate={phase_candidate}")
+        if phase_candidate.exists():
+            debug_print("MultiViewPanel overlay using PhaseField candidate")
+            return phase_candidate
+        debug_print("MultiViewPanel overlay PhaseField candidate missing")
+        if file_name.startswith("PhaseFieldDistorted_"):
+            debug_print("MultiViewPanel source is PhaseFieldDistorted fallback")
+            return path
+        distorted_candidate = path.with_name(f"PhaseFieldDistorted_{suffix}")
+        debug_print(f"MultiViewPanel overlay PhaseFieldDistorted candidate={distorted_candidate}")
+        if distorted_candidate.exists():
+            debug_print("MultiViewPanel overlay using PhaseFieldDistorted fallback")
+            return distorted_candidate
+        debug_print("MultiViewPanel overlay PhaseFieldDistorted fallback missing")
         return None

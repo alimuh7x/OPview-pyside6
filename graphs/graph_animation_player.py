@@ -37,6 +37,7 @@ _TRANSPORT_ICON_SIZE = QSize(28, 28)
 _DEFAULT_FPS = 30
 _REVEAL_DURATION_SECONDS = 3.0
 _MAX_REVEAL_FRAMES = int(_DEFAULT_FPS * _REVEAL_DURATION_SECONDS)
+_MAX_ANIMATION_TRACE_POINTS = 1000
 
 
 class _GraphAnimationDebugPage(QWebEnginePage):
@@ -87,7 +88,11 @@ class GraphAnimationPlayer(QDialog):
         canvas._graph_width = _GRAPH_WIDTH
         canvas._last_trace_count = 0
         figure = canvas._build_figure(state_copy)
-        traces = [trace for trace in figure.data if hasattr(trace, "x") and hasattr(trace, "y")]
+        traces = [
+            GraphAnimationPlayer._downsample_trace(trace, _MAX_ANIMATION_TRACE_POINTS)
+            for trace in figure.data
+            if hasattr(trace, "x") and hasattr(trace, "y")
+        ]
         debug_print(f"GraphAnimationPlayer source trace count={len(traces)}")
         if not traces:
             debug_print("GraphAnimationPlayer no traces for reveal figure")
@@ -137,6 +142,30 @@ class GraphAnimationPlayer(QDialog):
         return animated_figure
 
     @staticmethod
+    def _downsample_trace(trace, max_points: int):
+        x_values = GraphAnimationPlayer._trace_values(trace, "x")
+        y_values = GraphAnimationPlayer._trace_values(trace, "y")
+        point_count = min(len(x_values), len(y_values))
+        limit = max(2, int(max_points))
+        if point_count <= limit:
+            return trace
+        indices = GraphAnimationPlayer._sample_indices(point_count, limit)
+        trace_json = trace.to_plotly_json()
+        next_trace = go.Scatter(**trace_json)
+        next_trace.x = [x_values[index] for index in indices]
+        next_trace.y = [y_values[index] for index in indices]
+        return next_trace
+
+    @staticmethod
+    def _sample_indices(point_count: int, max_points: int) -> list[int]:
+        total = max(0, int(point_count))
+        limit = max(2, min(total, int(max_points)))
+        if total <= limit:
+            return list(range(total))
+        last_index = total - 1
+        return [round(index * last_index / (limit - 1)) for index in range(limit)]
+
+    @staticmethod
     def _reveal_progress_values(point_count: int) -> list[float]:
         debug_print("GraphAnimationPlayer._reveal_progress_values called")
         total = max(0, int(point_count))
@@ -168,8 +197,9 @@ class GraphAnimationPlayer(QDialog):
             x_values.extend(GraphAnimationPlayer._trace_values(trace, "x"))
             target = y2_values if getattr(trace, "yaxis", None) == "y2" else y1_values
             target.extend(GraphAnimationPlayer._trace_values(trace, "y"))
+        pad_x = bool(traces) and all(str(getattr(trace, "mode", "") or "") == "lines" for trace in traces)
         ranges = {
-            "xaxis": GraphAnimationPlayer._range_from_values(x_values),
+            "xaxis": GraphAnimationPlayer._range_from_values(x_values, pad=pad_x),
             "yaxis": GraphAnimationPlayer._range_from_values(y1_values),
             "yaxis2": GraphAnimationPlayer._range_from_values(y2_values),
         }
@@ -197,7 +227,7 @@ class GraphAnimationPlayer(QDialog):
         debug_print("GraphAnimationPlayer._lock_final_axis_ranges complete")
 
     @staticmethod
-    def _range_from_values(values: list) -> list[float] | None:
+    def _range_from_values(values: list, *, pad: bool = False) -> list[float] | None:
         debug_print("GraphAnimationPlayer._range_from_values called")
         numeric_values = [float(value) for value in values if value is not None]
         debug_print(f"GraphAnimationPlayer range value count={len(numeric_values)}")
@@ -207,6 +237,10 @@ class GraphAnimationPlayer(QDialog):
         maximum = max(numeric_values)
         if minimum == maximum:
             padding = abs(minimum) * 0.05 or 1.0
+            minimum -= padding
+            maximum += padding
+        elif pad:
+            padding = (maximum - minimum) * 0.05
             minimum -= padding
             maximum += padding
         result = [minimum, maximum]
@@ -266,6 +300,8 @@ class GraphAnimationPlayer(QDialog):
             return [], []
         bounded_progress = max(0.0, min(1.0, float(progress)))
         debug_print(f"GraphAnimationPlayer visual progress={bounded_progress}")
+        if bounded_progress >= 1.0:
+            return list(x_values[:point_count]), list(y_values[:point_count])
         if "markers" in mode and "lines" not in mode:
             marker_count = min(point_count, max(1, int(math.floor(bounded_progress * (point_count - 1))) + 1))
             debug_print(f"GraphAnimationPlayer visual marker_count={marker_count}")
@@ -414,11 +450,10 @@ class GraphAnimationPlayer(QDialog):
         controls.setSpacing(4)
         self._first_btn = self._button("rewind.png")
         self._prev_btn = self._button("previous.png")
-        self._stop_btn = self._button("stop-button.png")
         self._play_btn = self._button("play.png", 42)
         self._next_btn = self._button("fast-forward.png", 42)
         self._last_btn = self._button("next.png")
-        for button in (self._first_btn, self._prev_btn, self._stop_btn, self._play_btn, self._next_btn, self._last_btn):
+        for button in (self._first_btn, self._prev_btn, self._play_btn, self._next_btn, self._last_btn):
             controls.addWidget(button)
         self._slider = QSlider(Qt.Orientation.Horizontal)
         self._slider.setRange(0, max(0, self._frame_count - 1))
@@ -447,7 +482,6 @@ class GraphAnimationPlayer(QDialog):
         self._timer.timeout.connect(self._advance)
         self._first_btn.clicked.connect(lambda: self._jump(0))
         self._prev_btn.clicked.connect(lambda: self._jump(self._current - 1))
-        self._stop_btn.clicked.connect(self._stop)
         self._play_btn.clicked.connect(self._toggle_play)
         self._next_btn.clicked.connect(lambda: self._jump(self._current + 1))
         self._last_btn.clicked.connect(lambda: self._jump(self._frame_count - 1))
@@ -563,14 +597,14 @@ QDialog#graphAnimationPlayer QProgressBar::chunk {
 <script>
 var fig = {figure_json};
 try {{
-    Plotly.newPlot('graph', fig.data, fig.layout, {{displayModeBar:true, responsive:true}});
+    Plotly.newPlot('graph', fig.data, fig.layout, {{displayModeBar:false, responsive:true}});
     window.OPVIEW_SHOW_FRAME = function(frameIndex) {{
         console.log('OPView animation show frame ' + frameIndex);
         if (!fig.frames || !fig.frames[frameIndex]) {{
             console.log('OPView animation missing frame ' + frameIndex);
             return;
         }}
-        Plotly.react('graph', fig.frames[frameIndex].data, fig.layout, {{displayModeBar:true, responsive:true}});
+        Plotly.react('graph', fig.frames[frameIndex].data, fig.layout, {{displayModeBar:false, responsive:true}});
     }};
 }} catch (err) {{
     document.body.innerHTML = '<pre style="white-space:pre-wrap;color:#b00020;padding:16px;font:14px monospace;">Plotly animation preview error: ' + err + '</pre>';
@@ -620,7 +654,7 @@ try {{
 
     def _set_transport_enabled(self, enabled: bool) -> None:
         debug_print(f"GraphAnimationPlayer._set_transport_enabled enabled={enabled}")
-        for widget in (self._first_btn, self._prev_btn, self._stop_btn, self._play_btn, self._next_btn, self._last_btn, self._slider, self._export_btn):
+        for widget in (self._first_btn, self._prev_btn, self._play_btn, self._next_btn, self._last_btn, self._slider, self._export_btn):
             widget.setEnabled(bool(enabled))
 
     def _toggle_play(self) -> None:
@@ -632,6 +666,9 @@ try {{
         if self._frame_count <= 0:
             debug_print("GraphAnimationPlayer play skipped no frames")
             return
+        if self._current >= self._frame_count - 1:
+            debug_print("GraphAnimationPlayer restarting from final frame")
+            self._show_frame(0)
         self._playing = True
         self._play_btn.setIcon(QIcon(str(ASSETS_DIR / "pause.png")))
         self._timer.start(max(1, int(1000 / self._fps)))

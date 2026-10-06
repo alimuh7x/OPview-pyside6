@@ -74,7 +74,7 @@ class ContourLinesRenderer(PlotTypeRenderer):
 
 
 class ContourFilledRenderer(PlotTypeRenderer):
-    """Discrete colour bands between isolines, with labels."""
+    """Discrete colour bands between isolines."""
 
     key   = "contour_filled"
     label = "Contour Filled"
@@ -91,6 +91,30 @@ class ContourFilledRenderer(PlotTypeRenderer):
             contours      = dict(
                 coloring  = "fill",
                 showlabels= False,
+            ),
+            hovertemplate = hovertemplate,
+        )]
+
+
+class ContourFilledValuesRenderer(PlotTypeRenderer):
+    """Discrete colour bands with labeled contour values."""
+
+    key   = "contour_filled_values"
+    label = "Contour Filled + Values"
+
+    def build_traces(self, x, y, z, zmin, zmax, colorscale, colorbar_cfg, hovertemplate):
+        return [go.Contour(
+            x             = x,
+            y             = y,
+            z             = np.asarray(z),
+            zmin          = zmin,
+            zmax          = zmax,
+            colorscale    = colorscale,
+            colorbar      = colorbar_cfg,
+            contours      = dict(
+                coloring  = "fill",
+                showlabels= True,
+                labelfont = dict(size=11, color="black"),
             ),
             hovertemplate = hovertemplate,
         )]
@@ -199,6 +223,7 @@ PLOT_TYPE_REGISTRY: list[PlotTypeRenderer] = [
     GradientMagnitudeRenderer(),
     ContourLinesRenderer(),
     ContourFilledRenderer(),
+    ContourFilledValuesRenderer(),
     HeatmapContourRenderer(),
     ThresholdRenderer(),
     DifferencePlotRenderer(),
