@@ -61,6 +61,11 @@ add_custom_command(OUTPUT ${PIP_STAMP}
             "pyinstaller>=6.10" "pyinstaller-hooks-contrib>=2025.0"
     COMMAND ${CMAKE_COMMAND} -E touch ${PIP_STAMP}
     DEPENDS ${OPVIEW_VENV_PY} ${CMAKE_CURRENT_SOURCE_DIR}/requirements.txt
+    # VERBATIM: without it the '>=' in the version floors reaches the generated
+    # build rule unescaped and the shell reads it as a redirection - pip then
+    # installs both packages unpinned and its output lands in files named
+    # '=6.10' / '=2025.0' in the build directory.
+    VERBATIM
     COMMENT "Installing Python dependencies + PyInstaller"
 )
 
@@ -98,7 +103,7 @@ set(OPVIEW_FREEZE_EXTRA_COMMAND "")
 if(UNIX AND NOT APPLE)
     # PyInstaller's own dependency analysis doesn't reach every private
     # vendored .so (e.g. numpy.libs/scipy.libs copies, or libs only reachable
-    # through a dlopen'd Qt plugin like libqtiff.so) - a bare `ldd` (as
+    # through a dlopen'd Qt plugin like libqjpeg.so) - a bare `ldd` (as
     # OPStudio's deb-install CI check runs) can't resolve those, since it
     # doesn't see the bootloader's runtime-injected LD_LIBRARY_PATH. Patch an
     # additive $ORIGIN rpath onto every frozen file after the freeze so they
@@ -300,12 +305,14 @@ if(OPVIEW_STANDALONE)
     # sync with the equivalent block in the superproject's top-level
     # CMakeLists.txt (opstudio/CMakeLists.txt, ENABLE_OPVIEW branch).
     #
-    # libtiff.so.5/libpcre.so.3/libmpdec.so.3/libFLAC.so.8/libunistring.so.2
-    # are deliberately NOT listed here (they're absent or ABI-incompatible
+    # libpcre.so.3/libmpdec.so.3/libFLAC.so.8/libunistring.so.2 are
+    # deliberately NOT listed here (they're absent or ABI-incompatible
     # under those exact sonames on Ubuntu 24.04+, so no Depends string can
     # satisfy every supported target) - they travel bundled with the frozen
     # app instead (see packaging/build_linux_packages.sh and
-    # packaging/linux/fix_rpaths.sh).
+    # packaging/linux/fix_rpaths.sh). libtiff.so.5 had the same problem, but
+    # its only consumer was PySide6's TIFF image-format plugin, which
+    # packaging/opview.spec now drops from the bundle outright.
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
         "libc6, libstdc++6, libgl1, libegl1, libopengl0, libglib2.0-0 | libglib2.0-0t64, libfontconfig1, libfreetype6, libdbus-1-3, libnss3, libnspr4, libasound2 | libasound2t64, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcb1, libxcb-cursor0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render0, libxcb-render-util0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-xfixes0, libxcb-xkb1, libxext6, libxcomposite1, libxdamage1, libxfixes3, libxrandr2, libxrender1, libxtst6, libxi6, libsm6, libice6, libdrm2, libgbm1, libcups2 | libcups2t64, libwayland-server0, libwayland-client0, libwayland-cursor0, libwayland-egl1")
     string(APPEND CPACK_DEBIAN_PACKAGE_DEPENDS
