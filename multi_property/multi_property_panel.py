@@ -34,7 +34,7 @@ from multi_property.export_renderer import save_multi_property_png
 from multi_property.multi_property_cell import MultiPropertyCell, ScientificRangeSpinBox, _MIN_CELL_W, _RANGE_SPIN_W
 from multi_view.multi_view_cell import _CELL_W
 from multi_view.multi_view_panel import MultiViewPanel, _LOGO_W
-from utils.combo_box_utils import update_combo_popup_width
+from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
 from utils.vtk_utils import get_reader
 from viewer.colorscale import (
     DISCRETE_CUSTOM_PALETTE,
@@ -281,6 +281,7 @@ class MultiPropertyPanel(QWidget):
         for key in PALETTES:
             self.palette_combo.addItem(key.replace("-", " ").title(), key)
         update_combo_popup_width(self.type_combo)
+        fit_combo_to_longest_item(self.type_combo)
         self.discrete_band_count = 2
         self.discrete_minus_button = QPushButton("-")
         self.discrete_minus_button.setObjectName("discreteBandButton")
@@ -310,6 +311,7 @@ class MultiPropertyPanel(QWidget):
         self.status_label.setObjectName("mutedInfo")
         self.range_min = self._make_range_spin("min")
         self.range_max = self._make_range_spin("max")
+        self.range_min.link_peer(self.range_max)
         self.range_slider = RangeSliderWidget()
         self.range_slider.setMinimumWidth(240)
         self.unit_scale_combo = QComboBox()

@@ -1,9 +1,10 @@
 """Sidebar widget for project and panel actions."""
 
 from pathlib import Path
-from PySide6.QtCore import Qt, QSize, Signal, QEvent, QRect
+from PySide6.QtCore import Qt, QSize, Signal, QEvent, QEventLoop, QRect, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QComboBox,
     QGroupBox,
@@ -22,7 +23,11 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
+from sidebar.spinner_icon import ButtonSpinner
+from utils.ui_yield import set_yield_callback
+
 _ASSETS = Path(__file__).parent.parent / "assets"
+_RELOAD_MIN_SPIN_MS = 600  # keep the spinner visible long enough to notice on fast reloads
 _SIDEBAR_LIST_ROW_HEIGHT = 32
 _SIDEBAR_LIST_FRAME_PADDING = 8
 _DATASET_LIST_MIN_ROWS = 8
@@ -156,6 +161,7 @@ class SidebarWidget(QWidget):
         btn_row.addWidget(self.add_folder_button)
         self.reload_projects_button = QPushButton("Reload")
         self.reload_projects_button.setProperty("accent", True)
+        self._reload_spinner = ButtonSpinner(self.reload_projects_button)
         btn_row.addWidget(self.reload_projects_button)
         projects_layout.addLayout(btn_row)
         layout.addWidget(self.projects_group)
@@ -263,10 +269,30 @@ class SidebarWidget(QWidget):
         """Reload project folders from the current working directory, preserving manual projects."""
         debug_print("SidebarWidget.reload_from_cwd called")
         from utils.project_scanner import scan_project_folders
-        scanned = scan_project_folders(Path.cwd(), quick_scan=True)
-        self.set_projects({**scanned, **self._manual_projects})
-        self.reload_requested.emit()
+        if self._reload_spinner.is_spinning():
+            debug_print("SidebarWidget.reload_from_cwd ignored: reload already running")
+            return
+        self.reload_projects_button.setEnabled(False)
+        self._reload_spinner.start()
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)  # paint the first frame
+        # long scan/read loops call maybe_yield(), which keeps the spinner turning
+        set_yield_callback(self._repaint_during_reload)
+        try:
+            scanned = scan_project_folders(Path.cwd(), quick_scan=True)
+            self.set_projects({**scanned, **self._manual_projects})
+            self.reload_requested.emit()
+        finally:
+            set_yield_callback(None)
+            QTimer.singleShot(_RELOAD_MIN_SPIN_MS, self._finish_reload_spinner)
         debug_print("SidebarWidget.reload_from_cwd complete")
+
+    @staticmethod
+    def _repaint_during_reload() -> None:
+        QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+
+    def _finish_reload_spinner(self) -> None:
+        self._reload_spinner.stop()
+        self.reload_projects_button.setEnabled(True)
 
     def add_manual_project(self, name: str, info: dict) -> None:
         """Register a manually added project (survives reload)."""

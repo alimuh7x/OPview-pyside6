@@ -55,11 +55,10 @@ echo "    First run may take several minutes."
 pip install -r requirements.txt --quiet
 echo "[OK] Dependencies installed."
 
-echo "[>>] Launching OPView..."
-if [ -n "$PROJECT_PATH" ]; then
-    echo "[DEBUG] Running: python main.py $PROJECT_PATH"
-    python main.py "$PROJECT_PATH"
+# Debug mode: OPVIEW_DEBUG=1 ./opview.sh keeps the console attached with live output.
+if [ "${OPVIEW_DEBUG:-}" = "1" ]; then
+    python main.py ${PROJECT_PATH:+"$PROJECT_PATH"}
 else
-    echo "[DEBUG] Running: python main.py"
-    python main.py
+    nohup python main.py ${PROJECT_PATH:+"$PROJECT_PATH"} >/dev/null 2>&1 &
+    disown
 fi

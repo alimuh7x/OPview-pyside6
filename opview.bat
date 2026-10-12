@@ -115,11 +115,22 @@ echo [OK] Dependencies installed.
 rem --- Launch app ---
 echo.
 echo [>>] Launching OPview...
+rem --- Debug mode: set OPVIEW_DEBUG=1 to keep this console open with live output ---
+set "VENV_PYTHONW=%VENV_DIR%\Scripts\pythonw.exe"
+if "%OPVIEW_DEBUG%"=="1" goto run_debug
+
+rem --- Normal mode: launch without a console window and close this one ---
 if defined PROJECT_PATH (
-    echo [DEBUG] Running: "%VENV_PYTHON%" "%~dp0main.py" "%PROJECT_PATH%"
+    start "" "%VENV_PYTHONW%" "%~dp0main.py" "%PROJECT_PATH%"
+) else (
+    start "" "%VENV_PYTHONW%" "%~dp0main.py"
+)
+exit /b 0
+
+:run_debug
+if defined PROJECT_PATH (
     "%VENV_PYTHON%" "%~dp0main.py" "%PROJECT_PATH%"
 ) else (
-    echo [DEBUG] Running: "%VENV_PYTHON%" "%~dp0main.py"
     "%VENV_PYTHON%" "%~dp0main.py"
 )
 

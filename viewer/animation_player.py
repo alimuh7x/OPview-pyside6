@@ -6,8 +6,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import matplotlib.image as mpimg
 import numpy as np
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QProgressBar,
+    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -34,6 +35,78 @@ from app.resources import ASSETS_DIR, HEATMAP_LOGO_PATH
 from viewer.colorscale import palette_to_cmap
 
 _TRANSPORT_ICON_SIZE = QSize(28, 28)
+_EXPORT_DPI = 150
+_COLORBAR_TICK_FONT_SIZE = 16
+_COLORBAR_LABEL_FONT_SIZE = 20
+_PHASE_OVERLAY_ZORDER = 4
+_INTERFACE_OVERLAY_ZORDER = 5  # interfaces stay visible above the phase regions, as in Single View
+_SCREEN_DPI = 100  # logical on-screen dpi used to convert widget pixels to inches
+_DEFAULT_EXPORT_SIZE_INCHES = (7.2, 6.0)
+_DEFAULT_EXPORT_LOGO_RECT = (0.02, 0.04, 0.10, 0.18)
+_DEFAULT_EXPORT_PLOT_RECT = (0.12, 0.06, 0.66, 0.88)
+
+
+_EXPORT_LOGO_MAX_PX = 300  # the logo is drawn ~100 px wide; the source PNG is 4000 px
+
+
+def _load_export_logo():
+    """Load the logo pre-shrunk so Agg does not resample 4000x4000 pixels on every frame."""
+    from PIL import Image
+
+    with Image.open(str(HEATMAP_LOGO_PATH)) as img:
+        img = img.convert("RGBA")
+        img.thumbnail((_EXPORT_LOGO_MAX_PX, _EXPORT_LOGO_MAX_PX), Image.Resampling.LANCZOS)
+        return np.asarray(img, dtype=np.float32) / 255.0
+
+
+def _replaces_scalar(plot_type, overlays):
+    """True when phase overlays stand in for the scalar image (threshold mode, not on-top layers)."""
+    return plot_type == "threshold" and any(not o.get("on_top") for o in overlays or [])
+
+
+class _Mp4ExportCancelled(Exception):
+    """Raised inside the export thread when the user cancels."""
+
+
+class _Mp4Exporter(QObject):
+    """Runs AnimationPlayer._write_mp4 off the UI thread and reports progress."""
+
+    progress = Signal(int, int)
+    finished = Signal(str, str)  # (error_kind, message); both empty on success
+
+    def __init__(self, player, path, frame_indices, layout):
+        super().__init__()
+        self._player = player
+        self._path = path
+        self._frame_indices = list(frame_indices)
+        self._layout = layout
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def _check_cancelled(self):
+        if self._cancelled:
+            raise _Mp4ExportCancelled()
+
+    def run(self):
+        debug_print("Mp4Exporter.run called")
+        try:
+            self._player._write_mp4(
+                self._path,
+                self._frame_indices,
+                layout=self._layout,
+                on_progress=lambda done, total: self.progress.emit(done, total),
+                check_cancelled=self._check_cancelled,
+            )
+        except _Mp4ExportCancelled:
+            self.finished.emit("cancelled", "")
+        except FileNotFoundError:
+            self.finished.emit("missing_encoder", "")
+        except Exception as exc:  # reported to the user in the UI thread
+            self.finished.emit("error", str(exc))
+        else:
+            self.finished.emit("", "")
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +168,7 @@ class _FrameFetcher(QObject):
                 mesh = pv.read(path)
                 z = self._fast_load(mesh, array_key, component, scale)
                 overlay = self._load_overlay(path, pv) if self._interfaces_overlay else None
-                phase_overlays = self._load_phase_fraction_overlays(mesh)
+                phase_overlays = self._load_phase_fraction_overlays(mesh, path, pv)
                 debug_print(f"FrameFetcher phase overlays loaded={len(phase_overlays)}")
                 self.frame_ready.emit(
                     i,
@@ -121,21 +194,30 @@ class _FrameFetcher(QObject):
             return None
         return np.asarray(overlay)
 
-    def _load_phase_fraction_overlays(self, mesh):
+    def _load_phase_fraction_overlays(self, mesh, file_path=None, pv=None):
         debug_print("FrameFetcher._load_phase_fraction_overlays called")
-        if self._plot_type != "threshold":
-            debug_print("FrameFetcher phase overlays skipped non-threshold")
-            return []
         if not self._phase_fraction_specs:
             debug_print("FrameFetcher phase overlays skipped no specs")
             return []
+        phase_mesh = None  # PhaseField file for on-top layers, read lazily once per frame
         overlays = []
         for spec in self._phase_fraction_specs:
+            on_top = bool(spec.get("on_top"))
+            if not on_top and self._plot_type != "threshold":
+                debug_print("FrameFetcher phase overlay skipped non-threshold")
+                continue
+            source = mesh
+            if on_top:
+                if phase_mesh is None:
+                    phase_mesh = self._read_phase_mesh(file_path, mesh, pv)
+                source = phase_mesh
+                if source is None:
+                    continue
             debug_print(f"FrameFetcher loading phase array={spec.get('array')}")
             debug_print(f"FrameFetcher loading phase label={spec.get('label')}")
             try:
                 z = self._fast_load(
-                    mesh,
+                    source,
                     spec["array"],
                     spec.get("component"),
                     spec.get("scale", 1.0) or 1.0,
@@ -151,9 +233,23 @@ class _FrameFetcher(QObject):
                     "z": np.asarray(z, dtype=np.float32),
                     "range": tuple(spec.get("range", (0.0, 1.0))),
                     "color": spec.get("color", "#d62728"),
+                    "on_top": on_top,
                 }
             )
         return overlays
+
+    def _read_phase_mesh(self, file_path, mesh, pv):
+        """Mesh of the PhaseField file matching file_path (PhaseFraction_* live there)."""
+        phase_file = self._phase_overlay_file(file_path)
+        if phase_file is None:
+            return None
+        if Path(phase_file) == Path(file_path):
+            return mesh
+        try:
+            return pv.read(str(phase_file))
+        except Exception as exc:
+            debug_print(f"FrameFetcher phase mesh read failed: {exc}")
+            return None
 
     @staticmethod
     def _phase_overlay_file(file_path):
@@ -245,7 +341,7 @@ class _MatplotlibCanvas(QWidget):
         plot_type="heatmap",
     ):
         phase_fraction_overlays = phase_fraction_overlays or []
-        show_phase_overlays = plot_type == "threshold" and bool(phase_fraction_overlays)
+        show_phase_overlays = _replaces_scalar(plot_type, phase_fraction_overlays)
         debug_print("MatplotlibAnimationCanvas.show_frame called")
         debug_print(f"MatplotlibAnimationCanvas plot_type={plot_type}")
         debug_print(f"MatplotlibAnimationCanvas phase overlay count={len(phase_fraction_overlays)}")
@@ -264,7 +360,7 @@ class _MatplotlibCanvas(QWidget):
                 self._cbar = self._fig.colorbar(self._im, ax=self._ax,
                                                  fraction=0.046, pad=0.04,
                                                  shrink=0.78)
-                self._cbar.ax.tick_params(labelsize=11)
+                self._cbar.ax.tick_params(labelsize=_COLORBAR_TICK_FONT_SIZE)
         else:
             self._im.set_data(display_z)
         if show_phase_overlays:
@@ -278,7 +374,7 @@ class _MatplotlibCanvas(QWidget):
                 self._cbar = self._fig.colorbar(self._im, ax=self._ax,
                                                  fraction=0.046, pad=0.04,
                                                  shrink=0.78)
-                self._cbar.ax.tick_params(labelsize=11)
+                self._cbar.ax.tick_params(labelsize=_COLORBAR_TICK_FONT_SIZE)
         self._clear_overlay()
         self._clear_phase_overlays()
         if overlay is not None:
@@ -290,9 +386,9 @@ class _MatplotlibCanvas(QWidget):
                 alpha=0.82,
                 origin="lower",
                 antialiased=True,
-                zorder=3,
+                zorder=_INTERFACE_OVERLAY_ZORDER,
             )
-        if show_phase_overlays:
+        if phase_fraction_overlays:
             legend_handles = []
             for phase_overlay in phase_fraction_overlays:
                 label = str(phase_overlay.get("label", "PhaseFraction"))
@@ -313,11 +409,11 @@ class _MatplotlibCanvas(QWidget):
                     alpha=1.0,
                     origin="lower",
                     antialiased=True,
-                    zorder=4,
+                    zorder=_PHASE_OVERLAY_ZORDER,
                 )
                 self._phase_overlays.append(artist)
                 legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
-            if legend_handles:
+            if legend_handles and show_phase_overlays:
                 self._fig.subplots_adjust(right=0.76)
                 self._legend = self._ax.legend(
                     handles=legend_handles,
@@ -326,12 +422,19 @@ class _MatplotlibCanvas(QWidget):
                     fontsize=10,
                     framealpha=0.86,
                 )
+            elif legend_handles:
+                self._legend = self._ax.legend(
+                    handles=legend_handles,
+                    loc="upper right",
+                    fontsize=9,
+                    framealpha=0.86,
+                )
         elif self._legend is None:
             self._fig.subplots_adjust(right=0.92)
         if title:
             self._ax.set_title(title, fontsize=9, pad=4)
         if self._cbar is not None:
-            self._cbar.set_label(colorbar_label or "", fontsize=14)
+            self._cbar.set_label(colorbar_label or "", fontsize=_COLORBAR_LABEL_FONT_SIZE)
         self._canvas.draw_idle()
 
     def _remove_colorbar(self):
@@ -417,6 +520,10 @@ class AnimationPlayer(QDialog):
         self._closed        = False
         self._fetcher       = None
         self._thread        = None
+        self._export_thread = None
+        self._export_worker = None
+        self._export_progress = None
+        self._export_path   = None
 
         self._build_ui()
         self._start_fetch()
@@ -879,36 +986,77 @@ QDialog#animationPlayer QProgressBar::chunk {
         if not path.lower().endswith(".mp4"):
             path = f"{path}.mp4"
 
-        was_playing = self._playing
         self._pause()
         self._exporting = True
         self._export_btn.setEnabled(False)
+        self._export_path = Path(path)
         self._set_status(f"Exporting MP4 at {self._fps} fps...")
-        try:
-            self._write_mp4(Path(path), valid_indices)
-        except FileNotFoundError:
-            message = self._mp4_encoder_missing_message()
-            self._set_status(message)
-            readable_warning(self, "MP4 Export Unavailable", message)
-        except Exception as exc:
-            self._set_status(f"MP4 export failed: {exc}")
-            readable_warning(
-                self,
-                "MP4 Export Failed",
-                f"Could not export MP4.\n\n{exc}",
-            )
+
+        total = len(valid_indices)
+        progress = QProgressDialog(f"Exporting {self._export_path.name}...", "Cancel", 0, total, self)
+        progress.setWindowTitle("Exporting MP4")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setAutoClose(False)
+        progress.setAutoReset(False)
+        progress.setValue(0)
+        self._export_progress = progress
+
+        worker = _Mp4Exporter(self, self._export_path, valid_indices, self._export_layout())
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_export_progress)
+        worker.finished.connect(self._on_export_finished)
+        worker.finished.connect(thread.quit)
+        progress.canceled.connect(worker.cancel)
+        self._export_worker = worker
+        self._export_thread = thread
+        thread.start()
+
+    def _on_export_progress(self, done, total):
+        if self._export_progress is not None:
+            self._export_progress.setMaximum(total)
+            self._export_progress.setValue(done)
+            self._export_progress.setLabelText(f"Exporting {self._export_path.name}: frame {done} / {total}")
+
+    def _on_export_finished(self, kind, message):
+        debug_print(f"AnimationPlayer export finished kind={kind or 'ok'}")
+        path = self._export_path
+        if self._export_progress is not None:
+            self._export_progress.close()
+            self._export_progress.deleteLater()
+            self._export_progress = None
+        if self._export_thread is not None:
+            self._export_thread.wait(5000)
+        self._export_worker = None
+        self._export_thread = None
+        self._exporting = False
+        if self._closed:
+            return
+        self._export_btn.setEnabled(True)
+        if kind == "cancelled":
+            self._discard_partial_export(path)
+            self._set_status("MP4 export cancelled.")
+        elif kind == "missing_encoder":
+            text = self._mp4_encoder_missing_message()
+            self._set_status(text)
+            readable_warning(self, "MP4 Export Unavailable", text)
+        elif kind == "error":
+            self._discard_partial_export(path)
+            self._set_status(f"MP4 export failed: {message}")
+            readable_warning(self, "MP4 Export Failed", f"Could not export MP4.\n\n{message}")
         else:
-            self._set_status(f"MP4 exported: {Path(path).name}")
-            readable_information(
-                self,
-                "MP4 Export Complete",
-                f"MP4 exported successfully.\n\n{path}",
-            )
-        finally:
-            self._exporting = False
-            self._export_btn.setEnabled(True)
-            if was_playing:
-                self._start_play()
+            self._set_status(f"MP4 exported: {path.name}")
+            readable_information(self, "MP4 Export Complete", f"MP4 exported successfully.\n\n{path}")
+
+    @staticmethod
+    def _discard_partial_export(path):
+        try:
+            if path is not None and path.exists():
+                path.unlink()
+        except OSError as exc:
+            debug_print(f"AnimationPlayer could not remove partial export: {exc}")
 
     def _mp4_encoder_error(self):
         try:
@@ -975,16 +1123,53 @@ QDialog#animationPlayer QProgressBar::chunk {
             "Install FFmpeg with winget or add ffmpeg.exe to PATH, then restart OPView and export again."
         )
 
-    def _write_mp4(self, path: Path, frame_indices):
+    def _export_layout(self):
+        """Capture the on-screen canvas geometry so the MP4 matches the window.
+
+        Returns None when the canvas has no size yet (the default layout is used).
+        """
+        debug_print("AnimationPlayer._export_layout called")
+        row_w = self._canvas_row_widget.width()
+        row_h = self._canvas_row_widget.height()
+        if row_w <= 0 or row_h <= 0:
+            return None
+        canvas = self._mpl_canvas
+        if canvas._im is None:
+            return None
+        canvas._canvas.draw()  # make sure tight_layout has been applied
+        pos = canvas._ax.get_position(original=True)
+        x0, y0, x1, y1 = pos.x0, pos.y0, pos.x1, pos.y1
+        if canvas._cbar is not None:
+            x1 = max(x1, canvas._cbar.ax.get_position().x1)
+        logo_w = self._logo_label.width()
+        canvas_x = logo_w + self._canvas_row_widget.layout().spacing()
+        canvas_w = max(1, row_w - canvas_x)
+        width_px = max(2, round(row_w * _EXPORT_DPI / _SCREEN_DPI) // 2 * 2)  # h264 needs even sizes
+        height_px = max(2, round(row_h * _EXPORT_DPI / _SCREEN_DPI) // 2 * 2)
+        logo_px = min(72, logo_w)
+        layout = {
+            "size_inches": (width_px / _EXPORT_DPI, height_px / _EXPORT_DPI),
+            "logo_rect": (0.0, 0.0, logo_px / row_w, logo_px / row_h),
+            "plot_rect": (
+                (canvas_x + x0 * canvas_w) / row_w,
+                y0,
+                (x1 - x0) * canvas_w / row_w,
+                y1 - y0,
+            ),
+        }
+        debug_print(f"AnimationPlayer export layout={layout}")
+        return layout
+
+    def _write_mp4(self, path: Path, frame_indices, layout=None, on_progress=None, check_cancelled=None):
         from matplotlib.animation import FFMpegWriter
 
-        writer = FFMpegWriter(fps=self._fps)
-        fig = self._build_export_figure()
-        canvas = FigureCanvasQTAgg(fig)
+        writer = FFMpegWriter(fps=self._fps, extra_args=["-preset", "veryfast"])
+        fig = self._build_export_figure(layout)
+        canvas = FigureCanvasAgg(fig)  # no widgets: safe to run off the UI thread
         ax = self._export_plot_ax
         first_index = frame_indices[0]
         first_frame = self._threshold_display_frame(self._frames[first_index])
-        show_phase_overlays = self._plot_type == "threshold" and bool(self._phase_fraction_overlays[first_index])
+        show_phase_overlays = _replaces_scalar(self._plot_type, self._phase_fraction_overlays[first_index])
         debug_print(f"AnimationPlayer export show phase overlays={show_phase_overlays}")
         image = ax.imshow(
             first_frame,
@@ -999,18 +1184,19 @@ QDialog#animationPlayer QProgressBar::chunk {
         cbar = None
         if not show_phase_overlays:
             cbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, shrink=0.78)
-            cbar.ax.tick_params(labelsize=11)
-            cbar.set_label(self._colorbar_label or "", fontsize=14)
-        else:
-            fig.subplots_adjust(right=0.76)
+            cbar.ax.tick_params(labelsize=_COLORBAR_TICK_FONT_SIZE)
+            cbar.set_label(self._colorbar_label or "", fontsize=_COLORBAR_LABEL_FONT_SIZE)
         overlay_artist = None
         phase_artists = []
         legend_artist = None
+        total = len(frame_indices)
 
-        with writer.saving(fig, str(path), dpi=150):
-            for index in frame_indices:
+        with writer.saving(fig, str(path), dpi=_EXPORT_DPI):
+            for done, index in enumerate(frame_indices):
+                if check_cancelled is not None:
+                    check_cancelled()
                 phase_overlays = self._phase_fraction_overlays[index]
-                show_phase_overlays = self._plot_type == "threshold" and bool(phase_overlays)
+                show_phase_overlays = _replaces_scalar(self._plot_type, phase_overlays)
                 debug_print(f"AnimationPlayer export frame index={index}")
                 debug_print(f"AnimationPlayer export phase overlay count={len(phase_overlays)}")
                 image.set_data(self._threshold_display_frame(self._frames[index]))
@@ -1025,17 +1211,21 @@ QDialog#animationPlayer QProgressBar::chunk {
                 )
                 canvas.draw()
                 writer.grab_frame()
+                if on_progress is not None:
+                    on_progress(done + 1, total)
 
-    def _build_export_figure(self):
+    def _build_export_figure(self, layout=None):
         debug_print("AnimationPlayer._build_export_figure called")
-        fig = Figure(figsize=(7.2, 6), tight_layout=False, facecolor="white")
-        logo_ax = fig.add_axes([0.02, 0.04, 0.10, 0.18])
+        size = layout["size_inches"] if layout else _DEFAULT_EXPORT_SIZE_INCHES
+        logo_rect = layout["logo_rect"] if layout else _DEFAULT_EXPORT_LOGO_RECT
+        plot_rect = layout["plot_rect"] if layout else _DEFAULT_EXPORT_PLOT_RECT
+        fig = Figure(figsize=size, tight_layout=False, facecolor="white")
+        logo_ax = fig.add_axes(list(logo_rect))
         logo_ax.set_axis_off()
-        plot_ax = fig.add_axes([0.12, 0.06, 0.66, 0.88])
+        plot_ax = fig.add_axes(list(plot_rect))
         plot_ax.set_axis_off()
         try:
-            logo = mpimg.imread(str(HEATMAP_LOGO_PATH))
-            logo_ax.imshow(logo)
+            logo_ax.imshow(_load_export_logo())
             debug_print("AnimationPlayer export logo loaded")
         except Exception as exc:
             debug_print(f"AnimationPlayer export logo load failed={exc}")
@@ -1065,7 +1255,7 @@ QDialog#animationPlayer QProgressBar::chunk {
             alpha=0.82,
             origin="lower",
             antialiased=True,
-            zorder=3,
+            zorder=_INTERFACE_OVERLAY_ZORDER,
         )
 
     def _draw_export_phase_overlays(self, ax, phase_artists, legend_artist, phase_overlays):
@@ -1074,9 +1264,10 @@ QDialog#animationPlayer QProgressBar::chunk {
             self._remove_overlay_artist(artist)
         if legend_artist is not None:
             legend_artist.remove()
-        if self._plot_type != "threshold" or not phase_overlays:
+        if not phase_overlays:
             debug_print("AnimationPlayer export phase overlays skipped")
             return [], None
+        outside = _replaces_scalar(self._plot_type, phase_overlays)
         next_artists = []
         legend_handles = []
         for phase_overlay in phase_overlays:
@@ -1097,17 +1288,20 @@ QDialog#animationPlayer QProgressBar::chunk {
                     alpha=1.0,
                     origin="lower",
                     antialiased=True,
-                    zorder=4,
+                    zorder=_PHASE_OVERLAY_ZORDER,
                 )
             )
             legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
-        legend = ax.legend(
-            handles=legend_handles,
-            loc="upper left",
-            bbox_to_anchor=(1.02, 1.0),
-            fontsize=10,
-            framealpha=0.86,
-        )
+        if outside:
+            legend = ax.legend(
+                handles=legend_handles,
+                loc="upper left",
+                bbox_to_anchor=(1.02, 1.0),
+                fontsize=10,
+                framealpha=0.86,
+            )
+        else:
+            legend = ax.legend(handles=legend_handles, loc="upper right", fontsize=9, framealpha=0.86)
         return next_artists, legend
 
     @staticmethod
@@ -1210,6 +1404,10 @@ QDialog#animationPlayer QProgressBar::chunk {
     def closeEvent(self, event):
         self._closed = True
         self._timer.stop()
+        if self._export_worker is not None:
+            self._export_worker.cancel()
+        if self._export_thread is not None and self._export_thread.isRunning():
+            self._export_thread.wait(5000)
         if self._fetcher is not None:
             self._fetcher.abort()
             self._disconnect_fetcher_signals()

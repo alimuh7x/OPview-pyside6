@@ -8,6 +8,9 @@ import numpy as np
 import plotly.graph_objects as go
 
 
+CONTOUR_LINE_WIDTH = 2.5
+
+
 class PlotTypeRenderer(ABC):
     """Abstract base — each subclass knows how to build its Plotly traces."""
 
@@ -69,6 +72,7 @@ class ContourLinesRenderer(PlotTypeRenderer):
                 showlabels= True,
                 labelfont = dict(size=11, color="black"),
             ),
+            line          = dict(width=CONTOUR_LINE_WIDTH),
             hovertemplate = hovertemplate,
         )]
 
@@ -92,6 +96,7 @@ class ContourFilledRenderer(PlotTypeRenderer):
                 coloring  = "fill",
                 showlabels= False,
             ),
+            line          = dict(width=0),
             hovertemplate = hovertemplate,
         )]
 
@@ -147,7 +152,7 @@ class HeatmapContourRenderer(PlotTypeRenderer):
                 showscale  = False,
                 colorscale = colorscale,
                 contours   = dict(coloring="lines"),
-                line       = dict(color="black", width=1),
+                line       = dict(color="black", width=CONTOUR_LINE_WIDTH),
                 hoverinfo  = "skip",
             ),
         ]

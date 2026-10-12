@@ -6,7 +6,6 @@ from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPaintEvent, QPainter, QPe
 from PySide6.QtCore import QEvent, QObject, Qt, QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
-    QDoubleSpinBox,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -34,7 +33,10 @@ from viewer.panel_controls_widget import PanelControlsWidget
 from viewer.phase_fraction_history_canvas import PhaseFractionHistoryCanvas
 from viewer.time_plot_canvas import TimePlotCanvas
 from viewer.toggle_switch_widget import ToggleSwitchWidget
+from viewer.phase_overlay_button import PhaseOverlayButton
+from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
 
+_LABEL_EDIT_MIN_WIDTH = 320
 _HEATMAP_LOGO_BAND_W = 52
 _HEATMAP_LOGO_PIXMAP_W = 52
 _HEATMAP_LOGO_GAP = 4
@@ -246,13 +248,20 @@ class PanelWidget(QWidget):
         self.histogram_bins_slider.setValue(30)
 
         self.interfaces_check = ToggleSwitchWidget("Interfaces Overlay", checked=False)
+        self.phase_overlay_button = PhaseOverlayButton()
+        self.phase_overlay_button.interfaces_toggled.connect(self.interfaces_check.setChecked)
         self.vector_overlay_check = ToggleSwitchWidget("Vectors", checked=False)
         self.vector_overlay_check.setToolTip("Show fixed-size vector arrows colored by magnitude")
         debug_print("PanelWidget vector overlay toggle initialized")
         self.colorbar_label_edit = QLineEdit()
         self.colorbar_label_edit.setPlaceholderText("Colorbar label…")
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
-        self.colorbar_label_edit.setMinimumWidth(300)
+        # The app stylesheet's `min-width: 72px` beats setMinimumWidth(), so the width has to
+        # be requested through a widget-level stylesheet (CSS min-width excludes 18px of padding/border).
+        self.colorbar_label_edit.setMinimumWidth(_LABEL_EDIT_MIN_WIDTH)
+        self.colorbar_label_edit.setStyleSheet(
+            f"QLineEdit#viewerLineEdit {{ min-width: {_LABEL_EDIT_MIN_WIDTH - 18}px; }}"
+        )
         debug_print("PanelWidget colorbar label min width set to 300")
 
         # Timeline row widgets
@@ -288,7 +297,7 @@ class PanelWidget(QWidget):
         self.animate_btn.setObjectName("playbackBtn")
         self.phase_history_dt_label = QLabel("dt:")
         self.phase_history_dt_label.setObjectName("mutedInfo")
-        self.phase_history_dt_spin = QDoubleSpinBox()
+        self.phase_history_dt_spin = TrimmedDoubleSpinBox()
         self.phase_history_dt_spin.setObjectName("viewerSpin")
         self.phase_history_dt_spin.setDecimals(6)
         self.phase_history_dt_spin.setRange(0.000001, 1_000_000_000.0)
@@ -383,6 +392,7 @@ class PanelWidget(QWidget):
             histogram_bins_slider=self.histogram_bins_slider,
             interfaces_check=self.interfaces_check,
             vector_overlay_check=self.vector_overlay_check,
+            phase_overlay_button=self.phase_overlay_button,
             export_button=self.export_button,
             colorbar_label_edit=self.colorbar_label_edit,
             unit_scale_combo=self.unit_scale_combo,
@@ -520,6 +530,8 @@ class PanelWidget(QWidget):
         return text
 
     def eventFilter(self, source: QObject, event: QEvent) -> bool:  # noqa: N802
+        if source is getattr(self, "heatmap_toolbar", None) and event.type() == QEvent.Type.Resize:
+            self._update_heatmap_toolbar_mode(self.width())
         if source is self.playback_slider and event.type() == QEvent.Type.MouseMove:
             index = self.playback_tick_marks.frame_index_at_position(
                 event.position().x(),
@@ -607,7 +619,10 @@ class PanelWidget(QWidget):
         plot_type = self.controls_widget.current_plot_type()
         debug_print(f"PanelWidget animation plot_type={plot_type}")
         debug_print(f"PanelWidget animation rotation degrees={state.rotation_degrees}")
-        phase_fraction_specs = self.controller.phase_fraction_animation_specs()
+        phase_fraction_specs = (
+            self.controller.phase_fraction_animation_specs()
+            + self.controller.phase_overlay_animation_specs()
+        )
         debug_print(f"PanelWidget animation phase spec count={len(phase_fraction_specs)}")
         for spec in phase_fraction_specs:
             debug_print(f"PanelWidget animation phase spec label={spec.get('label')}")
@@ -723,6 +738,7 @@ class PanelWidget(QWidget):
         self.colorbar_label_caption = QLabel("Label:")
         self.colorbar_label_caption.setObjectName("mutedInfo")
         self._apply_heatmap_toolbar_mode("wide", force=True)
+        self.heatmap_toolbar.installEventFilter(self)
         layout.addWidget(self.heatmap_toolbar)
 
         # Timeline row: transport buttons, slider, frame label, Animate
@@ -822,7 +838,7 @@ class PanelWidget(QWidget):
         if mode == "compact":
             debug_print("PanelWidget applying compact heatmap toolbar")
             self.heatmap_toolbar_secondary_layout.addStretch(1)
-            self.heatmap_toolbar_secondary_layout.addWidget(self.interfaces_check)
+            self.heatmap_toolbar_secondary_layout.addWidget(self.phase_overlay_button)
             self.heatmap_toolbar_secondary_layout.addWidget(self.vector_overlay_check)
             self.heatmap_toolbar_secondary_layout.addWidget(self.export_button)
             self.heatmap_toolbar.setFixedHeight(82)
@@ -830,7 +846,7 @@ class PanelWidget(QWidget):
         else:
             debug_print("PanelWidget applying wide heatmap toolbar")
             self.heatmap_toolbar_primary_layout.addStretch(1)
-            self.heatmap_toolbar_primary_layout.addWidget(self.interfaces_check)
+            self.heatmap_toolbar_primary_layout.addWidget(self.phase_overlay_button)
             self.heatmap_toolbar_primary_layout.addWidget(self.vector_overlay_check)
             self.heatmap_toolbar_primary_layout.addWidget(self.export_button)
             self.heatmap_toolbar.setFixedHeight(44)
@@ -842,10 +858,37 @@ class PanelWidget(QWidget):
     def _update_heatmap_toolbar_mode(self, width: int) -> None:
         debug_print("PanelWidget._update_heatmap_toolbar_mode called")
         bounded_width = max(0, int(width))
-        mode = "compact" if bounded_width and bounded_width < 620 else "wide"
+        toolbar_width = self.heatmap_toolbar.width()
+        if toolbar_width > 1:
+            bounded_width = min(bounded_width, toolbar_width)
+        too_narrow = bool(bounded_width) and (
+            bounded_width < 620 or bounded_width < self._wide_toolbar_required_width()
+        )
+        mode = "compact" if too_narrow else "wide"
         debug_print(f"PanelWidget heatmap toolbar width={bounded_width}")
         debug_print(f"PanelWidget heatmap toolbar selected mode={mode}")
         self._apply_heatmap_toolbar_mode(mode)
+
+    def _wide_toolbar_required_width(self) -> int:
+        """Width the single-row toolbar needs so no control overlaps its neighbour."""
+        widgets = [
+            self.colorbar_label_caption,
+            self.colorbar_label_edit,
+            self.phase_history_dt_label,
+            self.phase_history_dt_spin,
+            self.phase_history_time_unit_combo,
+            self.unit_scale_combo,
+            self.phase_overlay_button,
+            self.vector_overlay_check,
+            self.export_button,
+        ]
+        shown = [w for w in widgets if not w.isHidden()]
+        spacing = self.heatmap_toolbar_primary_layout.spacing()
+        total = sum(
+            _LABEL_EDIT_MIN_WIDTH if w is self.colorbar_label_edit else max(w.minimumWidth(), w.sizeHint().width())
+            for w in shown
+        )
+        return total + spacing * max(0, len(shown) - 1)
 
     def _debug_heatmap_toolbar(self, reason: str) -> None:
         debug_print(f"PanelWidget._debug_heatmap_toolbar reason={reason}")

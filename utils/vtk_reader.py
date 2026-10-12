@@ -6,6 +6,7 @@ import numpy as np
 
 from app.debug import debug_print
 from config.constants import DEFAULTS
+from utils.ui_yield import maybe_yield
 
 
 class VTKReader:
@@ -28,6 +29,7 @@ class VTKReader:
         start = perf_counter()
         import pyvista as pv
 
+        maybe_yield()
         self.mesh = pv.read(self.file_path)
         debug_print(f"VTKReader loaded file={self.file_path} seconds={perf_counter() - start:.3f}")
         if self.mesh.n_arrays <= 0:
@@ -459,6 +461,41 @@ class VTKReader:
         debug_print(f"VTKReader sample nearest_index={nearest_index}")
         debug_print(f"VTKReader sample value={value}")
         return value
+
+    def sample_displayed_value(
+        self,
+        axis: str = "y",
+        index: int | None = None,
+        scalar_name: str | None = None,
+        component: int | None = None,
+        x_value: float = 0.0,
+        y_value: float = 0.0,
+        resolution: int | None = 160,
+    ) -> float:
+        """Value of the *displayed* heatmap grid nearest to (x, y).
+
+        The heatmap shows the raw nodes resampled to `resolution`, so hover reads those
+        interpolated values. `sample_point_value` reads the nearest raw node instead and
+        can differ a lot on noisy fields (tens of percent on stresses). Plot Over Time uses
+        this method so its value at the picked point equals what hover showed.
+        """
+        debug_print("VTKReader.sample_displayed_value called")
+        x_grid, y_grid, z_grid, _ = self.get_interpolated_slice(
+            axis=axis,
+            index=index,
+            scalar_name=scalar_name or self.scalar_name,
+            component=component,
+            resolution=resolution,
+        )
+        z_arr = np.asarray(z_grid, dtype=float)
+        valid = ~np.isnan(z_arr)
+        if not np.any(valid):
+            raise ValueError("No finite scalar values available")
+        distance = (np.asarray(x_grid, dtype=float) - float(x_value)) ** 2 + (
+            np.asarray(y_grid, dtype=float) - float(y_value)
+        ) ** 2
+        distance = np.where(valid, distance, np.inf)
+        return float(z_arr[np.unravel_index(int(np.argmin(distance)), distance.shape)])
 
     def get_max_slice_index(self, axis: str = "y") -> int:
         debug_print("VTKReader.get_max_slice_index called")

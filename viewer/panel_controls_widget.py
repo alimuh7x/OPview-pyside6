@@ -22,12 +22,16 @@ from PySide6.QtWidgets import (
 
 from app.debug import debug_print
 from config.constants import PALETTES
-from utils.combo_box_utils import update_combo_popup_width
+from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
+from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
 from viewer.plot_types import PLOT_TYPE_REGISTRY
 from viewer.range_slider_widget import RangeSliderWidget
 from viewer.toggle_switch_widget import ToggleSwitchWidget
 
 _ASSETS = Path(__file__).parent.parent / "assets"
+
+
+_DROPDOWN_TRIM_PX = 10  # the shared plot-type/palette width is this much narrower than the longest entry
 
 
 class _PhaseFractionRenameDelegate(QStyledItemDelegate):
@@ -147,10 +151,11 @@ class PanelControlsWidget(QWidget):
         for renderer in PLOT_TYPE_REGISTRY:
             self.plot_type_combo.addItem(renderer.label, renderer.key)
         update_combo_popup_width(self.plot_type_combo)
+        fit_combo_to_longest_item(self.plot_type_combo)
         self.range_label = QLabel("Range")
         self.range_label.setObjectName("mutedInfo")
 
-        self.range_min_spin = QDoubleSpinBox()
+        self.range_min_spin = TrimmedDoubleSpinBox()
         self.range_min_spin.setObjectName("viewerSpin")
         self.range_min_spin.setProperty("rangeSpin", True)
         self.range_min_spin.setDecimals(12)
@@ -161,7 +166,7 @@ class PanelControlsWidget(QWidget):
         self.range_min_spin.setMinimumWidth(120)
         self.range_min_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_min_spin min width set to 120")
-        self.range_max_spin = QDoubleSpinBox()
+        self.range_max_spin = TrimmedDoubleSpinBox()
         self.range_max_spin.setObjectName("viewerSpin")
         self.range_max_spin.setProperty("rangeSpin", True)
         self.range_max_spin.setDecimals(12)
@@ -170,6 +175,7 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget range_max_spin keyboard tracking disabled")
         debug_print("PanelControlsWidget range_max_spin decimals set to 12")
         self.range_max_spin.setMinimumWidth(120)
+        self.range_min_spin.link_peer(self.range_max_spin)
         self.range_max_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_max_spin min width set to 120")
 
@@ -264,6 +270,7 @@ class PanelControlsWidget(QWidget):
         palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
         self._sync_discrete_controls()
+        self._match_palette_width_to_plot_type()
         self._apply_layout_mode("wide", force=True)
         # ------------------------------------------------------------------------------------------------
 
@@ -301,6 +308,24 @@ class PanelControlsWidget(QWidget):
         self.status_label.setObjectName("mutedInfo")
         self.status_label.hide()
         debug_print("PanelControlsWidget UI ready")
+
+    def _match_palette_width_to_plot_type(self) -> None:
+        """Give the colour-palette and plot-type ("Heatmap") dropdowns one shared minimum width.
+
+        Width = what the longest plot-type entry needs, minus a few px so neither dropdown
+        is wider than necessary. Set through a widget stylesheet because the app stylesheet's
+        `min-width: 72px` would override setMinimumWidth(). CSS min-width excludes the
+        8+24+2 px of padding/border, which `fit_combo_to_longest_item` already accounts for.
+        """
+        metrics = self.plot_type_combo.fontMetrics()
+        longest = max(
+            (metrics.horizontalAdvance(self.plot_type_combo.itemText(i)) for i in range(self.plot_type_combo.count())),
+            default=0,
+        )
+        css_width = max(72, longest + 4 - _DROPDOWN_TRIM_PX)
+        for combo in (self.plot_type_combo, self.palette_combo):
+            combo.setStyleSheet(f"QComboBox {{ min-width: {css_width}px; }}")
+            debug_print(f"PanelControlsWidget {combo.objectName()} shared css min-width={css_width}")
 
     def _configure_compact_combo(self, combo: QComboBox, minimum_contents_length: int) -> None:
         debug_print("PanelControlsWidget._configure_compact_combo called")
@@ -601,6 +626,23 @@ class PanelControlsWidget(QWidget):
         debug_print(f"PanelControlsWidget rename aliases={self._phase_fraction_aliases}")
         self.phase_fraction_selection_changed.emit()
         debug_print("PanelControlsWidget emitted phase_fraction_selection_changed after rename")
+
+    def rename_phase_overlay(self, key: str, current_label: str) -> None:
+        """Rename a phase from the overlay legend; works for keys not in the scalar list."""
+        debug_print("PanelControlsWidget.rename_phase_overlay called")
+        dialog = self._build_phase_fraction_rename_dialog(key, current_label)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        alias = dialog.textValue().strip()
+        if alias:
+            self._phase_fraction_aliases[key] = alias
+        else:
+            self._phase_fraction_aliases.pop(key, None)
+        index = self.scalar_combo.findData(key)
+        if index >= 0:
+            self.scalar_combo.setItemText(index, self._phase_fraction_combo_text(key))
+            update_combo_popup_width(self.scalar_combo)
+        self.phase_fraction_selection_changed.emit()
 
     def _open_phase_fraction_rename_dialog(self, key: str) -> None:
         debug_print("PanelControlsWidget._open_phase_fraction_rename_dialog called")

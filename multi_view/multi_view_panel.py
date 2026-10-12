@@ -25,7 +25,7 @@ from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS, PALETTES
 from multi_view.colorbar_canvas import ColorbarCanvas, _W as _CB_W
 from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader, _CELL_W
-from utils.combo_box_utils import update_combo_popup_width
+from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
 from utils.time_series import compact_timestep_label
 from utils.vtk_utils import get_reader
 from viewer.colorscale import (
@@ -41,6 +41,7 @@ from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.line_scan_canvas import LineScanCanvas
 from viewer.range_slider_widget import RangeSliderWidget
 from viewer.toggle_switch_widget import ToggleSwitchWidget
+from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
 _LOGO_W = 58
@@ -117,6 +118,7 @@ class MultiViewPanel(QWidget):
         for key in PALETTES:
             self.palette_combo.addItem(key.replace("-", " ").title(), key)
         update_combo_popup_width(self.type_combo)
+        fit_combo_to_longest_item(self.type_combo)
         update_combo_popup_width(self.palette_combo)
         self.discrete_band_count = 2
         self.discrete_minus_button = QPushButton("-")
@@ -175,19 +177,20 @@ class MultiViewPanel(QWidget):
         r2_vbox.addLayout(r2_bottom)
         debug_print("MultiViewPanel row 2 split into two sub-rows")
 
-        self.range_min = QDoubleSpinBox(); self.range_min.setObjectName("viewerSpin")
+        self.range_min = TrimmedDoubleSpinBox(); self.range_min.setObjectName("viewerSpin")
         self.range_min.setDecimals(12); self.range_min.setRange(-1e12, 1e12)
         self.range_min.setKeyboardTracking(False)
         debug_print("MultiViewPanel range_min keyboard tracking disabled")
         debug_print("MultiViewPanel range_min decimals set to 12")
         self.range_min.setMinimumWidth(200)
         debug_print("MultiViewPanel range_min minimum width set to 200")
-        self.range_max = QDoubleSpinBox(); self.range_max.setObjectName("viewerSpin")
+        self.range_max = TrimmedDoubleSpinBox(); self.range_max.setObjectName("viewerSpin")
         self.range_max.setDecimals(12); self.range_max.setRange(-1e12, 1e12)
         self.range_max.setKeyboardTracking(False)
         debug_print("MultiViewPanel range_max keyboard tracking disabled")
         debug_print("MultiViewPanel range_max decimals set to 12")
         self.range_max.setMinimumWidth(200)
+        self.range_min.link_peer(self.range_max)
         debug_print("MultiViewPanel range_max minimum width set to 200")
         self.range_max.setValue(1.0)
         self.colorbar_label_edit = QLineEdit()

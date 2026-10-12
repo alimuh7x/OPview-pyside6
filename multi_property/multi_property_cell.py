@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from viewer.trimmed_spin_box import TrimmedDoubleSpinBox, format_trimmed
 from multi_property.colorbar_canvas import MultiPropertyColorbarCanvas
 from multi_view.multi_view_cell import MultiViewCell, _CELL_W
 
@@ -38,26 +39,31 @@ def _format_range_value(value: float) -> str:
     abs_value = abs(value)
     if value == 0.0:
         debug_print("MultiPropertyCell formatted range value=0")
-        return "0"
+        return "0.0"
     if abs_value < 0.001 or abs_value >= 1000.0:
         formatted = f"{value:.2e}"
         debug_print(f"MultiPropertyCell formatted scientific={formatted}")
         return formatted
-    formatted = f"{value:.12f}".rstrip("0").rstrip(".")
+    formatted = format_trimmed(value, 2)
     debug_print(f"MultiPropertyCell formatted decimal={formatted}")
     return formatted
 
 
-class ScientificRangeSpinBox(QDoubleSpinBox):
+class ScientificRangeSpinBox(TrimmedDoubleSpinBox):
     """Range spin box that displays large/small values in scientific notation."""
 
     def textFromValue(self, value: float) -> str:  # noqa: N802
         debug_print("ScientificRangeSpinBox.textFromValue called")
-        return _format_range_value(value)
+        abs_value = abs(float(value))
+        if value != 0.0 and (abs_value < 0.001 or abs_value >= 1000.0):
+            return f"{float(value):.2e}"
+        return super().textFromValue(value)
 
     def valueFromText(self, text: str) -> float:  # noqa: N802
         debug_print("ScientificRangeSpinBox.valueFromText called")
         debug_print(f"ScientificRangeSpinBox input text={text}")
+        if text.strip() == self.textFromValue(self.value()):
+            return self.value()
         try:
             value = float(text.strip())
         except ValueError:

@@ -130,6 +130,28 @@ class PhaseFractionHistoryCanvas(QWidget):
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("PhaseFractionHistoryCanvas graph rendered")
 
+    @staticmethod
+    def _steady_y_range(series: list[dict], *, min_relative_span: float = 1e-3):
+        """Y range that does not magnify float noise.
+
+        Plotly autorange zooms to the data span, so an average that wobbles by 1e-9
+        around 0.3 looks like a wild curve. Keep at least `min_relative_span` of the
+        value magnitude visible; real changes larger than that autoscale as usual.
+        """
+        values = np.concatenate(
+            [np.asarray(item.get("values", []), dtype=float) for item in series] or [np.array([])]
+        )
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            return None
+        lo, hi = float(values.min()), float(values.max())
+        magnitude = max(abs(lo), abs(hi))
+        min_span = max(magnitude * min_relative_span, 1e-12)
+        if hi - lo >= min_span:
+            return None
+        centre = 0.5 * (lo + hi)
+        return centre - min_span, centre + min_span
+
     def _build_figure(
         self,
         series: list[dict],
@@ -220,7 +242,10 @@ class PhaseFractionHistoryCanvas(QWidget):
             debug_print("PhaseFractionHistoryCanvas applying phase fraction y range 0..100")
             figure.update_yaxes(range=[0, 100])
         else:
-            debug_print("PhaseFractionHistoryCanvas leaving y range automatic")
+            debug_range = self._steady_y_range(series)
+            if debug_range is not None:
+                figure.update_yaxes(range=list(debug_range))
+            debug_print(f"PhaseFractionHistoryCanvas average y range={debug_range}")
         debug_print("PhaseFractionHistoryCanvas._build_figure complete")
         return figure
 

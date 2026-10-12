@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from app.debug import debug_print
 from config import ALLOWED_TEXTDATA_EXTENSIONS, ALLOWED_VTK_EXTENSIONS, SKIP_FOLDERS
+from utils.ui_yield import maybe_yield
 
 
 def scan_project_folders(base_path: Path | None = None, quick_scan: bool = True) -> Dict[str, Dict[str, Any]]:
@@ -150,11 +151,12 @@ def _scan_vtk_dir(directory: Path) -> List[str]:
     debug_print("_scan_vtk_dir called")
     if not directory or not Path(directory).exists():
         return []
-    return sorted(
-        str(path.resolve())
-        for path in Path(directory).rglob("*")
-        if path.is_file() and path.suffix.lower() in ALLOWED_VTK_EXTENSIONS
-    )
+    files = []
+    for path in Path(directory).rglob("*"):
+        if path.is_file() and path.suffix.lower() in ALLOWED_VTK_EXTENSIONS:
+            files.append(str(path.resolve()))
+            maybe_yield()
+    return sorted(files)
 
 
 def _find_textdata_path(project_dir: Path) -> Path | None:

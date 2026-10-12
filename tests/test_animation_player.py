@@ -227,6 +227,56 @@ class AnimationPlayerTests(unittest.TestCase):
         finally:
             canvas.deleteLater()
 
+    def test_on_top_phase_overlay_keeps_scalar_image_and_colorbar(self):
+        canvas = _MatplotlibCanvas()
+        try:
+            z = np.linspace(0.0, 1.0, 16, dtype=np.float32).reshape(4, 4)
+            overlays = [
+                {
+                    "label": "Phase A",
+                    "z": np.ones((4, 4), dtype=np.float32),
+                    "range": (0.5, float("inf")),
+                    "color": "#d62728",
+                    "on_top": True,
+                }
+            ]
+
+            canvas.show_frame(z, "viridis", 0.0, 1.0, phase_fraction_overlays=overlays, plot_type="heatmap")
+
+            self.assertIsNotNone(canvas._cbar)
+            self.assertEqual(canvas._im.get_alpha(), 1.0)
+            self.assertEqual(len(canvas._phase_overlays), 1)
+            self.assertIsNotNone(canvas._ax.get_legend())
+        finally:
+            canvas.deleteLater()
+
+    def test_interface_overlay_is_drawn_above_phase_overlays(self):
+        canvas = _MatplotlibCanvas()
+        try:
+            z = np.linspace(0.0, 1.0, 16, dtype=np.float32).reshape(4, 4)
+            phases = [
+                {
+                    "label": "Phase A",
+                    "z": np.ones((4, 4), dtype=np.float32),
+                    "range": (0.5, float("inf")),
+                    "color": "#d62728",
+                    "on_top": True,
+                }
+            ]
+            interfaces = np.full((4, 4), 2.0, dtype=np.float32)
+
+            canvas.show_frame(
+                z, "viridis", 0.0, 1.0,
+                overlay=interfaces, phase_fraction_overlays=phases, plot_type="heatmap",
+            )
+
+            def zorder(artist):
+                return getattr(artist, "get_zorder", lambda: artist.collections[0].get_zorder())()
+
+            self.assertGreater(zorder(canvas._overlay), zorder(canvas._phase_overlays[0]))
+        finally:
+            canvas.deleteLater()
+
     def test_export_figure_adds_logo_axes(self):
         player = AnimationPlayer([], {"array": "unused"}, "z", 0, "Aqua Fire", 0.0, 1.0)
         try:

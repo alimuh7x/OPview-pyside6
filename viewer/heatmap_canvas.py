@@ -318,6 +318,19 @@ class HeatmapCanvas(QWidget):
         debug_print(f"HeatmapCanvas export data pixels={cols}x{rows}")
         debug_print(f"HeatmapCanvas export image pixels={width_pixels}x{height_pixels}")
 
+        export_overlays = payload.get("phase_fraction_overlays") or []
+        legend_font = self._export_font_points(
+            PlotStyle.COLORBAR_TICK_FONT_SIZE * 1.3, dpi, layout["pixel_scale"]
+        )
+        legend_row_pixels = int(round(legend_font * dpi / 72.0 * 1.7))
+        legend_band_pixels = (
+            len(export_overlays) * legend_row_pixels + int(round(16 * layout["pixel_scale"]))
+            if export_overlays
+            else 0
+        )
+        # The legend sits in a white band above the image, never over the data.
+        image_height_pixels = height_pixels
+        height_pixels = image_height_pixels + legend_band_pixels
         fig = Figure(figsize=(width_pixels / dpi, height_pixels / dpi), dpi=dpi)
         fig.patch.set_facecolor("white")
         canvas = FigureCanvasAgg(fig)
@@ -343,7 +356,12 @@ class HeatmapCanvas(QWidget):
                     debug_print(f"HeatmapCanvas export logo load failed={exc}")
             else:
                 debug_print("HeatmapCanvas export logo file missing")
-        ax = fig.add_axes([logo_band_pixels / width_pixels, 0.0, cols / width_pixels, 1.0])
+        ax = fig.add_axes([
+            logo_band_pixels / width_pixels,
+            0.0,
+            cols / width_pixels,
+            image_height_pixels / height_pixels,
+        ])
         colorbar_x, colorbar_y, colorbar_width, colorbar_height = layout["colorbar_rect"]
         debug_print(f"HeatmapCanvas export colorbar rect={layout['colorbar_rect']}")
         cax = fig.add_axes([
@@ -380,6 +398,16 @@ class HeatmapCanvas(QWidget):
                 colors=["black"],
                 alpha=0.82,
             )
+            export_width = float(overlay_grid.get("width", 0) or 0)
+            if export_width > 0:
+                ax.contour(
+                    overlay_x,
+                    overlay_y,
+                    overlay_z,
+                    levels=[1.5, 3.5],
+                    colors=["black"],
+                    linewidths=export_width,
+                )
         for overlay in payload.get("phase_fraction_overlays") or []:
             debug_print(f"HeatmapCanvas export drawing phase overlay={overlay.get('label')}")
             lo, hi = overlay["range"]
@@ -395,7 +423,37 @@ class HeatmapCanvas(QWidget):
                 vmax=1.0,
                 aspect="equal",
                 interpolation="nearest",
+                alpha=float(overlay.get("opacity", 1.0)),
             )
+        if export_overlays:
+            from matplotlib.patches import Rectangle
+
+            renderer = canvas.get_renderer()
+            swatch = legend_row_pixels * 0.6
+            gap = swatch * 0.6
+            right_edge = logo_band_pixels + cols  # right edge of the image
+            for index, overlay in enumerate(export_overlays):
+                row_mid = height_pixels - 8 * layout["pixel_scale"] - (index + 0.5) * legend_row_pixels
+                text = fig.text(
+                    right_edge / width_pixels,
+                    row_mid / height_pixels,
+                    str(overlay["label"]),
+                    fontsize=legend_font,
+                    color="#102a52",
+                    va="center",
+                    ha="right",
+                )
+                text_width = text.get_window_extent(renderer=renderer).width
+                swatch_left = right_edge - text_width - gap - swatch
+                fig.add_artist(Rectangle(
+                    (swatch_left / width_pixels, (row_mid - swatch / 2.0) / height_pixels),
+                    swatch / width_pixels,
+                    swatch / height_pixels,
+                    transform=fig.transFigure,
+                    facecolor=overlay["color"],
+                    edgecolor="#66707f",
+                    linewidth=0.8,
+                ))
         line_overlay = payload.get("line_overlay")
         if line_overlay:
             debug_print(f"HeatmapCanvas export drawing line overlay={line_overlay}")
@@ -680,13 +738,18 @@ class HeatmapCanvas(QWidget):
         debug_print(f"HeatmapCanvas live Plotly fixed widget pixels={self.width()}x{_CANVAS_HEIGHT}")
         phase_fraction_overlays = phase_fraction_overlays or []
         debug_print(f"HeatmapCanvas phase fraction overlay count={len(phase_fraction_overlays)}")
-        if phase_fraction_overlays:
-            self._add_phase_fraction_traces(figure, phase_fraction_overlays)
+        # Threshold-mode phase traces replace the base field; on-top layers sit over it.
+        replacing_overlays = [o for o in phase_fraction_overlays if not o.get("on_top")]
+        on_top_overlays = [o for o in phase_fraction_overlays if o.get("on_top")]
+        if replacing_overlays:
+            self._add_phase_fraction_traces(figure, replacing_overlays)
         else:
             for trace in renderer.build_traces(
                 x_values, y_values, z_grid, vmin, vmax, colorscale, colorbar_cfg, hovertemplate
             ):
                 figure.add_trace(trace)
+        if on_top_overlays:
+            self._add_phase_fraction_traces(figure, on_top_overlays)
         if colorbar_mode == "boxes" and discrete_colors:
             debug_print("HeatmapCanvas applying discrete numbered colorbar")
             for trace in figure.data:
@@ -699,6 +762,7 @@ class HeatmapCanvas(QWidget):
             debug_print("HeatmapCanvas using full colorbar")
         if overlay_grid is not None:
             debug_print("HeatmapCanvas adding smooth contour overlay")
+            interface_width = float(overlay_grid.get("width", 0) or 0)
             overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
                 overlay_grid["x"],
                 overlay_grid["y"],
@@ -715,7 +779,7 @@ class HeatmapCanvas(QWidget):
                         start=1.5,
                         end=3.5,
                         size=2.0,
-                        showlines=False,
+                        showlines=interface_width > 0,
                     ),
                     colorscale=[
                         [0.0, "rgba(0, 0, 0, 0.0)"],
@@ -723,7 +787,10 @@ class HeatmapCanvas(QWidget):
                         [0.5, "rgba(0, 0, 0, 0.82)"],
                         [1.0, "rgba(0, 0, 0, 0.82)"],
                     ],
-                    line=dict(width=0, color="rgba(0, 0, 0, 0)"),
+                    line=dict(
+                        width=interface_width,
+                        color="rgba(0, 0, 0, 0.82)" if interface_width > 0 else "rgba(0, 0, 0, 0)",
+                    ),
                     hoverinfo="skip",
                     opacity=1.0,
                 )
@@ -799,26 +866,16 @@ class HeatmapCanvas(QWidget):
                     line_dash="dash",
                     line_color="#c50623",
                 )
+        top_margin = 60
         if phase_fraction_overlays:
-            debug_print("HeatmapCanvas enabling phase fraction legend")
-            figure.update_layout(
-                showlegend=True,
-                legend=dict(
-                    x=1.02,
-                    xanchor="left",
-                    y=1.0,
-                    yanchor="top",
-                    bgcolor="rgba(255, 255, 255, 0.88)",
-                    bordercolor="rgba(16, 42, 82, 0.18)",
-                    borderwidth=1,
-                    font=PlotStyle.layout_font(),
-                ),
+            top_margin = self._add_overlay_legend(
+                figure, phase_fraction_overlays, top_margin, aspect=self._data_aspect(x_values, y_values)
             )
         figure.update_layout(
             title=dict(text=title),
             width=self.width(),
             height=_CANVAS_HEIGHT,
-            margin=dict(l=0, r=self._colorbar_width, t=60, b=15),
+            margin=dict(l=0, r=self._colorbar_width, t=top_margin, b=15),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
@@ -979,6 +1036,61 @@ class HeatmapCanvas(QWidget):
         debug_print(f"HeatmapCanvas vector color bins={len(colors)}")
         return colors
 
+    @staticmethod
+    def _data_aspect(x_values, y_values) -> float | None:
+        x_span = float(np.nanmax(x_values) - np.nanmin(x_values))
+        y_span = float(np.nanmax(y_values) - np.nanmin(y_values))
+        return x_span / y_span if x_span > 0 and y_span > 0 else None
+
+    def _add_overlay_legend(
+        self, figure: go.Figure, overlays: list[dict], base_top_margin: int, *, aspect: float | None = None
+    ) -> int:
+        """Stack bordered colour squares + names in the strip above the image, right-aligned.
+
+        Squares are real shapes (a "■" glyph was too small to read); positions are computed in
+        pixels and converted to paper coordinates. Returns the top margin the strip needs.
+        """
+        row_px, swatch_px, gap_px, char_px = 26, 20, 10, 10.0  # sized for the 17px legend font
+        count = len(overlays)
+        top_margin = max(base_top_margin, count * row_px + 14)
+        plot_w = max(1, self.width() - self._colorbar_width)
+        plot_h = max(1, _CANVAS_HEIGHT - top_margin - 15)
+        text_w = max(len(str(o["label"])) for o in overlays) * char_px + 2
+        # constrain="domain" letterboxes the data inside the plot area, centred: align the
+        # legend to the image's right edge, not the (wider) plot area's.
+        image_w = plot_w if not aspect else min(plot_w, plot_h * aspect)
+        image_right = (plot_w + image_w) / 2.0
+        left_px = max(0.0, image_right - (swatch_px + gap_px + text_w))
+        for index, overlay in enumerate(overlays):
+            centre_px = 6 + (count - index - 0.5) * row_px  # distance above the plot area
+            y_mid = 1.0 + centre_px / plot_h
+            half = (swatch_px / 2.0) / plot_h
+            figure.add_shape(
+                type="rect",
+                xref="paper",
+                yref="paper",
+                x0=left_px / plot_w,
+                x1=(left_px + swatch_px) / plot_w,
+                y0=y_mid - half,
+                y1=y_mid + half,
+                fillcolor=overlay["color"],
+                line=dict(color="#66707f", width=1),
+                layer="above",
+            )
+            figure.add_annotation(
+                xref="paper",
+                yref="paper",
+                x=(left_px + swatch_px + gap_px) / plot_w,
+                y=y_mid,
+                xanchor="left",
+                yanchor="middle",
+                text=str(overlay["label"]),
+                showarrow=False,
+                align="left",
+                font=dict(size=17, color="#102a52"),
+            )
+        return top_margin
+
     def _add_phase_fraction_traces(self, figure: go.Figure, overlays: list[dict]) -> None:
         """Add one thresholded, solid-color heatmap trace per selected phase fraction."""
         debug_print("HeatmapCanvas._add_phase_fraction_traces called")
@@ -999,19 +1111,23 @@ class HeatmapCanvas(QWidget):
             debug_print(f"HeatmapCanvas phase trace color={color}")
             debug_print(f"HeatmapCanvas phase trace visible count={visible_count}")
             masked = np.where(visible_mask, z_values, np.nan)
+            on_top = bool(overlay.get("on_top"))
+            zmax = hi if np.isfinite(hi) and hi > lo else lo + 1.0
             figure.add_trace(
                 go.Heatmap(
                     x=x_values,
                     y=y_values,
                     z=masked,
                     zmin=lo,
-                    zmax=hi if hi > lo else lo + 1e-12,
+                    zmax=zmax,
                     colorscale=[[0.0, color], [1.0, color]],
                     showscale=False,
-                    showlegend=True,
+                    showlegend=False,  # legend is an annotation above the image (and a band above it in PNG export)
                     name=label,
                     legendgroup=label,
-                    hovertemplate=(
+                    opacity=float(overlay.get("opacity", 1.0)),
+                    hoverinfo="skip" if on_top else None,
+                    hovertemplate=None if on_top else (
                         f"{label}<br>"
                         "x=%{x:.4f}<br>"
                         "y=%{y:.4f}<br>"

@@ -17,6 +17,7 @@ from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS
 from utils.time_series import collect_same_series_files
 from utils.vtk_utils import get_reader, list_vtk_files
+from utils.ui_yield import maybe_yield
 from viewer.colorscale import (
     DISCRETE_CUSTOM_PALETTE,
     discrete_palette_colors,
@@ -29,18 +30,42 @@ from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.manual_point_dialog import ManualPointDialog
 from viewer.state import ViewerState, initial_state
 
+_PHASE_OVERLAY_THRESHOLD = 0.5
+# Muted, earthy tones that stay clear of every colorbar palette in
+# config.constants.PALETTES (saturated navy/teal/amber/red/purple): sage green, mauve,
+# olive, taupe, dusty rose and clay, all >= 55 RGB units from any palette colour.
 _PHASE_FRACTION_COLORS = [
-    "#d62728",
-    "#1f77b4",
-    "#2ca02c",
-    "#f0a202",
-    "#9467bd",
-    "#17becf",
-    "#e377c2",
-    "#7f7f7f",
-    "#bcbd22",
-    "#8c564b",
+    "#5f7f4f",
+    "#8a5a83",
+    "#9a9a4a",
+    "#7d6b57",
+    "#8e6b6b",
+    "#a0704f",
 ]
+
+
+def narrowed_interface_field(
+    z_grid, steps: int, *, sigma: float = 1.5, cells_per_step: float = 0.45
+) -> np.ndarray:
+    """Interfaces field whose 1.5..3.5 band is narrower by `cells_per_step` cells per edge per step.
+
+    Builds a signed distance to the band edge (positive inside) and blurs it, so the
+    eroded edge is an iso-line of a smooth field: it moves a fixed, visible distance per
+    step and stays smooth. (A plain distance transform of the binary mask follows its
+    pixel staircase and looks jagged.) A band narrower than the inset disappears.
+    """
+    from scipy.ndimage import distance_transform_edt, gaussian_filter
+
+    z = np.asarray(z_grid, dtype=float)
+    inside = np.isfinite(z) & (z >= 1.5) & (z <= 3.5)
+    if not inside.any() or inside.all():
+        return np.where(inside, 2.5, 0.0)
+    signed = distance_transform_edt(inside) - distance_transform_edt(~inside)
+    smooth = gaussian_filter(signed, sigma=sigma, mode="nearest")
+    inset = float(steps) * cells_per_step
+    # Affine map keeps the iso-line at z == 1.5 where smooth == inset; the cap keeps the
+    # field inside the 1.5..3.5 band so the upper contour never appears.
+    return np.clip(1.5 + (smooth - inset) * 0.5, 0.0, 3.4)
 
 
 class HeatmapController:
@@ -59,6 +84,7 @@ class HeatmapController:
         histogram_bins_slider,
         interfaces_check,
         vector_overlay_check=None,
+        phase_overlay_button=None,
         export_button,
         colorbar_label_edit,
         unit_scale_combo,
@@ -92,6 +118,7 @@ class HeatmapController:
         self.histogram_bins_slider = histogram_bins_slider
         self.interfaces_check = interfaces_check
         self.vector_overlay_check = vector_overlay_check
+        self.phase_overlay_button = phase_overlay_button
         self.export_button = export_button
         self.colorbar_label_edit = colorbar_label_edit
         self.unit_scale_combo    = unit_scale_combo
@@ -325,6 +352,14 @@ class HeatmapController:
         self.interfaces_check.toggled.connect(lambda *_: self._refresh_from_toolbar("interfaces"))
         if self.vector_overlay_check is not None:
             self.vector_overlay_check.toggled.connect(lambda *_: self._refresh_from_toolbar("vectors"))
+        if self.phase_overlay_button is not None:
+            self.phase_overlay_button.selection_changed.connect(
+                lambda *_: self._refresh_from_toolbar("phase-overlay")
+            )
+            self.phase_overlay_button.interface_width_changed.connect(
+                lambda *_: self._refresh_from_toolbar("interface-width")
+            )
+            self.phase_overlay_button.rename_requested.connect(self._rename_overlay_phase)
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
         self.colorbar_label_edit.editingFinished.connect(lambda *_: self._refresh_from_toolbar("colorbar-label"))
@@ -464,6 +499,9 @@ class HeatmapController:
         if previous_state.rotation_degrees != self.state.rotation_degrees:
             self.state.line_scan_x = None
             self.state.line_scan_y = None
+            # Plot Over Time coordinates are shown as read off the rotated axes.
+            self._refresh_time_plot_point_list()
+            self._update_time_plot_selected_label()
             self.state.click_count = 0
             self.state.first_click = None
 
@@ -552,6 +590,7 @@ class HeatmapController:
         prev_scalar_key = self.controls_widget.current_scalar_key()
         debug_print(f"HeatmapController previous combo scalar key={prev_scalar_key}")
         self.controls_widget.set_scalar_options(self.scalar_defs)
+        self._sync_phase_overlay_menu()
         selected_scalar_key = prev_scalar_key or self.state.scalar_key
         debug_print(f"HeatmapController selected combo scalar key={selected_scalar_key}")
         restored = self.controls_widget.scalar_combo.findData(selected_scalar_key)
@@ -986,6 +1025,7 @@ class HeatmapController:
             debug_print(f"HeatmapController average history reading index={file_index}")
             debug_print(f"HeatmapController average history path={item.path}")
             series[0]["steps"].append(int(item.step))
+            maybe_yield()
             try:
                 reader = get_reader(item.path)
                 available = set(reader.scalar_fields)
@@ -1270,6 +1310,127 @@ class HeatmapController:
         debug_print(f"HeatmapController phase overlay count={len(overlays)}")
         return overlays
 
+    def _rename_overlay_phase(self, key: str, current_label: str) -> None:
+        """Rename from the Overlays drop-down; alias is stored under the dataset's own key."""
+        self.controls_widget.rename_phase_overlay(self._phase_overlay_alias_key(key), current_label)
+
+    def _with_interface_width(self, overlay_grid: dict | None) -> dict | None:
+        """Apply the dropdown's interface width: > 0 thickens with an outline, < 0 narrows."""
+        if overlay_grid is None or self.phase_overlay_button is None:
+            return overlay_grid
+        width = self.phase_overlay_button.interface_width()
+        if width >= 0:
+            return {**overlay_grid, "width": width}
+        return {**overlay_grid, "z": narrowed_interface_field(overlay_grid["z"], -width), "width": 0}
+
+    def _phase_overlay_defs(self) -> tuple[object | None, list[dict]]:
+        """Reader and PhaseFraction_* scalar defs of the PhaseField file matching the loaded file.
+
+        Read from the PhaseField file, not the active dataset, so phases are also
+        offered over Composition, Stresses and every other non-phase dataset.
+        """
+        phase_file = self._phase_overlay_file(self.state.file_path) if self.state is not None else None
+        if not phase_file:
+            return None, []
+        try:
+            reader = get_reader(str(phase_file))
+        except Exception as exc:
+            debug_print(f"HeatmapController phase overlay reader failed: {exc}")
+            return None, []
+        names = sorted(
+            (n for n in reader.scalar_fields if str(n).startswith("PhaseFraction_")),
+            key=lambda n: (len(str(n)), str(n)),
+        )
+        return reader, [{"label": n, "array": n, "value": n, "component": None} for n in names]
+
+    def _phase_overlay_alias_key(self, name: str) -> str:
+        """Key the rename alias is stored under (scalar key when the dataset lists the phase)."""
+        for scalar_def in self.scalar_defs:
+            if scalar_def.get("array") == name:
+                return scalar_def["value"]
+        return name
+
+    def _phase_overlay_label(self, name: str) -> str:
+        """Display name, honouring renames made on the PhaseField scalar list or the legend."""
+        return self.controls_widget.phase_fraction_display_label(self._phase_overlay_alias_key(name), name)
+
+    def _sync_phase_overlay_menu(self) -> None:
+        """List the phases of the matching PhaseField file in the Overlays drop-down."""
+        if self.phase_overlay_button is None:
+            return
+        _reader, defs = self._phase_overlay_defs()
+        self.phase_overlay_button.set_phases([(d["value"], self._phase_overlay_label(d["value"])) for d in defs])
+
+    def _build_phase_overlay_layers(
+        self, orientation: Heatmap2DOrientation, resolution: int | None = None
+    ) -> list[dict]:
+        """Ticked phases as translucent regions (fraction >= threshold) over any field."""
+        debug_print("HeatmapController._build_phase_overlay_layers called")
+        if self.reader is None or self.phase_overlay_button is None:
+            return []
+        reader, defs = self._phase_overlay_defs()
+        if reader is None:
+            return []
+        if [d["value"] for d in defs] != self.phase_overlay_button.phase_keys():
+            self._sync_phase_overlay_menu()
+        checked = set(self.phase_overlay_button.checked_keys())
+        layers: list[dict] = []
+        for index, scalar_def in enumerate(defs):
+            key = scalar_def["value"]
+            if key not in checked:
+                continue
+            x_grid, y_grid, phase_grid, _ = self._load_display_grid(
+                reader,
+                scalar_def,
+                self.state.axis,
+                self.state.slice_index,
+                plot_type="heatmap",
+                resolution=resolution,
+            )
+            display = orientation.apply_grid(x_grid, y_grid, phase_grid)
+            label = self._phase_overlay_label(key)
+            self.phase_overlay_button.set_label(key, label)
+            layers.append(
+                {
+                    "label": label,
+                    "key": key,
+                    "x": display.x,
+                    "y": display.y,
+                    "z": display.z,
+                    "range": (_PHASE_OVERLAY_THRESHOLD, float("inf")),
+                    "color": _PHASE_FRACTION_COLORS[index % len(_PHASE_FRACTION_COLORS)],
+                    "on_top": True,
+                }
+            )
+        debug_print(f"HeatmapController phase overlay layer count={len(layers)}")
+        return layers
+
+    def phase_overlay_animation_specs(self) -> list[dict]:
+        """Ticked Overlays-menu phases as on-top animation layers (any plot type)."""
+        debug_print("HeatmapController.phase_overlay_animation_specs called")
+        if self.phase_overlay_button is None:
+            return []
+        _reader, defs = self._phase_overlay_defs()
+        checked = set(self.phase_overlay_button.checked_keys())
+        specs: list[dict] = []
+        for index, scalar_def in enumerate(defs):
+            key = scalar_def["value"]
+            if key not in checked:
+                continue
+            specs.append(
+                {
+                    "label": self._phase_overlay_label(key),
+                    "array": scalar_def["array"],
+                    "component": None,
+                    "scale": 1.0,
+                    "range": (_PHASE_OVERLAY_THRESHOLD, float("inf")),
+                    "color": _PHASE_FRACTION_COLORS[index % len(_PHASE_FRACTION_COLORS)],
+                    "on_top": True,
+                }
+            )
+        debug_print(f"HeatmapController animation on-top phase spec count={len(specs)}")
+        return specs
+
     def phase_fraction_animation_specs(self) -> list[dict]:
         """Return selected PhaseFraction render settings for animation frames."""
         debug_print("HeatmapController.phase_fraction_animation_specs called")
@@ -1385,11 +1546,12 @@ class HeatmapController:
         debug_print(f"Controller render vmax={vmax}")
 
         orientation = self._orientation()
-        overlay_grid = orientation.apply_overlay(self._build_overlay_grid())
+        overlay_grid = self._with_interface_width(orientation.apply_overlay(self._build_overlay_grid()))
         display = orientation.apply_grid(x_grid, y_grid, z_grid)
         x_grid, y_grid, z_grid = display.x, display.y, display.z
         self._last_display_grids = (x_grid, y_grid, z_grid)
         phase_fraction_overlays = self._build_phase_fraction_overlays(orientation, extra_scale)
+        phase_fraction_overlays = phase_fraction_overlays + self._build_phase_overlay_layers(orientation)
         vector_overlay = self._build_vector_overlay(orientation)
 
         line_overlay = None
@@ -1584,16 +1746,37 @@ class HeatmapController:
         debug_print(f"HeatmapController vector fixed arrow_length={result['arrow_length']}")
         return result
 
+    def _display_to_data(self, x_display: float, y_display: float) -> tuple[float, float]:
+        """Rotated-view coordinates -> the source grid's coordinates (what VTK sampling uses)."""
+        if not self._last_grids:
+            return float(x_display), float(y_display)
+        return self._orientation().display_to_data_point(
+            self._last_grids[0], self._last_grids[1], x_display, y_display
+        )
+
+    def _data_to_display(self, x_data: float, y_data: float) -> tuple[float, float]:
+        """Source-grid coordinates -> where the point appears on the (possibly rotated) heatmap."""
+        if not self._last_grids:
+            return float(x_data), float(y_data)
+        return self._orientation().data_to_display_point(
+            self._last_grids[0], self._last_grids[1], x_data, y_data
+        )
+
     def _time_plot_marker_points(self) -> list[dict[str, float | str]]:
         """Return selected Plot Over Time points when heatmap markers are enabled."""
         debug_print("HeatmapController._time_plot_marker_points called")
         if not self.state.time_plot_points_visible:
             debug_print("PlotOverTime markers hidden by Show Points toggle")
             return []
-        points = [
-            {"label": str(point["label"]), "x": float(point["x"]), "y": float(point["y"])}
-            for point in self.state.time_plot_points
-        ]
+        # Points are stored in unrotated data coordinates; markers live on the rotated view.
+        orientation = self._orientation()
+        raw = self._last_grids
+        points = []
+        for point in self.state.time_plot_points:
+            x_value, y_value = float(point["x"]), float(point["y"])
+            if raw:
+                x_value, y_value = orientation.data_to_display_point(raw[0], raw[1], x_value, y_value)
+            points.append({"label": str(point["label"]), "x": x_value, "y": y_value})
         for point in points:
             debug_print(f"PlotOverTime marker point={point}")
         return points
@@ -1698,7 +1881,12 @@ class HeatmapController:
             return
         x_grid, y_grid, z_grid = self._last_display_grids or self._last_grids[:3]
         try:
-            snap_x, snap_y, clicked_value = Heatmap2DOrientation.nearest_point(x_grid, y_grid, z_grid, x_value, y_value)
+            # Clicks arrive in plot-axis values (ascending), not in the rotated coordinate
+            # arrays, so snap on the axes: the picked pixel is the one under the cursor.
+            x_axis, y_axis = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+            snap_x, snap_y, clicked_value, _row, _col = Heatmap2DOrientation.snap_to_pixel(
+                x_axis, y_axis, z_grid, x_value, y_value
+            )
         except ValueError:
             self.controls_widget.set_status_text("Click ignored: no valid value")
             return
@@ -1708,7 +1896,8 @@ class HeatmapController:
         debug_print(f"Heatmap click snapped y={snap_y}")
         debug_print(f"Heatmap click nearest value={clicked_value}")
         if self.state.time_plot_pick_mode:
-            self._set_time_plot_point(snap_x, snap_y, clicked_value, source="click")
+            data_x, data_y = self._display_to_data(snap_x, snap_y)
+            self._set_time_plot_point(data_x, data_y, clicked_value, source="click")
             return
         if self.state.click_mode == "range":
             if self.state.click_count == 0:
@@ -1915,11 +2104,11 @@ class HeatmapController:
         """Ask for an x/y point and store it for Plot Over Time."""
         debug_print("HeatmapController._manual_time_plot_point called")
         parent = self.export_widget or self.heatmap_canvas
-        dialog = ManualPointDialog(
-            x_value=self.state.time_plot_x if self.state.time_plot_x is not None else 0.0,
-            y_value=self.state.time_plot_y if self.state.time_plot_y is not None else 0.0,
-            parent=parent,
-        )
+        # The dialog speaks in the coordinates the (possibly rotated) axes show.
+        initial_x, initial_y = 0.0, 0.0
+        if self.state.time_plot_x is not None and self.state.time_plot_y is not None:
+            initial_x, initial_y = self._data_to_display(self.state.time_plot_x, self.state.time_plot_y)
+        dialog = ManualPointDialog(x_value=initial_x, y_value=initial_y, parent=parent)
         debug_print("PlotOverTime manual dialog created")
         if dialog.exec() != dialog.DialogCode.Accepted:
             debug_print("PlotOverTime manual point cancelled")
@@ -1932,19 +2121,17 @@ class HeatmapController:
         snapped_y = float(y_value)
         if self._last_display_grids:
             try:
-                snapped_x, snapped_y, clicked_value = Heatmap2DOrientation.nearest_point(
-                    self._last_display_grids[0],
-                    self._last_display_grids[1],
-                    self._last_display_grids[2],
-                    x_value,
-                    y_value,
+                x_axis, y_axis = Heatmap2DOrientation.plot_axes(*self._last_display_grids)
+                snapped_x, snapped_y, clicked_value, _row, _col = Heatmap2DOrientation.snap_to_pixel(
+                    x_axis, y_axis, self._last_display_grids[2], x_value, y_value
                 )
                 debug_print(f"PlotOverTime manual snapped x={snapped_x}")
                 debug_print(f"PlotOverTime manual snapped y={snapped_y}")
                 debug_print(f"PlotOverTime manual snapped value={clicked_value}")
             except ValueError:
                 debug_print("PlotOverTime manual point nearest value unavailable")
-        self._set_time_plot_point(snapped_x, snapped_y, clicked_value, source="manual")
+        data_x, data_y = self._display_to_data(snapped_x, snapped_y)
+        self._set_time_plot_point(data_x, data_y, clicked_value, source="manual")
         debug_print(f"PlotOverTime manual point accepted x={snapped_x} y={snapped_y}")
 
     def _set_time_plot_point(self, x_value: float, y_value: float, clicked_value, *, source: str) -> None:
@@ -1973,12 +2160,13 @@ class HeatmapController:
         self.state.first_click = None
         value_text = "" if clicked_value is None else f" | value={float(clicked_value):.6g}"
         count = len(self.state.time_plot_points)
-        label = f"{count} point selected: {point['label']} x={float(x_value):.4f}, y={float(y_value):.4f}{value_text}"
+        shown_x, shown_y = self._data_to_display(x_value, y_value)  # as read off the axes
+        label = f"{count} point selected: {point['label']} x={shown_x:.4f}, y={shown_y:.4f}{value_text}"
         if count != 1:
-            label = f"{count} points selected | last: {point['label']} x={float(x_value):.4f}, y={float(y_value):.4f}{value_text}"
+            label = f"{count} points selected | last: {point['label']} x={shown_x:.4f}, y={shown_y:.4f}{value_text}"
         if self.time_plot_selected_label is not None:
             self.time_plot_selected_label.setText(label)
-        self.controls_widget.set_status_text(f"Plot Over Time point selected: x={float(x_value):.4f}, y={float(y_value):.4f}")
+        self.controls_widget.set_status_text(f"Plot Over Time point selected: x={shown_x:.4f}, y={shown_y:.4f}")
         if self.time_plot_canvas is not None:
             self.time_plot_canvas.render_placeholder("Press Calculate to plot value over time")
         debug_print("PlotOverTime refreshing heatmap after point add")
@@ -2007,7 +2195,8 @@ class HeatmapController:
             row_layout = QHBoxLayout(row)
             row_layout.setContentsMargins(8, 4, 6, 4)
             row_layout.setSpacing(8)
-            label = QLabel(f"{point['label']}   x={float(point['x']):.4f}   y={float(point['y']):.4f}")
+            row_x, row_y = self._data_to_display(float(point["x"]), float(point["y"]))
+            label = QLabel(f"{point['label']}   x={row_x:.4f}   y={row_y:.4f}")
             label.setObjectName("timePlotPointLabel")
             label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             remove_button = QPushButton("X")
@@ -2075,9 +2264,10 @@ class HeatmapController:
             debug_print("PlotOverTime selected label no points")
             return
         point = self.state.time_plot_points[-1]
-        label = f"{count} point selected: {point['label']} x={float(point['x']):.4f}, y={float(point['y']):.4f}"
+        shown_x, shown_y = self._data_to_display(float(point["x"]), float(point["y"]))
+        label = f"{count} point selected: {point['label']} x={shown_x:.4f}, y={shown_y:.4f}"
         if count != 1:
-            label = f"{count} points selected | last: {point['label']} x={float(point['x']):.4f}, y={float(point['y']):.4f}"
+            label = f"{count} points selected | last: {point['label']} x={shown_x:.4f}, y={shown_y:.4f}"
         self.time_plot_selected_label.setText(label)
         debug_print(f"PlotOverTime selected label={label}")
 
@@ -2255,13 +2445,16 @@ class HeatmapController:
             file_failed = 0
             for point in self._time_plot_series_data:
                 debug_print(f"PlotOverTime sampling point={point['label']} x={point['x']} y={point['y']}")
-                value = reader.sample_point_value(
+                # Sample the same resampled grid the heatmap displays, so the value at the
+                # picked point equals the hover value (not the nearest raw node's value).
+                value = reader.sample_displayed_value(
                     axis=self.state.axis,
                     index=self.state.slice_index,
                     scalar_name=scalar_def["array"],
                     component=scalar_def.get("component"),
                     x_value=point["x"],
                     y_value=point["y"],
+                    resolution=self._selected_resolution(),
                 )
                 value = float(value) * scale
                 debug_print(f"PlotOverTime value point={point['label']} value={value}")
@@ -2480,7 +2673,9 @@ class HeatmapController:
             vmin = self.state.range_min
             vmax = self.state.range_max
         orientation = self._orientation()
-        overlay_grid = orientation.apply_overlay(self._build_overlay_grid(resolution=export_resolution))
+        overlay_grid = self._with_interface_width(
+            orientation.apply_overlay(self._build_overlay_grid(resolution=export_resolution))
+        )
         display = orientation.apply_grid(x_grid, y_grid, z_grid)
         x_grid, y_grid, z_grid = display.x, display.y, display.z
         debug_print(f"HeatmapController export payload oriented shape={np.asarray(z_grid).shape}")
@@ -2488,6 +2683,9 @@ class HeatmapController:
             orientation,
             extra_scale,
             resolution=export_resolution,
+        )
+        phase_fraction_overlays = phase_fraction_overlays + self._build_phase_overlay_layers(
+            orientation, resolution=export_resolution
         )
         vector_overlay = self._build_vector_overlay(orientation)
         line_overlay = None

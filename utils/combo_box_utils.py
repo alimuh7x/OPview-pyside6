@@ -80,3 +80,19 @@ def _screen_popup_cap(combo: QComboBox) -> int | None:
     cap = max(160, available_width - 32)
     debug_print(f"screen popup cap={cap}")
     return cap
+
+
+def fit_combo_to_longest_item(combo: QComboBox, *, padding: int = 64) -> int:
+    """Make the closed combo wide enough to show its longest item in full."""
+    debug_print("fit_combo_to_longest_item called")
+    combo.ensurePolished()  # stylesheet font/padding must apply before measuring
+    metrics = combo.fontMetrics()
+    longest = max((metrics.horizontalAdvance(combo.itemText(i)) for i in range(combo.count())), default=0)
+    width = longest + padding
+    # The app stylesheet's `min-width` wins over setMinimumWidth() once the widget is
+    # polished, so the width has to be requested through a widget-level stylesheet.
+    # CSS min-width excludes the 8+24px padding already in the app stylesheet.
+    css_width = longest + 4
+    combo.setStyleSheet(f"QComboBox {{ min-width: {css_width}px; }}")
+    debug_print(f"combo closed minimum width={width}")
+    return width

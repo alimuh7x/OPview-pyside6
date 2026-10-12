@@ -847,6 +847,14 @@ QMenu::separator {{
     background: #ced8e8;
     margin: 4px 8px;
 }}
+QProgressDialog {{
+    background: #f7f9fc;
+    color: #102a52;
+}}
+QProgressDialog QLabel {{
+    background: transparent;
+    color: #102a52;
+}}
 QProgressBar {{
     background: #e7ecf4;
     border: none;

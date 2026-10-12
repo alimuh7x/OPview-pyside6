@@ -12,7 +12,7 @@ from PySide6.QtWidgets import QApplication, QStyle, QStyleOptionViewItem
 from app.main_window import MainWindow
 from multi_view.multi_view_panel import MultiViewPanel
 from viewer.heatmap_canvas import HeatmapCanvas
-from viewer.heatmap_controller import HeatmapController
+from viewer.heatmap_controller import HeatmapController, _PHASE_FRACTION_COLORS
 from viewer.panel_controls_widget import PanelControlsWidget
 from viewer.panel_widget import PanelWidget
 from viewer.phase_fraction_history_canvas import PhaseFractionHistoryCanvas
@@ -223,7 +223,7 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertIn("background: #f7f9fc", stylesheet)
         self.assertIn("color: #102a52", stylesheet)
 
-    def test_phase_fraction_traces_use_legend_without_colorbar(self):
+    def test_phase_fraction_traces_leave_the_legend_to_the_qt_widget_and_hide_colorbar(self):
         canvas = HeatmapCanvas.__new__(HeatmapCanvas)
         figure = go.Figure()
 
@@ -244,7 +244,7 @@ class AppWidthConstraintTests(unittest.TestCase):
         trace = figure.data[0]
 
         self.assertEqual(trace.name, "PhaseFraction_0")
-        self.assertTrue(trace.showlegend)
+        self.assertFalse(trace.showlegend)  # OverlayLegendWidget lists and renames phases
         self.assertFalse(trace.showscale)
 
     def test_phase_fraction_animation_specs_match_selected_threshold_settings(self):
@@ -277,7 +277,7 @@ class AppWidthConstraintTests(unittest.TestCase):
 
         self.assertEqual([spec["label"] for spec in specs], ["Alpha", "Delta"])
         self.assertEqual([spec["range"] for spec in specs], [(0.4, 1.0), (0.2, 0.7)])
-        self.assertEqual([spec["color"] for spec in specs], ["#d62728", "#1f77b4"])
+        self.assertEqual([spec["color"] for spec in specs], _PHASE_FRACTION_COLORS[:2])
 
     def test_phase_fraction_history_legend_is_on_top_with_taller_graph(self):
         canvas = PhaseFractionHistoryCanvas.__new__(PhaseFractionHistoryCanvas)

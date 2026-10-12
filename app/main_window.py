@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QUrl
+from PySide6.QtCore import QEvent, QEventLoop, QSettings, QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
@@ -376,6 +377,8 @@ class MainWindow(QMainWindow):
             debug_print(f"MainWindow discovering new panel files before reload refresh={panel.dataset_info.get('label', '')}")
             panel.controller.discover_new_file_options("reload-button")
             panel.controller.refresh_view()
+            # let the Reload spinner keep turning between (blocking) panel refreshes
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         debug_print("MainWindow._force_full_rescan complete")
 
     def _iter_panels(self):

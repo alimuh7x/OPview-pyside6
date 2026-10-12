@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
 from PySide6.QtWidgets import QApplication
 
 from app.debug import debug_print
@@ -23,6 +23,32 @@ _NO_GPU_CHROMIUM_FLAGS = (
     "--disable-features=VizDisplayCompositor "
     "--ignore-gpu-blocklist"
 )
+
+
+def _build_light_palette() -> QPalette:
+    """Fixed light palette so widgets without explicit styling never follow a dark OS theme.
+
+    The Qt colour scheme is left alone so the native title bar still follows the OS theme.
+    """
+    palette = QPalette()
+    text = QColor("#102a52")
+    roles = {
+        QPalette.ColorRole.Window: "#f7f9fc",
+        QPalette.ColorRole.WindowText: "#102a52",
+        QPalette.ColorRole.Base: "#ffffff",
+        QPalette.ColorRole.AlternateBase: "#eef4ff",
+        QPalette.ColorRole.Text: "#102a52",
+        QPalette.ColorRole.Button: "#ffffff",
+        QPalette.ColorRole.ButtonText: "#102a52",
+        QPalette.ColorRole.ToolTipBase: "#ffffff",
+        QPalette.ColorRole.ToolTipText: "#102a52",
+        QPalette.ColorRole.Highlight: "#cc0c24",
+        QPalette.ColorRole.HighlightedText: "#ffffff",
+    }
+    for role, color in roles.items():
+        palette.setColor(role, QColor(color))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(text.red(), text.green(), text.blue(), 128))
+    return palette
 
 
 def _configure_no_gpu_environment() -> None:
@@ -79,6 +105,7 @@ class ApplicationBootstrap:
             application = QApplication([])
         debug_print(f"Applying {self._style_name} application style")
         application.setStyle(self._style_name)
+        application.setPalette(_build_light_palette())
         self._load_fonts(application)
         application.setStyleSheet(build_app_stylesheet())
         self._application = application

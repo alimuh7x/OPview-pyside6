@@ -204,17 +204,17 @@ def _draw_property(ax, payload: dict):
         z_grid = np.where((z_grid >= vmin) & (z_grid <= vmax), z_grid, np.nan)
         ax.imshow(z_grid, origin="lower", extent=extent, cmap=cmap, norm=norm, aspect="equal", interpolation="bilinear")
     elif plot_type == "contour_lines":
-        contours = ax.contour(x_values, y_values, z_grid, levels=10, cmap=cmap, norm=norm)
+        contours = ax.contour(x_values, y_values, z_grid, levels=10, cmap=cmap, norm=norm, linewidths=1.8)
         ax.clabel(contours, inline=True, fontsize=10)
     elif plot_type in {"contour_filled", "contour_filled_values"}:
         ax.contourf(x_values, y_values, z_grid, levels=10, cmap=cmap, norm=norm)
         if plot_type == "contour_filled_values":
-            contours = ax.contour(x_values, y_values, z_grid, levels=10, colors="black", linewidths=0.7)
+            contours = ax.contour(x_values, y_values, z_grid, levels=10, colors="black", linewidths=1.5)
             ax.clabel(contours, inline=True, fontsize=10)
     else:
         ax.imshow(z_grid, origin="lower", extent=extent, cmap=cmap, norm=norm, aspect="equal", interpolation="bilinear")
         if plot_type == "heatmap_contour":
-            ax.contour(x_values, y_values, z_grid, levels=10, colors="black", linewidths=0.7)
+            ax.contour(x_values, y_values, z_grid, levels=10, colors="black", linewidths=1.5)
     overlay_grid = payload.get("overlay_grid")
     if overlay_grid is not None:
         overlay_z = np.asarray(overlay_grid["z"], dtype=float)
