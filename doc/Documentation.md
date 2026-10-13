@@ -94,6 +94,10 @@ The main heatmap viewers (used in `Single View`, `Multi View`, and `Multi Proper
       <td style="border:1px solid #cfd6e4; padding:8px;">Restores full-range scaling for the active field. The slider and rendering return to full data span.</td>
     </tr>
     <tr>
+      <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Auto Scale on Zoom</strong> (Single View)</td>
+      <td style="border:1px solid #cfd6e4; padding:8px;">Rescales the colours to the minimum and maximum of the visible, zoomed region. Off by default; see <em>Auto Scale on Zoom</em> below.</td>
+    </tr>
+    <tr>
       <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Rotation</strong></td>
       <td style="border:1px solid #cfd6e4; padding:8px;">Rotates 2D heatmaps by 0, 90, 180, or 270 degrees. Heatmap, overlay, click lookup, and line scans follow the selected orientation.</td>
     </tr>
@@ -181,7 +185,17 @@ Use **Single View** for focused analysis of one dataset panel at a time.
 
 ![Unit conversion](images/single_view_unit_conversion.png)
 - **Slice**: for 3D data choose the slice axis (`X`, `Y`, `Z`) and move the slice index.
-- **PNG export** produces a high-resolution image (2x scale, 300 DPI) matching the visible layout.
+- **PNG export** produces a high-resolution image (2x scale, 300 DPI) matching the visible layout. When the map is zoomed, the PNG shows the visible region (sampled at a higher resolution so it stays sharp) with the colorbar you currently see.
+
+### Auto Scale on Zoom
+Switch on **Auto Scale on Zoom** (next to **Range**) to let the colours follow what you are looking at. When you zoom or pan the map, OPView takes the minimum and maximum of the visible region and applies them as the colour range. The colorbar, the **Range** boxes and the range slider update together; the data itself is never changed.
+
+- **Reset zoom** (the reset button on the map or a double click) restores the full-domain range.
+- **Time steps**: the zoomed region is kept when you change the file or play through frames. The range is recalculated from the visible region of the new time step.
+- **Manual limits win**: typing a **Range** value, dragging the range slider, selecting a range with two clicks on the map, or pressing **Reset** switches Auto Scale off and keeps your limits.
+- **Full Scale** and **Auto Scale on Zoom** exclude each other: switching one on switches the other off.
+- Available for the **Heatmap** and **Gradient magnitude** plot types with a continuous palette and the **Bar** colorbar. It is disabled for Threshold, Difference, contour plot types, the discrete palette, the **Boxes** legend and phase-fraction fields.
+- **Animation** (MP4) uses the single range that is set when you start it, so every frame is read on the same scale.
 
 ### Playback and Animation
 When a dataset has several files (timesteps), the playback bar below the heatmap provides:

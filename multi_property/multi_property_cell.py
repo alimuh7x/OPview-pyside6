@@ -437,6 +437,7 @@ QInputDialog#multiPropertyRenameDialog QPushButton:hover {
             overlay_grid=overlay_grid,
             line_overlay=line_overlay,
             fill_canvas=False,
+            clip_to_data=True,
         )
         debug_print("MultiPropertyCell rendered heatmap fill_canvas=False")
         debug_print("MultiPropertyCell heatmap aspect preserved")

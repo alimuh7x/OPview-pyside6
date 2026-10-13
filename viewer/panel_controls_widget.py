@@ -77,6 +77,12 @@ class _PhaseFractionRenameDelegate(QStyledItemDelegate):
         return option.palette.text().color()
 
 
+_AUTO_SCALE_TOOLTIP = (
+    "Rescale the colors to the min/max of the visible (zoomed) region.\n"
+    "Switches off when you type a range or select one on the map."
+)
+
+
 class PanelControlsWidget(QWidget):
     """UI-only controls for selecting scalar and slice values."""
 
@@ -214,6 +220,8 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
+        self.auto_scale_check = ToggleSwitchWidget("Auto Scale on Zoom", checked=False)
+        self.auto_scale_check.setToolTip(_AUTO_SCALE_TOOLTIP)
         self.discrete_band_count = 2
         self.discrete_minus_button = QPushButton("-")
         self.discrete_minus_button.setObjectName("discreteBandButton")
@@ -269,6 +277,15 @@ class PanelControlsWidget(QWidget):
         palette_row_layout.addWidget(self.full_scale_check)
         palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
+        # In compact mode the toggle does not fit beside the range row (it must stay within the narrow
+        # width), so it gets a row of its own; in wide mode it sits in the single range row instead.
+        self.auto_scale_row = QWidget()
+        self.auto_scale_row.setObjectName("controlsRow")
+        self.auto_scale_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.auto_scale_row_layout = QHBoxLayout(self.auto_scale_row)
+        self.auto_scale_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.auto_scale_row_layout.setSpacing(8)
+        layout.addWidget(self.auto_scale_row)
         self._sync_discrete_controls()
         self._match_palette_width_to_plot_type()
         self._apply_layout_mode("wide", force=True)
@@ -383,6 +400,7 @@ class PanelControlsWidget(QWidget):
         debug_print(f"PanelControlsWidget changing layout mode from={self._layout_mode} to={mode}")
         self._clear_layout(self.range_row_layout)
         self._clear_layout(self.range_values_row_layout)
+        self._clear_layout(self.auto_scale_row_layout)
         if mode == "compact":
             debug_print("PanelControlsWidget applying compact range rows")
             self.click_mode_range_check.setText("Range")
@@ -396,6 +414,9 @@ class PanelControlsWidget(QWidget):
             self.range_values_row_layout.addWidget(self.range_max_spin, 1)
             self.range_values_row_layout.addWidget(self.reset_button)
             self.range_values_row.show()
+            self.auto_scale_row_layout.addWidget(self.auto_scale_check)
+            self.auto_scale_row_layout.addStretch(1)
+            self.auto_scale_row.show()
         else:
             debug_print("PanelControlsWidget applying wide range row")
             self.click_mode_range_check.setText("Range Selection on Map")
@@ -407,8 +428,10 @@ class PanelControlsWidget(QWidget):
             self.range_row_layout.addWidget(self.range_min_spin, 1)
             self.range_row_layout.addWidget(self.range_max_spin, 1)
             self.range_row_layout.addWidget(self.reset_button)
+            self.range_row_layout.addWidget(self.auto_scale_check)
             self.range_row_layout.addWidget(self.click_mode_range_check)
             self.range_values_row.hide()
+            self.auto_scale_row.hide()
         self._layout_mode = mode
         self.range_row.updateGeometry()
         self.range_values_row.updateGeometry()
@@ -460,6 +483,10 @@ class PanelControlsWidget(QWidget):
         self.discrete_minus_button.clicked.connect(lambda *_: self._change_discrete_band_count(-1))
         self.discrete_plus_button.clicked.connect(lambda *_: self._change_discrete_band_count(1))
         self.colorbar_mode_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("colorbar-mode"))
+        # Full Scale and Auto Scale on Zoom are mutually exclusive; switch the other off first (silently)
+        # so the refresh below already sees a consistent state.
+        self.full_scale_check.toggled.connect(lambda checked: checked and self.set_auto_scale_checked(False))
+        self.auto_scale_check.toggled.connect(lambda checked: checked and self._uncheck_full_scale())
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
         for degrees, button in self.rotation_buttons.items():
             button.clicked.connect(lambda _checked=False, value=degrees: self._set_rotation_degrees(value))
@@ -932,6 +959,28 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
     def full_scale_enabled(self) -> bool:
         debug_print("PanelControlsWidget.full_scale_enabled called")
         return self.full_scale_check.isChecked()
+
+    def auto_scale_enabled(self) -> bool:
+        """True when Auto Scale on Zoom is switched on and usable for the current visualization."""
+        return self.auto_scale_check.isChecked() and self.auto_scale_check.isEnabled()
+
+    def set_auto_scale_checked(self, checked: bool) -> None:
+        """Set the Auto Scale toggle without emitting its toggled signal."""
+        self.auto_scale_check.blockSignals(True)
+        self.auto_scale_check.setChecked(bool(checked))
+        self.auto_scale_check.blockSignals(False)
+
+    def set_auto_scale_available(self, available: bool, reason: str = "") -> None:
+        """Enable or disable the toggle; a disabled toggle is also switched off."""
+        self.auto_scale_check.setEnabled(bool(available))
+        if not available:
+            self.set_auto_scale_checked(False)
+        self.auto_scale_check.setToolTip(reason or _AUTO_SCALE_TOOLTIP)
+
+    def _uncheck_full_scale(self) -> None:
+        self.full_scale_check.blockSignals(True)
+        self.full_scale_check.setChecked(False)
+        self.full_scale_check.blockSignals(False)
 
     def current_plot_type(self) -> str:
         return self.plot_type_combo.currentData() or "heatmap"

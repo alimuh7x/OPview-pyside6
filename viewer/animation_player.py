@@ -33,6 +33,7 @@ from app.debug import debug_print
 from app.readable_dialogs import readable_information, readable_question, readable_warning
 from app.resources import ASSETS_DIR, HEATMAP_LOGO_PATH
 from viewer.colorscale import palette_to_cmap
+from viewer.plot_style import PlotStyle
 
 _TRANSPORT_ICON_SIZE = QSize(28, 28)
 _EXPORT_DPI = 150
@@ -382,8 +383,8 @@ class _MatplotlibCanvas(QWidget):
             self._overlay = self._ax.contourf(
                 overlay_values,
                 levels=[1.5, 3.5],
-                colors=["#000000"],
-                alpha=0.82,
+                colors=[PlotStyle.INTERFACE_OVERLAY_COLOR],
+                alpha=PlotStyle.INTERFACE_OVERLAY_ALPHA,
                 origin="lower",
                 antialiased=True,
                 zorder=_INTERFACE_OVERLAY_ZORDER,
@@ -1251,8 +1252,8 @@ QDialog#animationPlayer QProgressBar::chunk {
         return ax.contourf(
             np.asarray(overlay, dtype=float),
             levels=[1.5, 3.5],
-            colors=["#000000"],
-            alpha=0.82,
+            colors=[PlotStyle.INTERFACE_OVERLAY_COLOR],
+            alpha=PlotStyle.INTERFACE_OVERLAY_ALPHA,
             origin="lower",
             antialiased=True,
             zorder=_INTERFACE_OVERLAY_ZORDER,

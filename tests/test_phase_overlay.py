@@ -294,7 +294,7 @@ class OverlayLegendOnImageTests(unittest.TestCase):
         figure, *_ = self._figure([])
 
         self.assertEqual(len(figure.layout.shapes), 0)
-        self.assertEqual(figure.layout.margin.t, 60)
+        self.assertEqual(figure.layout.margin.t, 40)  # toolbar strip above the image
 
     def test_png_export_adds_a_legend_band_above_the_image(self):
         canvas = HeatmapCanvas()

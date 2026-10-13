@@ -295,7 +295,7 @@ class AppWidthConstraintTests(unittest.TestCase):
             current_step=1,
         )
 
-        self.assertEqual(figure.layout.height, 400)
+        self.assertEqual(figure.layout.height, 350)
         self.assertEqual(figure.layout.legend.orientation, "h")
         self.assertEqual(figure.layout.legend.yanchor, "bottom")
         self.assertEqual(figure.layout.legend.xanchor, "right")

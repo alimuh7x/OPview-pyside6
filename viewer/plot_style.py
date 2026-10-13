@@ -48,6 +48,11 @@ class PlotStyle:
     GRAPH_TICK_FONT_SIZE    = 26
     GUIDE_LINE_WIDTH        = 6
 
+    # Interface overlay (fill and outline share both values). Opaque, so the outline never stacks
+    # onto a semi-transparent fill and leaves a darker line just inside the band edge.
+    INTERFACE_OVERLAY_COLOR = "#000000"
+    INTERFACE_OVERLAY_ALPHA = 1.0
+
     COLORBAR_TITLE_SIZE     = 28
     COLORBAR_TICK_FONT_SIZE = 24
 

@@ -37,14 +37,14 @@ from viewer.phase_overlay_button import PhaseOverlayButton
 from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
 
 _LABEL_EDIT_MIN_WIDTH = 320
-_HEATMAP_LOGO_BAND_W = 52
-_HEATMAP_LOGO_PIXMAP_W = 52
-_HEATMAP_LOGO_GAP = 4
-_HEATMAP_LOGO_BOTTOM_PAD = 12
+# Same values as multi_view/multi_view_panel.py (_LOGO_W and the row spacing).
+_HEATMAP_LOGO_BAND_W = 58
+_HEATMAP_LOGO_PIXMAP_W = _HEATMAP_LOGO_BAND_W - 8
+_HEATMAP_LOGO_GAP = 8
 
 
 class HeatmapAlignmentRow(QWidget):
-    """Position logo and heatmap from the heatmap center."""
+    """Centred [logo] [heatmap] row; spacing and logo band match the Multi View heatmap row."""
 
     def __init__(
         self,
@@ -57,64 +57,14 @@ class HeatmapAlignmentRow(QWidget):
         super().__init__()
         self._logo_widget = logo_widget
         self._heatmap_widget = heatmap_widget
-        self._gap = gap
-        self._logo_widget.setParent(self)
-        self._heatmap_widget.setParent(self)
-        self._heatmap_widget.geometry_changed.connect(self._refresh_layout)
-        self.setMinimumHeight(self._row_height())
-        self._refresh_layout()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(gap)
+        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # whole [logo][heatmap][colorbar] block centred
+        layout.addWidget(self._logo_widget)
+        layout.addWidget(self._heatmap_widget)
+        debug_print(f"HeatmapAlignmentRow layout gap={gap}")
         debug_print("HeatmapAlignmentRow.__init__ complete")
-
-    def _row_height(self) -> int:
-        debug_print("HeatmapAlignmentRow._row_height called")
-        return max(
-            self._logo_widget.sizeHint().height(),
-            self._heatmap_widget.height(),
-        )
-
-    def _refresh_layout(self) -> None:
-        debug_print("HeatmapAlignmentRow._refresh_layout called")
-        row_height = self._row_height()
-        self.setMinimumHeight(row_height)
-        self.setMaximumHeight(row_height)
-        self.updateGeometry()
-        self._position_children()
-        debug_print("HeatmapAlignmentRow layout refresh complete")
-
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        debug_print("HeatmapAlignmentRow.resizeEvent called")
-        super().resizeEvent(event)
-        self._position_children()
-        debug_print("HeatmapAlignmentRow resize handled")
-
-    def _position_children(self) -> None:
-        debug_print("HeatmapAlignmentRow._position_children called")
-        row_height = self._row_height()
-        heatmap_width = self._heatmap_widget.width()
-        heatmap_height = self._heatmap_widget.height()
-        logo_width = self._logo_widget.width()
-        logo_height = self._logo_widget.height()
-        required_width = logo_width + self._gap + heatmap_width
-        centered_heatmap_x = int((self.width() - heatmap_width) / 2)
-        min_heatmap_x = logo_width + self._gap
-        heatmap_x = max(min_heatmap_x, centered_heatmap_x)
-        heatmap_y = row_height - heatmap_height
-        logo_x = heatmap_x - self._gap - logo_width
-        logo_y = max(0, row_height - logo_height - _HEATMAP_LOGO_BOTTOM_PAD)
-        debug_print(f"HeatmapAlignmentRow row_height={row_height}")
-        debug_print(f"HeatmapAlignmentRow available_width={self.width()}")
-        debug_print(f"HeatmapAlignmentRow required_width={required_width}")
-        debug_print(f"HeatmapAlignmentRow centered_heatmap_x={centered_heatmap_x}")
-        debug_print(f"HeatmapAlignmentRow min_heatmap_x={min_heatmap_x}")
-        debug_print(f"HeatmapAlignmentRow heatmap_x={heatmap_x}")
-        debug_print(f"HeatmapAlignmentRow logo_x={logo_x}")
-        debug_print(f"HeatmapAlignmentRow logo_visible={logo_x >= 0}")
-        self._heatmap_widget.setGeometry(heatmap_x, heatmap_y, heatmap_width, heatmap_height)
-        self._logo_widget.setGeometry(logo_x, logo_y, logo_width, logo_height)
-        self.setMinimumHeight(row_height)
-        self.setMaximumHeight(row_height)
-        debug_print("HeatmapAlignmentRow child geometry applied")
 
 
 class PlaybackTickMarksWidget(QWidget):
@@ -778,16 +728,10 @@ class PanelWidget(QWidget):
             debug_print("PanelWidget heatmap logo missing; pixmap not applied")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
         self.logo_label.setParent(logo_card)
-        logo_card.setFixedWidth(_HEATMAP_LOGO_BAND_W)
-        logo_card.setFixedHeight(self.heatmap_canvas.canvas_height())
-        logo_width = logo_card.width()
-        logo_height = self.logo_label.sizeHint().height()
-        logo_y = max(0, logo_card.height() - logo_height - _HEATMAP_LOGO_BOTTOM_PAD)
-        debug_print(f"PanelWidget heatmap logo card width={logo_width}")
-        debug_print(f"PanelWidget heatmap logo label height={logo_height}")
-        debug_print(f"PanelWidget heatmap logo label y={logo_y}")
-        self.logo_label.setGeometry(0, logo_y, logo_width, logo_height)
-        self.logo_label.setFixedWidth(logo_width)
+        logo_card.setFixedSize(_HEATMAP_LOGO_BAND_W, self.heatmap_canvas.canvas_height())
+        # Label fills the band and bottom-aligns the pixmap, exactly like Multi View.
+        self.logo_label.setGeometry(0, 0, logo_card.width(), logo_card.height())
+        debug_print(f"PanelWidget heatmap logo card size={logo_card.width()}x{logo_card.height()}")
         self.heatmap_row = HeatmapAlignmentRow(
             logo_card,
             self.heatmap_canvas,
@@ -798,7 +742,7 @@ class PanelWidget(QWidget):
         debug_print("PanelWidget heatmap export row background set white")
         self.heatmap_row.setMinimumHeight(self.heatmap_canvas.canvas_height())
         self.heatmap_row.setMaximumHeight(self.heatmap_canvas.canvas_height())
-        layout.addSpacing(24)
+        # The canvas carries its own 40 px toolbar strip above the image, so no extra gap here.
         layout.addWidget(self.heatmap_row)
         layout.addWidget(self.phase_fraction_history_separator)
         debug_print("PanelWidget added phase fraction history separator below heatmap")

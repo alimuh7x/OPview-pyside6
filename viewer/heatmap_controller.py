@@ -26,6 +26,7 @@ from viewer.colorscale import (
     palette_to_cmap,
 )
 from viewer.heatmap_canvas import _CANVAS_HEIGHT
+from viewer import visible_range
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.manual_point_dialog import ManualPointDialog
 from viewer.state import ViewerState, initial_state
@@ -147,6 +148,8 @@ class HeatmapController:
         self._last_grids = None
         self._last_display_grids = None
         self._last_scaled_grid = None
+        self._zoom_window: visible_range.ZoomWindow | None = None  # current Plotly view; None = full domain
+        self._status_prefix = ""
         self._histogram_cache: dict | None = None
         self._time_plot_running = False
         self._time_plot_cancel_requested = False
@@ -362,6 +365,8 @@ class HeatmapController:
             self.phase_overlay_button.rename_requested.connect(self._rename_overlay_phase)
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
+        self.heatmap_canvas.zoom_changed.connect(self._on_zoom_changed)
+        self.controls_widget.auto_scale_check.toggled.connect(self._on_auto_scale_toggled)
         self.colorbar_label_edit.editingFinished.connect(lambda *_: self._refresh_from_toolbar("colorbar-label"))
         self.unit_scale_combo.currentIndexChanged.connect(lambda *_: self._refresh_from_toolbar("unit-scale"))
         if self.phase_history_dt_spin is not None:
@@ -519,6 +524,7 @@ class HeatmapController:
         self._last_scaled_grid = z_grid
 
         trigger = self.controls_widget.last_trigger()
+        self._prepare_auto_scale(previous_state, trigger)
         if (
             previous_state.scalar_key != self.state.scalar_key
             or previous_state.file_path != self.state.file_path
@@ -539,15 +545,14 @@ class HeatmapController:
             self.controls_widget.set_range_values(lo, hi)
         self._sync_phase_fraction_range(scalar_key, trigger, stats_scaled)
 
-        message = (
+        self._status_prefix = (
             f"Dataset={self.state.dataset_label} | "
             f"scalar={scalar_label or 'not-selected'} | "
             f"axis={axis} | "
             f"slice={slice_index} | "
             f"grid={grid_cols}x{grid_rows} | "
-            f"min={self.state.range_min:.4g} | "
-            f"max={self.state.range_max:.4g}"
         )
+        message = self._range_status_message()
         self.state.status_message = message
         debug_print(f"Controller updated state={self.state}")
         self.controls_widget.set_status_text(message)
@@ -555,6 +560,7 @@ class HeatmapController:
         display_label = self._display_label_for_plot_type(display_label, plot_type)
         self._render_heatmap(x_grid, y_grid, z_grid, extra_scale, display_label)
         self._render_phase_fraction_history()
+        self._refresh_time_plot_marker()
         self._render_line_scan(x_grid, y_grid, z_grid, extra_scale, display_label)
         self._render_histogram(extra_scale, display_label)
         debug_print("Controller requested all canvas updates")
@@ -1474,6 +1480,113 @@ class HeatmapController:
             return label
         return display_label
 
+    # ------------------------------------------------------------------------------------------
+    # Auto Scale on Zoom
+    # ------------------------------------------------------------------------------------------
+    _AUTO_SCALE_PLOT_TYPES = ("heatmap", "gradient_magnitude")  # single Plotly Heatmap trace
+
+    def auto_scale_enabled(self) -> bool:
+        """Auto Scale on Zoom is on, usable in this visualization, and not combined with Full Scale."""
+        debug_print("HeatmapController.auto_scale_enabled called")
+        return self.controls_widget.auto_scale_enabled() and not self.controls_widget.full_scale_enabled()
+
+    def _auto_scale_unavailable_reason(self) -> str | None:
+        """Why Auto Scale on Zoom cannot be used with the current visualization, or None if it can."""
+        debug_print("HeatmapController._auto_scale_unavailable_reason called")
+        if self.controls_widget.current_plot_type() not in self._AUTO_SCALE_PLOT_TYPES:
+            return "Auto Scale on Zoom is available for the Heatmap and Gradient plot types."
+        if self.state.palette == DISCRETE_CUSTOM_PALETTE:
+            return "Auto Scale on Zoom is not available with the discrete palette."
+        if self.state.colorbar_mode != "bar":
+            return "Auto Scale on Zoom needs the Bar colorbar."
+        if self._is_phase_fraction_key(self.state.scalar_key):
+            return "Auto Scale on Zoom is not available for phase fractions (their range is a threshold)."
+        return None
+
+    def _prepare_auto_scale(self, previous_state, trigger: str) -> None:
+        """Before a refresh: enforce availability, let manual range input win, drop a stale zoom."""
+        debug_print(f"HeatmapController._prepare_auto_scale trigger={trigger}")
+        reason = self._auto_scale_unavailable_reason()
+        self.controls_widget.set_auto_scale_available(reason is None, reason or "")
+        if trigger in ("range", "range-slider", "range-selection", "reset"):
+            if self.controls_widget.auto_scale_check.isChecked():
+                self.controls_widget.set_auto_scale_checked(False)  # manual limits override Auto Scale
+        if (
+            previous_state.axis != self.state.axis
+            or previous_state.rotation_degrees != self.state.rotation_degrees
+            or previous_state.dataset_id != self.state.dataset_id
+        ):
+            self._zoom_window = None  # the plot coordinates changed, so the old window is meaningless
+
+    def _on_auto_scale_toggled(self, checked: bool) -> None:
+        """User switched Auto Scale on (colors follow the saved zoom) or off (full-domain range)."""
+        debug_print(f"HeatmapController._on_auto_scale_toggled checked={checked}")
+        self.controls_widget.set_last_trigger("auto-scale" if checked else "reset")
+        self.refresh_view()
+
+    def _on_zoom_changed(self, x0: float, x1: float, y0: float, y1: float) -> None:
+        """Plotly reported a settled zoom, pan or reset; recolour in place when Auto Scale is on."""
+        debug_print(f"HeatmapController._on_zoom_changed window={(x0, x1, y0, y1)}")
+        window = visible_range.normalize_window(x0, x1, y0, y1)
+        if window is None or not self._last_display_grids:
+            return
+        x_axis, y_axis = Heatmap2DOrientation.plot_axes(*self._last_display_grids)
+        if visible_range.is_full_domain(window, x_axis, y_axis):
+            window = None  # reset: back to the full-domain range
+        if visible_range.windows_equal(window, self._zoom_window):
+            return  # nothing moved; also stops echoes of a view we applied ourselves
+        self._zoom_window = window
+        if self.auto_scale_enabled():
+            self._recolor_for_zoom()
+
+    def _range_status_message(self) -> str:
+        return f"{self._status_prefix}min={self.state.range_min:.4g} | max={self.state.range_max:.4g}"
+
+    def _recolor_for_zoom(self) -> None:
+        """Recompute the range for the current zoom and update colors and colorbar without reloading."""
+        debug_print("HeatmapController._recolor_for_zoom called")
+        previous = (self.state.range_min, self.state.range_max)
+        if not self._apply_auto_range(*self._last_display_grids):
+            return
+        if (self.state.range_min, self.state.range_max) == previous:
+            return
+        extra_scale, _ = self._get_display_params(self.controls_widget.current_scalar_label())
+        message = self._range_status_message()  # keep the status line in step with the new range
+        self.state.status_message = message
+        self.controls_widget.set_status_text(message)
+        self.heatmap_canvas.set_status_message(message)
+        if not self.heatmap_canvas.restyle_color_range(
+            self.state.range_min * extra_scale, self.state.range_max * extra_scale
+        ):
+            self.controls_widget.set_last_trigger("auto-scale")
+            self.refresh_view()  # e.g. the colorbar needs another width
+
+    def _apply_auto_range(self, x_grid, y_grid, z_grid) -> bool:
+        """Set the colour range from the visible region (or the full-domain stats when not zoomed).
+
+        Reuses the range state and controls that `_reset_range_from_stats` drives; the data is untouched.
+        Returns False when no valid range could be derived (the previous range is kept).
+        """
+        debug_print(f"HeatmapController._apply_auto_range zoom window={self._zoom_window}")
+        x_axis, y_axis = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+        window = self._zoom_window
+        if window is not None and not visible_range.overlaps_domain(window, x_axis, y_axis):
+            window = self._zoom_window = None  # e.g. a different file with another extent
+        if window is None:
+            stats = self._last_grids[3] if self._last_grids else None
+            span = (float(stats["min"]), float(stats["max"])) if stats else None
+        else:
+            span = visible_range.visible_min_max(x_axis, y_axis, z_grid, window)
+        padded = visible_range.padded_range(*span) if span else None
+        if padded is None:
+            return False
+        lo, hi = padded
+        self.state.range_min = lo
+        self.state.range_max = hi
+        self.state.threshold = (lo + hi) / 2
+        self.controls_widget.set_range_values(lo, hi)
+        return True
+
     def _reset_range_from_stats(self, stats_scaled: dict[str, float]) -> None:
         """Reset the color range slider and state bounds to the data's actual min/max values."""
         debug_print("HeatmapController._reset_range_from_stats called")
@@ -1520,6 +1633,16 @@ class HeatmapController:
 
     def _render_heatmap(self, x_grid, y_grid, z_grid, extra_scale: float, display_label: str) -> None:
         """Build the colormap and pass all grid/overlay data to the heatmap canvas for drawing."""
+        orientation = self._orientation()
+        display = orientation.apply_grid(x_grid, y_grid, z_grid)
+        auto_scale = self.auto_scale_enabled()
+        if auto_scale:
+            # Time-step changes land here too: the saved zoom is applied to the new file's data.
+            self._apply_auto_range(display.x, display.y, display.z)
+        else:
+            self._zoom_window = None  # a page reload resets Plotly's view, so no zoom is kept
+        self.heatmap_canvas.set_zoom_window(self._zoom_window if auto_scale else None)
+        self.state.auto_scale_zoom = auto_scale
         debug_print("HeatmapController._render_heatmap called")
         if self.state.palette == DISCRETE_CUSTOM_PALETTE:
             debug_print("Controller using discrete custom render range")
@@ -1545,9 +1668,7 @@ class HeatmapController:
         debug_print(f"Controller render vmin={vmin}")
         debug_print(f"Controller render vmax={vmax}")
 
-        orientation = self._orientation()
         overlay_grid = self._with_interface_width(orientation.apply_overlay(self._build_overlay_grid()))
-        display = orientation.apply_grid(x_grid, y_grid, z_grid)
         x_grid, y_grid, z_grid = display.x, display.y, display.z
         self._last_display_grids = (x_grid, y_grid, z_grid)
         phase_fraction_overlays = self._build_phase_fraction_overlays(orientation, extra_scale)
@@ -2486,7 +2607,30 @@ class HeatmapController:
             y_label=self._time_plot_display_label,
             x_label=x_label,
             hover_x_label=hover_x_label,
+            current_step=self._time_plot_current_step(),
         )
+
+    def _time_plot_current_step(self) -> float | None:
+        """Current file's timestep in the displayed time unit, for the Plot Over Time marker."""
+        debug_print("HeatmapController._time_plot_current_step called")
+        step = self._current_phase_history_step(self._time_plot_series or [])
+        if step is None:
+            debug_print("PlotOverTime current step not found")
+            return None
+        factor, _, _ = self._phase_history_time_axis()
+        debug_print(f"PlotOverTime current step={step} factor={factor}")
+        return float(step) * factor
+
+    def _refresh_time_plot_marker(self) -> None:
+        """Move the current-step line when the displayed file changes."""
+        debug_print("HeatmapController._refresh_time_plot_marker called")
+        if self._time_plot_running or not self._time_plot_series_data:
+            debug_print("PlotOverTime marker refresh skipped")
+            return
+        if not any(item.get("values") for item in self._time_plot_series_data):
+            debug_print("PlotOverTime marker refresh skipped no values")
+            return
+        self._render_time_plot_values()
 
     def _handle_time_plot_sample(self, sample, display_label: str) -> None:
         """Receive one sampled timestep value from the worker."""
@@ -2609,10 +2753,36 @@ class HeatmapController:
             payload=payload,
             logo_path=HEATMAP_LOGO_PATH,
             logo_band_width=self._export_logo_band_width(),
+            logo_gap_width=self._export_logo_gap_width(),
             dpi=self._export_dpi(),
         )
         debug_print(f"HeatmapController high-resolution export saved={saved}")
         return bool(saved)
+
+    _EXPORT_MAX_RESOLUTION = 3000  # cap for zoomed exports (cost grows with the square of this)
+
+    def _export_resolution_for_zoom(self, base_resolution: int, window: visible_range.ZoomWindow) -> int:
+        """Sampling resolution that keeps about `base_resolution` pixels across the zoomed region."""
+        x_axis, y_axis = Heatmap2DOrientation.plot_axes(*self._last_display_grids)
+        x_span = abs(float(x_axis[-1] - x_axis[0])) or 1.0
+        y_span = abs(float(y_axis[-1] - y_axis[0])) or 1.0
+        fraction = max((window[1] - window[0]) / x_span, (window[3] - window[2]) / y_span)
+        fraction = min(max(fraction, 1e-3), 1.0)
+        return int(min(self._EXPORT_MAX_RESOLUTION, max(base_resolution, np.ceil(base_resolution / fraction))))
+
+    @staticmethod
+    def _crop_grid_to_window(x_grid, y_grid, z_grid, window: visible_range.ZoomWindow):
+        """Crop a display grid to the cells overlapping `window`; x/y are rebuilt from the plot axes."""
+        x_axis, y_axis = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+        rows, cols = visible_range.window_indices(x_axis, y_axis, window)
+        x_crop, y_crop = np.meshgrid(x_axis[cols], y_axis[rows])
+        return x_crop, y_crop, np.asarray(z_grid)[rows, cols]
+
+    @classmethod
+    def _crop_overlay_to_window(cls, layer: dict, window: visible_range.ZoomWindow) -> dict:
+        """Crop an overlay dict ({"x","y","z", ...}) sampled on the same grid as the heatmap."""
+        x_crop, y_crop, z_crop = cls._crop_grid_to_window(layer["x"], layer["y"], layer["z"], window)
+        return {**layer, "x": x_crop, "y": y_crop, "z": z_crop}
 
     def _build_high_resolution_export_payload(self) -> dict | None:
         """Build an export-resolution payload matching the current visible render choices."""
@@ -2625,6 +2795,9 @@ class HeatmapController:
             debug_print("HeatmapController export payload skipped no scalar")
             return None
         export_resolution = int(DEFAULTS.get("export_resolution", 1000))
+        zoom_window = self._zoom_window if self._last_display_grids else None
+        if zoom_window is not None:
+            export_resolution = self._export_resolution_for_zoom(export_resolution, zoom_window)
         debug_print(f"HeatmapController export payload resolution={export_resolution}")
         plot_type = self.controls_widget.current_plot_type()
         debug_print(f"HeatmapController export payload plot_type={plot_type}")
@@ -2688,6 +2861,15 @@ class HeatmapController:
             orientation, resolution=export_resolution
         )
         vector_overlay = self._build_vector_overlay(orientation)
+        if zoom_window is not None:
+            # Export the visible region only; its colour range is the one currently on screen.
+            x_grid, y_grid, z_grid = self._crop_grid_to_window(x_grid, y_grid, z_grid, zoom_window)
+            if overlay_grid is not None:
+                overlay_grid = self._crop_overlay_to_window(overlay_grid, zoom_window)
+            phase_fraction_overlays = [
+                self._crop_overlay_to_window(layer, zoom_window) for layer in phase_fraction_overlays
+            ]
+            debug_print(f"HeatmapController export payload cropped to zoom window={zoom_window}")
         line_overlay = None
         if self.state.line_overlay_visible:
             line_overlay = Heatmap2DOrientation.line_overlay(
@@ -2745,6 +2927,8 @@ class HeatmapController:
         debug_print(f"HeatmapController current-row export widget={widget.__class__.__name__}")
         debug_print(f"HeatmapController current-row export path={path}")
         source_rect = self._export_content_rect(widget)
+        # Skip the empty toolbar strip above the image.
+        source_rect.setTop(source_rect.top() + self.heatmap_canvas.modebar_strip_height())
         debug_print(f"HeatmapController export source rect={source_rect}")
         pixmap = widget.grab(source_rect)
         debug_print(f"HeatmapController current-row pixmap null={pixmap.isNull()}")
@@ -2835,6 +3019,15 @@ class HeatmapController:
         logo_width = max(0, int(children[0].width()))
         debug_print(f"HeatmapController export logo band width={logo_width}")
         return logo_width
+
+    def _export_logo_gap_width(self) -> int:
+        """Return the on-screen spacing between the logo band and the heatmap."""
+        debug_print("HeatmapController._export_logo_gap_width called")
+        widget = self.export_widget
+        layout = widget.layout() if widget is not None else None
+        gap = max(0, int(layout.spacing())) if layout is not None else 0
+        debug_print(f"HeatmapController export logo gap={gap}")
+        return gap
 
     @staticmethod
     def _default_export_filename(label: str) -> str:

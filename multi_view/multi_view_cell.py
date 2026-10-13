@@ -176,7 +176,7 @@ class MultiViewCell(QWidget):
 
     def render(self, x_grid, y_grid, z_grid, *, vmin: float, vmax: float,
                cmap, plot_type: str = "heatmap", overlay_grid=None, line_overlay=None, vector_overlay=None,
-               fill_canvas: bool = False) -> None:
+               fill_canvas: bool = False, clip_to_data: bool = False) -> None:
         debug_print(f"MultiViewCell.render start file={self.file_path}")
         debug_print(f"MultiViewCell fill_canvas={fill_canvas}")
         debug_print(f"MultiViewCell selected plot_type={plot_type}")
@@ -267,6 +267,12 @@ class MultiViewCell(QWidget):
             paper_bgcolor="white", plot_bgcolor="white",
         )
         self._configure_axes(figure, fill_canvas=fill_canvas)
+        if clip_to_data:
+            # A Heatmap draws its outer cells half a cell beyond the data points, but a Contour
+            # fill (interface overlay) stops at the points. Clip both to the point extent so the
+            # overlay reaches the image edge, as in Single View.
+            figure.update_xaxes(range=[float(np.nanmin(x_vals)), float(np.nanmax(x_vals))])
+            figure.update_yaxes(range=[float(np.nanmin(y_vals)), float(np.nanmax(y_vals))])
 
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>

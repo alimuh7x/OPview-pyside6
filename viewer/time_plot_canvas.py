@@ -16,7 +16,7 @@ from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
 
 _W = 600
-_H = 300
+_H = 350
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
 
@@ -103,8 +103,9 @@ class TimePlotCanvas(QWidget):
         y_label: str,
         x_label: str = "Timestep",
         hover_x_label: str = "timestep",
+        current_step: float | None = None,
     ) -> None:
-        """Render multiple point-history series."""
+        """Render multiple point-history series, with a dashed line at the current timestep."""
         debug_print("TimePlotCanvas.render_time_series called")
         debug_print(f"TimePlotCanvas series count={len(series)}")
         debug_print(f"TimePlotCanvas x_label={x_label}")
@@ -113,6 +114,7 @@ class TimePlotCanvas(QWidget):
             y_label=y_label,
             x_label=x_label,
             hover_x_label=hover_x_label,
+            current_step=current_step,
         )
         self._web_view.setHtml(self._build_html(figure), self._base_url)
         debug_print("TimePlotCanvas.render_time_series complete")
@@ -124,6 +126,7 @@ class TimePlotCanvas(QWidget):
         y_label: str,
         x_label: str = "Timestep",
         hover_x_label: str = "timestep",
+        current_step: float | None = None,
     ) -> go.Figure:
         """Build a Plotly figure for one or more point-history series."""
         debug_print("TimePlotCanvas._build_time_plot_figure called")
@@ -156,6 +159,15 @@ class TimePlotCanvas(QWidget):
                 )
             )
             added += 1
+        if current_step is not None and added:
+            debug_print(f"TimePlotCanvas adding current-step marker x={current_step}")
+            # Same style as the average graph (PhaseFractionHistoryCanvas).
+            figure.add_vline(
+                x=float(current_step),
+                line_width=2,
+                line_dash="dash",
+                line_color="#1f2937",
+            )
         if added == 0:
             debug_print("TimePlotCanvas no finite values")
             figure.add_annotation(

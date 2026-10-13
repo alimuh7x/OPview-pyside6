@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from app.debug import debug_print
 from app.menu_bar import AppMenuBar
 from app.resources import APP_LOGO_PATH, DOCUMENTATION_PATH
+from app.title_bar import apply_dark_title_bar
 from graphs.tab_widget import CustomGraphTab
 from multi_property.multi_property_tab import MultiPropertyTab
 from multi_view.multi_view_tab import MultiViewTab
@@ -238,6 +239,13 @@ class MainWindow(QMainWindow):
         debug_print(f"MainWindow sidebar requested visible={requested_visible}")
         self._set_sidebar_visible(requested_visible)
         debug_print("MainWindow._on_sidebar_toggle_button_clicked complete")
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # The native window exists once shown; the Windows DWM flag needs its handle.
+        if not getattr(self, "_dark_title_bar_applied", False):
+            self._dark_title_bar_applied = True
+            apply_dark_title_bar(self)
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)

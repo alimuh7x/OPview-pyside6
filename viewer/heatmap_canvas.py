@@ -22,11 +22,34 @@ from viewer.discrete_legend import add_discrete_legend_to_figure
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.plot_style import PlotStyle
 
-_CANVAS_HEIGHT = 420
+_CANVAS_HEIGHT = 420  # plot (image) height; export layout and plot_width_for_height scale from this
+# Strip above the image reserved for Plotly's hover toolbar, so it never covers the heatmap. It
+# lives outside the 420 px plot area, so the image, colorbar and logo keep their relative layout.
+_MODEBAR_STRIP = 40
+_WIDGET_HEIGHT = _CANVAS_HEIGHT + _MODEBAR_STRIP
 _CANVAS_WIDTH  = 360
 _COLORBAR_WIDTH = 90
 _COLORBAR_GAP = 0.012
-_EXPORT_COLORBAR_GAP_VIEW_PX = 10.0
+# Logo pixmap is this many px narrower than its band on screen (panel_widget._HEATMAP_LOGO_PIXMAP_W).
+_LOGO_PIXMAP_INSET = 8
+# Colorbar geometry as fractions of the plot height; same as Multi View's ColorbarCanvas so the
+# end ticks (min / max) have room above and below the bar instead of being clipped at the edge.
+_COLORBAR_LEN = 0.82
+# Plotly's default colorbar padding: xpad before the bar, ypad above and below it (all in px).
+_COLORBAR_XPAD_PX = 10.0
+_COLORBAR_YPAD_PX = 10.0
+_COLORBAR_CENTER = 0.5
+_COLORBAR_TICK_FONT_SIZE = 30
+_EXPORT_FONT_FAMILY = [PlotStyle.FONT_FAMILY, "DejaVu Sans"]
+_COLORBAR_TITLE_FONT_SIZE = 32
+_COLORBAR_CHAR_WIDTH_PX = 0.55 * _COLORBAR_TICK_FONT_SIZE
+# Plot-area margins above/below the image. Zero (like Multi View) so the image fills the full
+# canvas height that set_canvas_width() sizes the widget for; otherwise constrain="domain"
+# letterboxes the image and leaves blank bands beside it.
+_PLOT_TOP_MARGIN = _MODEBAR_STRIP
+# Plotly fires many relayouts while wheel-zooming or panning; report the settled view once.
+_ZOOM_DEBOUNCE_MS = 120
+_PLOT_BOTTOM_MARGIN = 0
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
 
@@ -82,6 +105,7 @@ class HeatmapCanvas(QWidget):
     """Render interactive Plotly heatmaps inside the Qt panel."""
 
     heatmap_clicked = Signal(float, float)
+    zoom_changed = Signal(float, float, float, float)  # x0, x1, y0, y1 of the visible plot-axis window
     geometry_changed = Signal()
     status_changed = Signal(str)
 
@@ -96,6 +120,7 @@ class HeatmapCanvas(QWidget):
         self._last_extent = None
         self._last_export_payload = None
         self._plot_width = _CANVAS_WIDTH
+        self._zoom_window = None
         self._colorbar_width = _COLORBAR_WIDTH
         self._colorbar_label = ""
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
@@ -114,7 +139,7 @@ class HeatmapCanvas(QWidget):
         layout.setSpacing(0)
         layout.addWidget(self._web_view)
         self.set_canvas_width(_CANVAS_WIDTH)
-        self.setFixedHeight(_CANVAS_HEIGHT)
+        self.setFixedHeight(_WIDGET_HEIGHT)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         debug_print("HeatmapCanvas.__init__ complete")
 
@@ -124,8 +149,8 @@ class HeatmapCanvas(QWidget):
         debug_print(f"HeatmapCanvas plot width={width}")
         self._plot_width = width
         widget_width = width + self._colorbar_width
-        self._web_view.setFixedSize(widget_width, _CANVAS_HEIGHT)
-        self.setFixedSize(widget_width, _CANVAS_HEIGHT)
+        self._web_view.setFixedSize(widget_width, _WIDGET_HEIGHT)
+        self.setFixedSize(widget_width, _WIDGET_HEIGHT)
         self.geometry_changed.emit()
         debug_print(f"HeatmapCanvas widget width={widget_width}")
         debug_print("HeatmapCanvas geometry_changed emitted")
@@ -144,9 +169,11 @@ class HeatmapCanvas(QWidget):
         tick_text = format_colorbar_ticks(ticks)
         debug_print(f"HeatmapCanvas width tick_text={tick_text}")
         n_chars = max(len(label) for label in tick_text)
-        # Shared tick font is size 22; estimate roughly 11px per character.
-        # bar thickness (18px) + gap (8px) + label text + right padding (14px)
-        return max(_COLORBAR_WIDTH, 18 + 8 + n_chars * 11 + 14)
+        # bar thickness (18px) + gap (8px) + label text + right padding (14px), plus the rotated
+        # title. Plotly's margin auto-expansion is off, so this must cover everything drawn right
+        # of the image or the colorbar would be clipped.
+        title_px = int(_COLORBAR_TITLE_FONT_SIZE * 1.4) if self._colorbar_label else 0
+        return max(_COLORBAR_WIDTH, int(18 + 8 + n_chars * _COLORBAR_CHAR_WIDTH_PX + 14 + title_px))
 
     @staticmethod
     def _colorbar_ticks(vmin: float, vmax: float) -> list[float]:
@@ -167,14 +194,19 @@ class HeatmapCanvas(QWidget):
         if needed != self._colorbar_width:
             self._colorbar_width = needed
             widget_width = self._plot_width + self._colorbar_width
-            self._web_view.setFixedSize(widget_width, _CANVAS_HEIGHT)
-            self.setFixedSize(widget_width, _CANVAS_HEIGHT)
+            self._web_view.setFixedSize(widget_width, _WIDGET_HEIGHT)
+            self.setFixedSize(widget_width, _WIDGET_HEIGHT)
             self.geometry_changed.emit()
             debug_print(f"HeatmapCanvas colorbar_width updated to {needed}")
 
     def canvas_width(self) -> int:
         debug_print("HeatmapCanvas.canvas_width called")
         return self.width()
+
+    @staticmethod
+    def modebar_strip_height() -> int:
+        """Height of the empty strip above the image that holds the hover toolbar."""
+        return _MODEBAR_STRIP
 
     def canvas_height(self) -> int:
         debug_print("HeatmapCanvas.canvas_height called")
@@ -204,6 +236,7 @@ class HeatmapCanvas(QWidget):
         debug_print("HeatmapCanvas.render_heatmap called")
         debug_print(f"HeatmapCanvas colorbar_mode={colorbar_mode}")
         debug_print(f"HeatmapCanvas discrete_colors={discrete_colors}")
+        self._colorbar_label = colorbar_label
         self._update_colorbar_width(vmin, vmax)
         extent = (
             float(np.nanmin(x_grid)),
@@ -261,6 +294,44 @@ class HeatmapCanvas(QWidget):
         self._web_view.setHtml(html, self._base_url)
         debug_print("HeatmapCanvas Plotly HTML updated")
 
+    def set_status_message(self, message: str) -> None:
+        """Replace the status line text (the controller's range summary) without re-rendering."""
+        self._status_text = message
+        self._emit_status_changed()
+
+    def set_zoom_window(self, window) -> None:
+        """Zoom window `(x0, x1, y0, y1)` re-applied after the next page load; None for the full view."""
+        self._zoom_window = tuple(window) if window is not None else None
+
+    def zoom_window(self):
+        return self._zoom_window
+
+    def restyle_color_range(self, vmin: float, vmax: float) -> bool:
+        """Recolour the heatmap and colorbar in place (Plotly.restyle: no reload, no relayout event).
+
+        Returns False when the new tick labels need more colorbar width than is reserved, which only a
+        full render can provide; the caller then re-renders.
+        """
+        debug_print("HeatmapCanvas.restyle_color_range called")
+        if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmax <= vmin:
+            return False
+        if self._compute_colorbar_width(vmin, vmax) > self._colorbar_width:
+            # Wider labels would be clipped (the figure margin is fixed); shorter ones just leave room.
+            debug_print("HeatmapCanvas restyle skipped: colorbar needs a wider canvas")
+            return False
+        ticks = self._colorbar_ticks(vmin, vmax)
+        tick_text = format_colorbar_ticks(ticks)
+        self._image = _ImageCompat(vmin, vmax)
+        if self._last_export_payload is not None:
+            self._last_export_payload = {**self._last_export_payload, "vmin": vmin, "vmax": vmax}
+        script = (
+            "window.opviewSetColorRange && window.opviewSetColorRange("
+            f"{json.dumps(float(vmin))}, {json.dumps(float(vmax))}, "
+            f"{json.dumps([float(t) for t in ticks])}, {json.dumps(tick_text)});"
+        )
+        self._web_view.page().runJavaScript(script)
+        return True
+
     def save_png(self, path: str) -> bool:
         """Export the current web view contents to PNG."""
         debug_print("HeatmapCanvas.save_png called")
@@ -279,6 +350,7 @@ class HeatmapCanvas(QWidget):
         payload: dict | None = None,
         logo_path: Path | None = None,
         logo_band_width: int = 0,
+        logo_gap_width: int = 0,
         dpi: int | None = None,
     ) -> bool:
         """Export the current heatmap data as a high-pixel PNG without resizing the widget."""
@@ -304,8 +376,12 @@ class HeatmapCanvas(QWidget):
         rows, cols = z_grid.shape[:2]
         dpi = int(dpi or DEFAULTS.get("export_dpi", 300))
         debug_print(f"HeatmapCanvas export dpi={dpi}")
-        layout = self._export_layout_metrics(rows, cols, logo_band_width)
+        x_plot, y_plot = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+        image_cols = self._export_image_width(rows, x_plot, y_plot)
+        debug_print(f"HeatmapCanvas export data pixels={cols}x{rows} image area width={image_cols}")
+        layout = self._export_layout_metrics(rows, image_cols, logo_band_width, logo_gap_width)
         logo_band_pixels = layout["logo_band_pixels"]
+        heatmap_x_pixels = layout["heatmap_x"]
         colorbar_pixels = layout["colorbar_panel_pixels"]
         width_pixels = layout["width_pixels"]
         height_pixels = layout["height_pixels"]
@@ -336,7 +412,19 @@ class HeatmapCanvas(QWidget):
         canvas = FigureCanvasAgg(fig)
         if logo_band_pixels:
             logo_x, logo_y, logo_width, logo_height = layout["logo_rect"]
-            debug_print(f"HeatmapCanvas export logo rect={layout['logo_rect']}")
+            logo = None
+            if logo_path and logo_path.exists():
+                try:
+                    logo = mpimg.imread(str(logo_path))
+                    debug_print(f"HeatmapCanvas export logo shape={getattr(logo, 'shape', None)}")
+                except Exception as exc:
+                    debug_print(f"HeatmapCanvas export logo load failed={exc}")
+            else:
+                debug_print("HeatmapCanvas export logo file missing")
+            if logo is not None and logo.shape[1] > 0:
+                # The on-screen logo keeps its aspect ratio at the scaled width.
+                logo_height = max(1, int(round(logo_width * logo.shape[0] / logo.shape[1])))
+            debug_print(f"HeatmapCanvas export logo rect={(logo_x, logo_y, logo_width, logo_height)}")
             logo_ax = fig.add_axes([
                 logo_x / width_pixels,
                 logo_y / height_pixels,
@@ -345,21 +433,13 @@ class HeatmapCanvas(QWidget):
             ])
             logo_ax.set_facecolor("white")
             logo_ax.set_axis_off()
-            debug_print("HeatmapCanvas export logo axes created")
-            if logo_path and logo_path.exists():
-                try:
-                    logo = mpimg.imread(str(logo_path))
-                    logo_ax.imshow(logo)
-                    debug_print("HeatmapCanvas export logo loaded")
-                    debug_print(f"HeatmapCanvas export logo shape={getattr(logo, 'shape', None)}")
-                except Exception as exc:
-                    debug_print(f"HeatmapCanvas export logo load failed={exc}")
-            else:
-                debug_print("HeatmapCanvas export logo file missing")
+            if logo is not None:
+                logo_ax.imshow(logo)
+                debug_print("HeatmapCanvas export logo loaded")
         ax = fig.add_axes([
-            logo_band_pixels / width_pixels,
+            heatmap_x_pixels / width_pixels,
             0.0,
-            cols / width_pixels,
+            image_cols / width_pixels,
             image_height_pixels / height_pixels,
         ])
         colorbar_x, colorbar_y, colorbar_width, colorbar_height = layout["colorbar_rect"]
@@ -370,7 +450,7 @@ class HeatmapCanvas(QWidget):
             colorbar_width / width_pixels,
             colorbar_height / height_pixels,
         ])
-        x_values, y_values = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
+        x_values, y_values = x_plot, y_plot
         image = ax.imshow(
             z_grid,
             origin="lower",
@@ -395,8 +475,8 @@ class HeatmapCanvas(QWidget):
                 overlay_y,
                 overlay_z,
                 levels=[1.5, 3.5],
-                colors=["black"],
-                alpha=0.82,
+                colors=[PlotStyle.INTERFACE_OVERLAY_COLOR],
+                alpha=PlotStyle.INTERFACE_OVERLAY_ALPHA,
             )
             export_width = float(overlay_grid.get("width", 0) or 0)
             if export_width > 0:
@@ -405,7 +485,8 @@ class HeatmapCanvas(QWidget):
                     overlay_y,
                     overlay_z,
                     levels=[1.5, 3.5],
-                    colors=["black"],
+                    colors=[PlotStyle.INTERFACE_OVERLAY_COLOR],
+                    alpha=PlotStyle.INTERFACE_OVERLAY_ALPHA,
                     linewidths=export_width,
                 )
         for overlay in payload.get("phase_fraction_overlays") or []:
@@ -431,7 +512,7 @@ class HeatmapCanvas(QWidget):
             renderer = canvas.get_renderer()
             swatch = legend_row_pixels * 0.6
             gap = swatch * 0.6
-            right_edge = logo_band_pixels + cols  # right edge of the image
+            right_edge = heatmap_x_pixels + image_cols  # right edge of the image
             for index, overlay in enumerate(export_overlays):
                 row_mid = height_pixels - 8 * layout["pixel_scale"] - (index + 0.5) * legend_row_pixels
                 text = fig.text(
@@ -482,61 +563,93 @@ class HeatmapCanvas(QWidget):
                 va="bottom",
                 bbox=dict(facecolor="white", edgecolor="none", alpha=0.92, pad=2),
             )
+        # Keep the axes at the image extent: line/point artists must not re-expand a cropped export.
+        ax.set_xlim(float(np.nanmin(x_values)), float(np.nanmax(x_values)))
+        ax.set_ylim(float(np.nanmin(y_values)), float(np.nanmax(y_values)))
         ax.set_axis_off()
         colorbar = fig.colorbar(image, cax=cax)
-        tick_font_size = self._export_font_points(PlotStyle.COLORBAR_TICK_FONT_SIZE, dpi, layout["pixel_scale"])
-        title_font_size = self._export_font_points(PlotStyle.COLORBAR_TITLE_SIZE, dpi, layout["pixel_scale"])
+        tick_font_size = self._export_font_points(_COLORBAR_TICK_FONT_SIZE, dpi, layout["pixel_scale"])
+        title_font_size = self._export_font_points(_COLORBAR_TITLE_FONT_SIZE, dpi, layout["pixel_scale"])
         label_pad = self._export_font_points(12, dpi, layout["pixel_scale"])
         tick_pad = self._export_font_points(4, dpi, layout["pixel_scale"])
         debug_print(f"HeatmapCanvas export colorbar tick font pt={tick_font_size}")
         debug_print(f"HeatmapCanvas export colorbar title font pt={title_font_size}")
         debug_print(f"HeatmapCanvas export colorbar label pad pt={label_pad}")
-        colorbar.ax.tick_params(labelsize=tick_font_size, pad=tick_pad)
+        colorbar.outline.set_visible(False)  # on screen: outlinewidth=0
+        # Same five ticks and number format as the on-screen Plotly colorbar, without tick marks.
+        tick_values = self._colorbar_ticks(float(payload["vmin"]), float(payload["vmax"]))
+        colorbar.set_ticks(tick_values)
+        colorbar.set_ticklabels(format_colorbar_ticks(tick_values), fontfamily=_EXPORT_FONT_FAMILY)
+        colorbar.ax.tick_params(labelsize=tick_font_size, pad=tick_pad, length=0)
         if payload.get("colorbar_label"):
-            colorbar.set_label(payload["colorbar_label"], fontsize=title_font_size, labelpad=label_pad)
+            colorbar.set_label(
+                payload["colorbar_label"], fontsize=title_font_size, labelpad=label_pad, fontfamily=_EXPORT_FONT_FAMILY
+            )
         canvas.draw()
         fig.savefig(path, dpi=dpi, facecolor="white")
         debug_print(f"HeatmapCanvas high-resolution export saved={path}")
         return True
 
     @staticmethod
-    def _export_layout_metrics(rows: int, cols: int, logo_band_width: int) -> dict:
-        """Return pixel-perfect PNG layout metrics scaled from the visible heatmap row."""
+    def _export_image_width(rows: int, x_values, y_values) -> int:
+        """Pixel width of the export image area: the on-screen plot width scaled to `rows` pixels high.
+
+        Mirrors Heatmap2DOrientation.plot_width_for_height so the PNG keeps the domain aspect even
+        when the sampled grid is square.
+        """
+        x_span = float(np.nanmax(x_values) - np.nanmin(x_values))
+        y_span = float(np.nanmax(y_values) - np.nanmin(y_values))
+        screen_width = 100 if y_span <= 0 else max(100, min(1200, int(_CANVAS_HEIGHT * x_span / y_span)))
+        pixel_scale = max(float(rows) / float(_CANVAS_HEIGHT), 1.0)
+        return max(1, int(round(screen_width * pixel_scale)))
+
+    @staticmethod
+    def _export_layout_metrics(rows: int, cols: int, logo_band_width: int, logo_gap_width: int = 0) -> dict:
+        """Return PNG layout metrics that mirror the on-screen row, scaled by rows / canvas height.
+
+        On screen the row is [logo band][gap][heatmap]; the logo pixmap is band-8 px wide, centred
+        in the band and flush with the bottom; Plotly puts the colorbar at 0.012 * plot width right
+        of the image.
+        """
         debug_print("HeatmapCanvas._export_layout_metrics called")
         pixel_scale = max(float(rows) / float(_CANVAS_HEIGHT), 1.0)
         debug_print(f"HeatmapCanvas export layout pixel_scale={pixel_scale}")
         logo_band_pixels = 0
+        logo_gap_pixels = 0
         logo_rect = (0, 0, 0, 0)
         if logo_band_width > 0:
             logo_band_pixels = max(1, int(round(float(logo_band_width) * pixel_scale)))
-            debug_print(f"HeatmapCanvas export layout logo band={logo_band_pixels}")
-            logo_width = max(1, int(round(52.0 * pixel_scale)))
+            logo_gap_pixels = max(0, int(round(float(logo_gap_width) * pixel_scale)))
+            logo_width = max(1, int(round(float(logo_band_width - _LOGO_PIXMAP_INSET) * pixel_scale)))
             logo_width = min(logo_width, logo_band_pixels)
-            logo_height = logo_width
+            logo_height = logo_width  # refined from the real image aspect when the logo is loaded
             logo_x = max(0, int(round((logo_band_pixels - logo_width) / 2.0)))
-            logo_y = max(0, int(round(12.0 * pixel_scale)))
-            logo_rect = (logo_x, logo_y, logo_width, logo_height)
+            logo_rect = (logo_x, 0, logo_width, logo_height)
             debug_print(f"HeatmapCanvas export layout logo_rect={logo_rect}")
-        colorbar_gap_pixels = max(1, int(round(_EXPORT_COLORBAR_GAP_VIEW_PX * pixel_scale)))
+        heatmap_x = logo_band_pixels + logo_gap_pixels
+        colorbar_gap_pixels = max(1, int(round(_COLORBAR_XPAD_PX * pixel_scale + _COLORBAR_GAP * float(cols))))
         colorbar_thickness_pixels = max(1, int(round(18.0 * pixel_scale)))
         colorbar_right_text_pixels = max(1, int(round(170.0 * pixel_scale)))
         colorbar_panel_pixels = max(
             int(round(float(_COLORBAR_WIDTH) * pixel_scale)),
             colorbar_gap_pixels + colorbar_thickness_pixels + colorbar_right_text_pixels,
         )
-        width_pixels = max(1, logo_band_pixels + int(cols) + colorbar_panel_pixels)
+        width_pixels = max(1, heatmap_x + int(cols) + colorbar_panel_pixels)
         height_pixels = max(1, int(rows))
-        colorbar_x = logo_band_pixels + int(cols) + colorbar_gap_pixels
-        colorbar_y = int(round(float(rows) * 0.15))
-        colorbar_height = max(1, int(round(float(rows) * 0.7)))
+        colorbar_x = heatmap_x + int(cols) + colorbar_gap_pixels
+        colorbar_height = max(1, int(round(float(rows) * _COLORBAR_LEN - 2.0 * _COLORBAR_YPAD_PX * pixel_scale)))
+        colorbar_y = int(round(float(rows) * _COLORBAR_CENTER - colorbar_height / 2.0))
         colorbar_rect = (colorbar_x, colorbar_y, colorbar_thickness_pixels, colorbar_height)
+        debug_print(f"HeatmapCanvas export layout heatmap_x={heatmap_x}")
         debug_print(f"HeatmapCanvas export layout colorbar_panel={colorbar_panel_pixels}")
         debug_print(f"HeatmapCanvas export layout colorbar_rect={colorbar_rect}")
         debug_print(f"HeatmapCanvas export layout image={width_pixels}x{height_pixels}")
         return {
             "pixel_scale": pixel_scale,
             "logo_band_pixels": logo_band_pixels,
+            "logo_gap_pixels": logo_gap_pixels,
             "logo_rect": logo_rect,
+            "heatmap_x": heatmap_x,
             "colorbar_gap_pixels": colorbar_gap_pixels,
             "colorbar_thickness_pixels": colorbar_thickness_pixels,
             "colorbar_panel_pixels": colorbar_panel_pixels,
@@ -661,6 +774,14 @@ class HeatmapCanvas(QWidget):
             self.heatmap_clicked.emit(float(x_value), float(y_value))
             debug_print(f"HeatmapCanvas emitted click x={x_value} y={y_value}")
             return
+        if event_type == "zoom":
+            x_range = payload.get("x") or []
+            y_range = payload.get("y") or []
+            if len(x_range) != 2 or len(y_range) != 2:
+                debug_print("HeatmapCanvas zoom event ignored: incomplete ranges")
+                return
+            self.zoom_changed.emit(float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1]))
+            return
         if event_type == "hover":
             hover_text = self._build_hover_text(
                 payload.get("x"),
@@ -717,15 +838,15 @@ class HeatmapCanvas(QWidget):
         colorbar_cfg = dict(
             x             = colorbar_x,
             xanchor       = "left",
-            y             = 0.35,
+            y             = _COLORBAR_CENTER,
             yanchor       = "middle",
-            len           = 0.7,
+            len           = _COLORBAR_LEN,
             lenmode       = "fraction",
             thickness     = 18,
             thicknessmode = "pixels",
             outlinewidth  = 0,
-            title         = dict(text=colorbar_label, side="right", font=PlotStyle.colorbar_title_font()),
-            tickfont      = PlotStyle.colorbar_tick_font(),
+            title         = dict(text=colorbar_label, side="right", font=PlotStyle.font(size=_COLORBAR_TITLE_FONT_SIZE)),
+            tickfont      = PlotStyle.font(size=_COLORBAR_TICK_FONT_SIZE),
             tickmode      = "array",
             tickvals      = ticks,
             ticktext      = tick_text,
@@ -763,6 +884,7 @@ class HeatmapCanvas(QWidget):
         if overlay_grid is not None:
             debug_print("HeatmapCanvas adding smooth contour overlay")
             interface_width = float(overlay_grid.get("width", 0) or 0)
+            interface_rgba = f"rgba(0, 0, 0, {PlotStyle.INTERFACE_OVERLAY_ALPHA})"
             overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(
                 overlay_grid["x"],
                 overlay_grid["y"],
@@ -784,12 +906,12 @@ class HeatmapCanvas(QWidget):
                     colorscale=[
                         [0.0, "rgba(0, 0, 0, 0.0)"],
                         [0.499, "rgba(0, 0, 0, 0.0)"],
-                        [0.5, "rgba(0, 0, 0, 0.82)"],
-                        [1.0, "rgba(0, 0, 0, 0.82)"],
+                        [0.5, interface_rgba],
+                        [1.0, interface_rgba],
                     ],
                     line=dict(
                         width=interface_width,
-                        color="rgba(0, 0, 0, 0.82)" if interface_width > 0 else "rgba(0, 0, 0, 0)",
+                        color=interface_rgba if interface_width > 0 else "rgba(0, 0, 0, 0)",
                     ),
                     hoverinfo="skip",
                     opacity=1.0,
@@ -866,7 +988,7 @@ class HeatmapCanvas(QWidget):
                     line_dash="dash",
                     line_color="#c50623",
                 )
-        top_margin = 60
+        top_margin = _PLOT_TOP_MARGIN
         if phase_fraction_overlays:
             top_margin = self._add_overlay_legend(
                 figure, phase_fraction_overlays, top_margin, aspect=self._data_aspect(x_values, y_values)
@@ -874,8 +996,8 @@ class HeatmapCanvas(QWidget):
         figure.update_layout(
             title=dict(text=title),
             width=self.width(),
-            height=_CANVAS_HEIGHT,
-            margin=dict(l=0, r=self._colorbar_width, t=top_margin, b=15),
+            height=_WIDGET_HEIGHT,
+            margin=dict(l=0, r=self._colorbar_width, t=top_margin, b=_PLOT_BOTTOM_MARGIN, autoexpand=False),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
@@ -1054,7 +1176,7 @@ class HeatmapCanvas(QWidget):
         count = len(overlays)
         top_margin = max(base_top_margin, count * row_px + 14)
         plot_w = max(1, self.width() - self._colorbar_width)
-        plot_h = max(1, _CANVAS_HEIGHT - top_margin - 15)
+        plot_h = max(1, _WIDGET_HEIGHT - top_margin - _PLOT_BOTTOM_MARGIN)
         text_w = max(len(str(o["label"])) for o in overlays) * char_px + 2
         # constrain="domain" letterboxes the data inside the plot area, centred: align the
         # legend to the image's right edge, not the (wider) plot area's.
@@ -1140,6 +1262,8 @@ class HeatmapCanvas(QWidget):
     def _build_html(self, figure: go.Figure) -> str:
         debug_print("HeatmapCanvas._build_html called")
         figure_json = figure.to_json()
+        zoom = self._zoom_window
+        zoom_json = json.dumps({"x": [zoom[0], zoom[1]], "y": [zoom[2], zoom[3]]}) if zoom else "null"
         return f"""
 <!DOCTYPE html>
 <html>
@@ -1203,6 +1327,55 @@ class HeatmapCanvas(QWidget):
                 gd.on("plotly_unhover", function() {{
                     bridge.sendEvent("unhover", "{{}}");
                 }});
+
+                // Auto Scale on Zoom: report the settled axis ranges after zoom, pan or reset.
+                // Programmatic relayouts (re-applying a saved zoom) are flagged and never reported.
+                window.__opviewApplying = false;
+                let zoomTimer = null;
+                window.opviewReportZoom = function() {{
+                    const full = gd._fullLayout;
+                    bridge.sendEvent("zoom", JSON.stringify({{x: full.xaxis.range, y: full.yaxis.range}}));
+                }};
+                gd.on("plotly_relayout", function(change) {{
+                    if (window.__opviewApplying || !change) {{
+                        return;
+                    }}
+                    const touchesAxes = Object.keys(change).some(function(key) {{
+                        return key.indexOf("xaxis") === 0 || key.indexOf("yaxis") === 0;
+                    }});
+                    if (!touchesAxes) {{
+                        return;
+                    }}
+                    clearTimeout(zoomTimer);
+                    zoomTimer = setTimeout(window.opviewReportZoom, {_ZOOM_DEBOUNCE_MS});
+                }});
+                // In-place colour update: restyle emits plotly_restyle only, never plotly_relayout.
+                window.opviewSetColorRange = function(zmin, zmax, tickvals, ticktext) {{
+                    const indices = [];
+                    gd.data.forEach(function(trace, index) {{
+                        if (trace.type === "heatmap" && trace.showscale !== false && trace.zmin !== undefined) {{
+                            indices.push(index);
+                        }}
+                    }});
+                    if (!indices.length) {{
+                        return false;
+                    }}
+                    Plotly.restyle(gd, {{
+                        zmin: zmin,
+                        zmax: zmax,
+                        "colorbar.tickvals": [tickvals],
+                        "colorbar.ticktext": [ticktext]
+                    }}, indices);
+                    return true;
+                }};
+                const savedZoom = {zoom_json};
+                if (savedZoom) {{
+                    // Applied after the first draw, so Plotly's reset target stays the full extent.
+                    window.__opviewApplying = true;
+                    Plotly.relayout(gd, {{"xaxis.range": savedZoom.x, "yaxis.range": savedZoom.y}}).then(function() {{
+                        setTimeout(function() {{ window.__opviewApplying = false; }}, 80);
+                    }});
+                }}
             }});
         }});
     </script>

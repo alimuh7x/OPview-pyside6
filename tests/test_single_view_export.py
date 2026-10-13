@@ -1,4 +1,6 @@
 import unittest
+
+import numpy as np
 from pathlib import Path
 
 from PySide6.QtCore import QRect
@@ -50,22 +52,58 @@ class SingleViewExportTests(unittest.TestCase):
         cbar_x, cbar_y, cbar_width, cbar_height = layout["colorbar_rect"]
 
         self.assertGreaterEqual(layout["logo_band_pixels"], logo_width)
-        self.assertGreater(logo_y, 0)
+        self.assertGreaterEqual(logo_y, 0)  # flush with the bottom, like the on-screen logo
         self.assertLess(logo_height, layout["height_pixels"])
         self.assertGreater(cbar_width, 28)
-        self.assertEqual(cbar_height, 700)
+        self.assertEqual(cbar_height, round(1000 * 0.82 - 2 * 10 * 1000 / 420))
         self.assertLess(cbar_x + cbar_width, layout["width_pixels"])
         self.assertGreater(layout["width_pixels"] - (cbar_x + cbar_width), 300)
 
     def test_single_view_live_colorbar_and_logo_spacing_stays_compact(self):
         self.assertLessEqual(_COLORBAR_GAP, 0.015)
-        self.assertLessEqual(_HEATMAP_LOGO_GAP, 4)
-        self.assertLessEqual(_HEATMAP_LOGO_BAND_W, 54)
+        # Single View logo band and gap match the Multi View row (58 px band, 8 px spacing).
+        self.assertEqual(_HEATMAP_LOGO_GAP, 8)
+        self.assertEqual(_HEATMAP_LOGO_BAND_W, 58)
+
+    def test_high_resolution_export_layout_mirrors_on_screen_row(self):
+        # 840 data rows = 2x the 420 px canvas, so every on-screen pixel measure doubles.
+        layout = HeatmapCanvas._export_layout_metrics(
+            rows=840, cols=900, logo_band_width=_HEATMAP_LOGO_BAND_W, logo_gap_width=_HEATMAP_LOGO_GAP
+        )
+
+        self.assertEqual(layout["logo_band_pixels"], 116)
+        self.assertEqual(layout["logo_gap_pixels"], 16)
+        self.assertEqual(layout["heatmap_x"], 132)
+        logo_x, logo_y, logo_width, _ = layout["logo_rect"]
+        self.assertEqual((logo_x, logo_y, logo_width), (8, 0, 100))
+        cbar_x, cbar_y, cbar_width, cbar_height = layout["colorbar_rect"]
+        self.assertEqual(cbar_x, 132 + 900 + round(10 * 2 + 0.012 * 900))  # Plotly xpad + x=1.012
+        self.assertEqual((cbar_width, cbar_height), (36, round(840 * 0.82 - 2 * 10 * 2)))  # len 0.82 minus ypad
+        self.assertEqual(cbar_y, round(840 * 0.5 - cbar_height / 2))
+
+    def test_toolbar_strip_sits_outside_the_420px_plot_area(self):
+        from viewer.heatmap_canvas import _CANVAS_HEIGHT, _WIDGET_HEIGHT
+
+        self.assertEqual(HeatmapCanvas.modebar_strip_height(), 40)
+        self.assertEqual(_WIDGET_HEIGHT - HeatmapCanvas.modebar_strip_height(), _CANVAS_HEIGHT)
+
+    def test_interface_overlay_is_opaque_so_outline_never_stacks_on_fill(self):
+        from viewer.plot_style import PlotStyle
+
+        self.assertEqual(PlotStyle.INTERFACE_OVERLAY_ALPHA, 1.0)
+
+    def test_export_image_width_follows_domain_aspect_not_grid_shape(self):
+        # A 2:1 domain sampled on a square grid must still export a 2:1 image area (no letterboxing).
+        x = np.linspace(0.0, 2.0, 50)
+        y = np.linspace(0.0, 1.0, 50)
+
+        self.assertEqual(HeatmapCanvas._export_image_width(840, x, y), 1680)
+        self.assertEqual(HeatmapCanvas._export_image_width(840, y, y), 840)
 
     def test_high_resolution_export_keeps_colorbar_close_to_heatmap(self):
         layout = HeatmapCanvas._export_layout_metrics(rows=1000, cols=1000, logo_band_width=_HEATMAP_LOGO_BAND_W)
 
-        self.assertLessEqual(layout["colorbar_gap_pixels"], 26)
+        self.assertLessEqual(layout["colorbar_gap_pixels"], 40)  # 10 px xpad + 0.012 of the image, scaled
 
     def test_export_font_conversion_matches_view_pixels_at_png_dpi(self):
         points = HeatmapCanvas._export_font_points(view_font_pixels=24, dpi=300, pixel_scale=1000 / 420)

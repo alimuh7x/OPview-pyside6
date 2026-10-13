@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication
 from app.debug import debug_print
 from app.main_window import MainWindow
 from app.styles import build_app_stylesheet
+from app.title_bar import request_dark_color_scheme
 
 _FONTS_DIR = Path(__file__).parent.parent / "assets" / "fonts"
 _NO_GPU_CHROMIUM_FLAGS = (
@@ -28,7 +29,7 @@ _NO_GPU_CHROMIUM_FLAGS = (
 def _build_light_palette() -> QPalette:
     """Fixed light palette so widgets without explicit styling never follow a dark OS theme.
 
-    The Qt colour scheme is left alone so the native title bar still follows the OS theme.
+    The native title bar is made dark separately (app/title_bar.py), so only widgets are fixed light here.
     """
     palette = QPalette()
     text = QColor("#102a52")
@@ -105,6 +106,8 @@ class ApplicationBootstrap:
             application = QApplication([])
         debug_print(f"Applying {self._style_name} application style")
         application.setStyle(self._style_name)
+        # Before setPalette: changing the scheme resets the palette, and the app keeps its light one.
+        request_dark_color_scheme(application)
         application.setPalette(_build_light_palette())
         self._load_fonts(application)
         application.setStyleSheet(build_app_stylesheet())

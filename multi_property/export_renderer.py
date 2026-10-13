@@ -17,10 +17,30 @@ from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.plot_style import PlotStyle
 
 _HEATMAP_TARGET_PX = 1000
-_COLORBAR_HEIGHT_PX = 180
+_COLORBAR_HEIGHT_PX = 220
 _LOGO_BAND_WIDTH_PX = 125
 _CELL_GAP_PX = 20
 _ROW_GAP_PX = 20
+# Colorbar text is sized in sheet pixels (converted to points per dpi), so it always fits the
+# fixed-pixel colorbar zone. In points, 13-14 pt at 300 dpi is 54-58 px and overflowed the zone.
+_TICK_FONT_PX = 46
+_TITLE_FONT_PX = 52
+_LABEL_PAD_PX = 12
+_TICK_PAD_PX = 10
+_BAR_THICKNESS_PX = 44
+# Colorbar offset from the near edge of its zone (px): the top row's bar sits above its heatmap
+# with ticks between bar and heatmap and the title above; the bottom row is the mirror image.
+_BAR_OFFSET_TOP_ROW_PX = 70
+_BAR_OFFSET_BOTTOM_ROW_PX = 80
+# Colorbar spans this fraction of the cell, centred, so end tick labels (up to ~9 characters,
+# e.g. "-1.23e-10") stay inside the cell instead of colliding with the neighbouring cell's labels.
+_COLORBAR_SPAN = 0.72
+# Narrowest cell: keeps a tall domain's title and colorbar labels from being squeezed.
+_MIN_CELL_WIDTH_PX = 700
+
+
+def _px_to_pt(pixels: float, dpi: int) -> float:
+    return float(pixels) * 72.0 / float(dpi)
 
 
 def save_multi_property_png(
@@ -74,8 +94,10 @@ def save_multi_property_png(
                 left=cell_x,
                 bottom=row_top,
                 width=cell_layout["width"],
+                heatmap_width=cell_layout["heatmap_width"],
                 heatmap_height=cell_layout["heatmap_height"],
                 bottom_row=row_index > 0,
+                dpi=safe_dpi,
             )
             cell_x += cell_layout["width"] + _CELL_GAP_PX
         if row_index < len(rows) - 1:
@@ -86,17 +108,32 @@ def save_multi_property_png(
     return True
 
 
+def _heatmap_size_px(payload: dict) -> tuple[int, int]:
+    """Heatmap pixel size from the physical x/y extent, longest side `_HEATMAP_TARGET_PX`.
+
+    The sampled grid is always square (resolution x resolution), so its shape says nothing about
+    the domain's aspect ratio; sizing from it letterboxed non-square domains inside a square cell.
+    """
+    z_grid = np.asarray(payload["z_grid"], dtype=float)
+    x_values, y_values = Heatmap2DOrientation.plot_axes(payload["x_grid"], payload["y_grid"], z_grid)
+    x_span = float(np.nanmax(x_values) - np.nanmin(x_values))
+    y_span = float(np.nanmax(y_values) - np.nanmin(y_values))
+    if not (np.isfinite(x_span) and np.isfinite(y_span)) or x_span <= 0.0 or y_span <= 0.0:
+        return _HEATMAP_TARGET_PX, _HEATMAP_TARGET_PX
+    aspect = x_span / y_span
+    if aspect >= 1.0:
+        return _HEATMAP_TARGET_PX, max(1, int(round(_HEATMAP_TARGET_PX / aspect)))
+    return max(1, int(round(_HEATMAP_TARGET_PX * aspect))), _HEATMAP_TARGET_PX
+
+
 def _row_layout(payloads: list[dict]) -> dict:
     debug_print("MultiPropertyExport._row_layout called")
     cells = []
     for payload in payloads:
-        z_grid = np.asarray(payload["z_grid"], dtype=float)
-        rows, cols = z_grid.shape[:2]
-        scale = _HEATMAP_TARGET_PX / max(rows, cols, 1)
-        cell_width = max(1, int(round(cols * scale)))
-        heatmap_height = max(1, int(round(rows * scale)))
-        cells.append({"width": cell_width, "heatmap_height": heatmap_height})
-        debug_print(f"MultiPropertyExport source grid={cols}x{rows}")
+        heatmap_width, heatmap_height = _heatmap_size_px(payload)
+        cell_width = max(heatmap_width, _MIN_CELL_WIDTH_PX)
+        cells.append({"width": cell_width, "heatmap_width": heatmap_width, "heatmap_height": heatmap_height})
+        debug_print(f"MultiPropertyExport heatmap pixels={heatmap_width}x{heatmap_height}")
         debug_print(f"MultiPropertyExport cell pixels={cell_width}x{heatmap_height}")
     row_width = _LOGO_BAND_WIDTH_PX + _CELL_GAP_PX
     row_width += sum(cell["width"] for cell in cells)
@@ -149,8 +186,10 @@ def _draw_cell(
     left: int,
     bottom: int,
     width: int,
+    heatmap_width: int,
     heatmap_height: int,
     bottom_row: bool,
+    dpi: int,
 ) -> None:
     debug_print("MultiPropertyExport._draw_cell called")
     colorbar_bottom = bottom if bottom_row else bottom + heatmap_height
@@ -158,18 +197,18 @@ def _draw_cell(
     debug_print(f"MultiPropertyExport heatmap bottom={heatmap_bottom}")
     debug_print(f"MultiPropertyExport colorbar bottom={colorbar_bottom}")
     heatmap_ax = figure.add_axes([
-        left / sheet_width,
+        (left + (width - heatmap_width) / 2.0) / sheet_width,  # centred in the cell, like the colorbar
         heatmap_bottom / sheet_height,
-        width / sheet_width,
+        heatmap_width / sheet_width,
         heatmap_height / sheet_height,
     ])
-    colorbar_offset = 65 if bottom_row else 90
+    colorbar_offset = _BAR_OFFSET_BOTTOM_ROW_PX if bottom_row else _BAR_OFFSET_TOP_ROW_PX
     debug_print(f"MultiPropertyExport colorbar offset={colorbar_offset}")
     colorbar_ax = figure.add_axes([
-        (left + int(width * 0.06)) / sheet_width,
+        (left + int(width * (1.0 - _COLORBAR_SPAN) / 2.0)) / sheet_width,
         (colorbar_bottom + colorbar_offset) / sheet_height,
-        int(width * 0.88) / sheet_width,
-        28 / sheet_height,
+        int(width * _COLORBAR_SPAN) / sheet_width,
+        _BAR_THICKNESS_PX / sheet_height,
     ])
     mappable = _draw_property(heatmap_ax, payload)
     colorbar = figure.colorbar(mappable, cax=colorbar_ax, orientation="horizontal")
@@ -177,8 +216,13 @@ def _draw_cell(
     colorbar.set_ticks(ticks)
     colorbar.set_ticklabels(format_colorbar_ticks(ticks))
     colorbar.outline.set_visible(False)
-    colorbar.ax.tick_params(labelsize=13, pad=4)
-    colorbar.set_label(str(payload.get("label", "")), fontsize=14, labelpad=8, weight="bold")
+    colorbar.ax.tick_params(labelsize=_px_to_pt(_TICK_FONT_PX, dpi), pad=_px_to_pt(_TICK_PAD_PX, dpi))
+    colorbar.set_label(
+        str(payload.get("label", "")),
+        fontsize=_px_to_pt(_TITLE_FONT_PX, dpi),
+        labelpad=_px_to_pt(_LABEL_PAD_PX, dpi),
+        weight="bold",
+    )
     if bottom_row:
         colorbar.ax.xaxis.set_ticks_position("top")
         colorbar.ax.xaxis.set_label_position("bottom")
@@ -219,7 +263,14 @@ def _draw_property(ax, payload: dict):
     if overlay_grid is not None:
         overlay_z = np.asarray(overlay_grid["z"], dtype=float)
         overlay_x, overlay_y = Heatmap2DOrientation.plot_axes(overlay_grid["x"], overlay_grid["y"], overlay_z)
-        ax.contourf(overlay_x, overlay_y, overlay_z, levels=[1.5, 3.5], colors=["black"], alpha=0.82)
+        ax.contourf(
+            overlay_x,
+            overlay_y,
+            overlay_z,
+            levels=[1.5, 3.5],
+            colors=[PlotStyle.INTERFACE_OVERLAY_COLOR],
+            alpha=PlotStyle.INTERFACE_OVERLAY_ALPHA,
+        )
         debug_print("MultiPropertyExport interface overlay drawn")
     line_overlay = payload.get("line_overlay")
     if line_overlay:

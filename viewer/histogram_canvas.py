@@ -14,7 +14,7 @@ from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
 
 _W = 600
-_H = 300
+_H = 350
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
 

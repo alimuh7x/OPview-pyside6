@@ -27,6 +27,7 @@ class ViewerState:
     first_click: Optional[float] = None
     clicked_message: Optional[str] = None
     colorscale_mode: str = "normal"
+    auto_scale_zoom: bool = False
     discrete_band_count: int = 2
     colorbar_mode: str = "bar"
     line_scan_y: Optional[float] = None

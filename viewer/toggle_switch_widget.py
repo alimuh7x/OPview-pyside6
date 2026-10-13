@@ -73,6 +73,8 @@ class ToggleSwitchWidget(QWidget):
     def paintEvent(self, event: QPaintEvent) -> None:
         del event
         p = QPainter(self)
+        if not self.isEnabled():
+            p.setOpacity(0.45)  # a disabled toggle (e.g. Auto Scale in an unsupported mode) looks dimmed
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         t = self._pos
 
