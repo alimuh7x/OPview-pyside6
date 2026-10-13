@@ -78,7 +78,7 @@ The main heatmap viewers (used in `Single View`, `Multi View`, and `Multi Proper
       <td style="border:1px solid #cfd6e4; padding:8px;">Sets explicit value bounds. The heatmap contrast and clipping update immediately.</td>
     </tr>
     <tr>
-      <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Range Selection on Map</strong></td>
+      <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Select Points</strong> (Single View; <em>Range Selection on Map</em> in Multi View)</td>
       <td style="border:1px solid #cfd6e4; padding:8px;">Enables range picking from map clicks. Selected range limits are applied to the current view.</td>
     </tr>
     <tr>
@@ -92,10 +92,6 @@ The main heatmap viewers (used in `Single View`, `Multi View`, and `Multi Proper
     <tr>
       <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Full Scale</strong></td>
       <td style="border:1px solid #cfd6e4; padding:8px;">Restores full-range scaling for the active field. The slider and rendering return to full data span.</td>
-    </tr>
-    <tr>
-      <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Auto Scale on Zoom</strong> (Single View)</td>
-      <td style="border:1px solid #cfd6e4; padding:8px;">Rescales the colours to the minimum and maximum of the visible, zoomed region. Off by default; see <em>Auto Scale on Zoom</em> below.</td>
     </tr>
     <tr>
       <td style="border:1px solid #cfd6e4; padding:8px;"><strong>Rotation</strong></td>
@@ -185,16 +181,26 @@ Use **Single View** for focused analysis of one dataset panel at a time.
 
 ![Unit conversion](images/single_view_unit_conversion.png)
 - **Slice**: for 3D data choose the slice axis (`X`, `Y`, `Z`) and move the slice index.
-- **PNG export** produces a high-resolution image (2x scale, 300 DPI) matching the visible layout. When the map is zoomed, the PNG shows the visible region (sampled at a higher resolution so it stays sharp) with the colorbar you currently see.
+- **PNG export** produces a high-resolution image (2x scale, 300 DPI) matching the visible layout. When the map is zoomed, the PNG shows the visible region (sampled at a higher resolution so it stays sharp) with the colorbar you currently see. The selection rectangle is drawn only when **Show Rectangle** is on.
 
-### Auto Scale on Zoom
-Switch on **Auto Scale on Zoom** (next to **Range**) to let the colours follow what you are looking at. When you zoom or pan the map, OPView takes the minimum and maximum of the visible region and applies them as the colour range. The colorbar, the **Range** boxes and the range slider update together; the data itself is never changed.
+### Colors and Region Selection
+The colors follow the region you are looking at **automatically**; there is nothing to switch on. With no zoom or selection the colorbar shows the minimum and maximum of the heatmap as drawn (not of the raw dataset). The data itself is never changed.
 
-- **Reset zoom** (the reset button on the map or a double click) restores the full-domain range.
-- **Time steps**: the zoomed region is kept when you change the file or play through frames. The range is recalculated from the visible region of the new time step.
-- **Manual limits win**: typing a **Range** value, dragging the range slider, selecting a range with two clicks on the map, or pressing **Reset** switches Auto Scale off and keeps your limits.
-- **Full Scale** and **Auto Scale on Zoom** exclude each other: switching one on switches the other off.
-- Available for the **Heatmap** and **Gradient magnitude** plot types with a continuous palette and the **Bar** colorbar. It is disabled for Threshold, Difference, contour plot types, the discrete palette, the **Boxes** legend and phase-fraction fields.
+The **Range** row (min, max, reset) also holds the three region controls, in this order:
+- **Select Points** (on by default): click two points on the map to set the color range, as before.
+- **Select Rectangle** (off by default): drag a rectangle **without zooming**. The whole sample stays visible, and the colors rescale to the minimum and maximum of the rectangle (values outside it use the end colors of the colorbar). A new drag replaces the rectangle, and **Reset** removes it. Off: drag pans, and mouse-wheel or toolbar zoom works as usual.
+- **Show Rectangle** (off by default): draw a thin outline around the selected rectangle. Hiding it only hides the outline; the selection and the colors do not change. The PNG export respects the setting.
+
+The labels shorten (*Points*, *Rectangle*, *Show*) when the panel is narrow so that everything stays on the Range row; hover for the full names. Only a very narrow panel moves the three toggles onto a line just below the Range row.
+
+How they interact:
+- **Zoom, pan, Home**: the toolbar above the heatmap (zoom in, zoom out, pan, Home) is always visible. When you zoom or pan, the colors rescale to the visible region; zooming all the way out or pressing **Home** returns to the heatmap's minimum and maximum. The colorbar, the **Range** boxes and the slider update together, without redrawing the heatmap.
+- **Manual limits are held**: a range you type, drag on the slider, or pick with **Select Points** stays until you zoom, pan or select a rectangle, which hands the colors back to the automatic range. Changing the time step keeps your manual limits, for example to compare steps on one fixed scale.
+- **Reset** always restores the minimum and maximum of the drawn heatmap, however the range was set, including while zoomed or with a rectangle selected. It removes the selected rectangle but keeps the zoom, and the full range is held until you next zoom, pan or select.
+- **Select Rectangle** and the click-based modes (**Select Points**, **Line Scan**, **Add Point**) exclude each other, because a drag-select consumes the clicks. Switching one on switches the other off; switching **Select Rectangle** off brings back **Select Points**.
+- **Time steps**: the zoom and the selected rectangle are kept when you change the file or play through frames. The colors are recalculated for the new time step.
+- **Full Scale** replaces the automatic colors while it is on.
+- The automatic colors apply to the **Heatmap** and **Gradient magnitude** plot types with a continuous palette and the **Bar** colorbar. They are not applied for Threshold, Difference, contour plot types, the discrete palette, the **Boxes** legend and phase-fraction fields.
 - **Animation** (MP4) uses the single range that is set when you start it, so every frame is read on the same scale.
 
 ### Playback and Animation

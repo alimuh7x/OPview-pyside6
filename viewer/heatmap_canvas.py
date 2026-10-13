@@ -49,6 +49,7 @@ _COLORBAR_CHAR_WIDTH_PX = 0.55 * _COLORBAR_TICK_FONT_SIZE
 _PLOT_TOP_MARGIN = _MODEBAR_STRIP
 # Plotly fires many relayouts while wheel-zooming or panning; report the settled view once.
 _ZOOM_DEBOUNCE_MS = 120
+_SELECTION_SHAPE_NAME = "opview-selection"
 _PLOT_BOTTOM_MARGIN = 0
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
@@ -106,6 +107,8 @@ class HeatmapCanvas(QWidget):
 
     heatmap_clicked = Signal(float, float)
     zoom_changed = Signal(float, float, float, float)  # x0, x1, y0, y1 of the visible plot-axis window
+    region_selected = Signal(float, float, float, float)  # x0, x1, y0, y1 of a box selection (no zoom)
+    region_cleared = Signal()
     geometry_changed = Signal()
     status_changed = Signal(str)
 
@@ -121,6 +124,9 @@ class HeatmapCanvas(QWidget):
         self._last_export_payload = None
         self._plot_width = _CANVAS_WIDTH
         self._zoom_window = None
+        self._drag_mode = "pan"
+        self._selection_window = None
+        self._show_selection = False
         self._colorbar_width = _COLORBAR_WIDTH
         self._colorbar_label = ""
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
@@ -299,6 +305,42 @@ class HeatmapCanvas(QWidget):
         self._status_text = message
         self._emit_status_changed()
 
+    @staticmethod
+    def _selection_shapes(window) -> list[dict]:
+        """Thin outline of the selected region: a light line over a dark halo, visible on any palette."""
+        base = {
+            "type": "rect",
+            "xref": "x",
+            "yref": "y",
+            "x0": window[0],
+            "x1": window[1],
+            "y0": window[2],
+            "y1": window[3],
+            "fillcolor": "rgba(0,0,0,0)",
+            "layer": "above",
+        }
+        return [
+            {**base, "name": _SELECTION_SHAPE_NAME + "-halo", "line": {"color": "rgba(0,0,0,0.55)", "width": 3}},
+            {**base, "name": _SELECTION_SHAPE_NAME, "line": {"color": "rgba(255,255,255,0.95)", "width": 1.2}},
+        ]
+
+    def set_drag_mode(self, mode: str) -> None:
+        """Plotly drag behaviour: "pan" (default), "zoom" or "select" (box select without zooming)."""
+        self._drag_mode = mode
+        self._web_view.page().runJavaScript(
+            "var g=document.getElementById('heatmapDiv');"
+            f"if (g && g.data) {{ Plotly.relayout(g, {{dragmode: {json.dumps(mode)}}}); }}"
+        )
+
+    def set_selection(self, window, show: bool) -> None:
+        """Store the selected region and (re)draw or hide its outline in place, without a reload."""
+        self._selection_window = tuple(window) if window is not None else None
+        self._show_selection = bool(show)
+        shapes = self._selection_shapes(window) if (window is not None and show) else []
+        self._web_view.page().runJavaScript(
+            f"window.opviewSetSelection && window.opviewSetSelection({json.dumps(shapes)});"
+        )
+
     def set_zoom_window(self, window) -> None:
         """Zoom window `(x0, x1, y0, y1)` re-applied after the next page load; None for the full view."""
         self._zoom_window = tuple(window) if window is not None else None
@@ -309,16 +351,24 @@ class HeatmapCanvas(QWidget):
     def restyle_color_range(self, vmin: float, vmax: float) -> bool:
         """Recolour the heatmap and colorbar in place (Plotly.restyle: no reload, no relayout event).
 
-        Returns False when the new tick labels need more colorbar width than is reserved, which only a
-        full render can provide; the caller then re-renders.
+        Longer tick labels widen the colorbar area in place (the plot area keeps its size), so a zoom
+        never needs a page reload. Returns False only for an invalid range; the caller then re-renders.
         """
         debug_print("HeatmapCanvas.restyle_color_range called")
         if not (np.isfinite(vmin) and np.isfinite(vmax)) or vmax <= vmin:
             return False
-        if self._compute_colorbar_width(vmin, vmax) > self._colorbar_width:
-            # Wider labels would be clipped (the figure margin is fixed); shorter ones just leave room.
-            debug_print("HeatmapCanvas restyle skipped: colorbar needs a wider canvas")
-            return False
+        needed = self._compute_colorbar_width(vmin, vmax)
+        resize = ""
+        if needed > self._colorbar_width:
+            # Wider labels would be clipped (the figure margin is fixed): grow the colorbar area, the widget
+            # and the figure together. Shorter labels just leave room, so the width never shrinks here.
+            self._colorbar_width = needed
+            total = self._plot_width + needed
+            self._web_view.setFixedSize(total, _WIDGET_HEIGHT)
+            self.setFixedSize(total, _WIDGET_HEIGHT)
+            self.geometry_changed.emit()
+            resize = f", {total}, {needed}"
+            debug_print(f"HeatmapCanvas colorbar widened in place to {needed}")
         ticks = self._colorbar_ticks(vmin, vmax)
         tick_text = format_colorbar_ticks(ticks)
         self._image = _ImageCompat(vmin, vmax)
@@ -327,7 +377,7 @@ class HeatmapCanvas(QWidget):
         script = (
             "window.opviewSetColorRange && window.opviewSetColorRange("
             f"{json.dumps(float(vmin))}, {json.dumps(float(vmax))}, "
-            f"{json.dumps([float(t) for t in ticks])}, {json.dumps(tick_text)});"
+            f"{json.dumps([float(t) for t in ticks])}, {json.dumps(tick_text)}{resize});"
         )
         self._web_view.page().runJavaScript(script)
         return True
@@ -563,6 +613,20 @@ class HeatmapCanvas(QWidget):
                 va="bottom",
                 bbox=dict(facecolor="white", edgecolor="none", alpha=0.92, pad=2),
             )
+        selection_rect = payload.get("selection_rect")
+        if selection_rect:
+            # Same outline as on screen (dark halo under a light line); drawn only when it is shown there.
+            from matplotlib.patches import Rectangle
+
+            sx0, sx1, sy0, sy1 = selection_rect
+            for color, width_px in (((0.0, 0.0, 0.0, 0.55), 3.0), ((1.0, 1.0, 1.0, 0.95), 1.2)):
+                ax.add_patch(Rectangle(
+                    (sx0, sy0), sx1 - sx0, sy1 - sy0,
+                    fill=False,
+                    edgecolor=color,
+                    linewidth=self._export_font_points(width_px, dpi, layout["pixel_scale"]),
+                    zorder=10,
+                ))
         # Keep the axes at the image extent: line/point artists must not re-expand a cropped export.
         ax.set_xlim(float(np.nanmin(x_values)), float(np.nanmax(x_values)))
         ax.set_ylim(float(np.nanmin(y_values)), float(np.nanmax(y_values)))
@@ -781,6 +845,14 @@ class HeatmapCanvas(QWidget):
                 debug_print("HeatmapCanvas zoom event ignored: incomplete ranges")
                 return
             self.zoom_changed.emit(float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1]))
+            return
+        if event_type == "select":
+            x_range = payload.get("x") or []
+            y_range = payload.get("y") or []
+            if len(x_range) == 2 and len(y_range) == 2:
+                self.region_selected.emit(float(x_range[0]), float(x_range[1]), float(y_range[0]), float(y_range[1]))
+            else:
+                self.region_cleared.emit()  # a click in select mode deselects
             return
         if event_type == "hover":
             hover_text = self._build_hover_text(
@@ -1001,7 +1073,7 @@ class HeatmapCanvas(QWidget):
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
-            dragmode="pan",
+            dragmode=self._drag_mode,
         )
         figure.update_xaxes(
             visible=False,
@@ -1019,6 +1091,9 @@ class HeatmapCanvas(QWidget):
             fixedrange=False,
             automargin=False,
         )
+        if self._show_selection and self._selection_window is not None:
+            for shape in self._selection_shapes(self._selection_window):
+                figure.add_shape(**shape)
         debug_print("HeatmapCanvas figure ready")
         return figure
 
@@ -1299,6 +1374,7 @@ class HeatmapCanvas(QWidget):
                 displaylogo: false,
                 responsive: false,
                 scrollZoom: true,
+                displayModeBar: true,  // zoom in/out, pan and Home stay visible instead of appearing on hover
                 doubleClick: "reset+autosize"
             }};
             Plotly.newPlot(div, figure.data, figure.layout, config).then(function(gd) {{
@@ -1350,7 +1426,7 @@ class HeatmapCanvas(QWidget):
                     zoomTimer = setTimeout(window.opviewReportZoom, {_ZOOM_DEBOUNCE_MS});
                 }});
                 // In-place colour update: restyle emits plotly_restyle only, never plotly_relayout.
-                window.opviewSetColorRange = function(zmin, zmax, tickvals, ticktext) {{
+                window.opviewSetColorRange = function(zmin, zmax, tickvals, ticktext, totalWidth, marginRight) {{
                     const indices = [];
                     gd.data.forEach(function(trace, index) {{
                         if (trace.type === "heatmap" && trace.showscale !== false && trace.zmin !== undefined) {{
@@ -1360,13 +1436,54 @@ class HeatmapCanvas(QWidget):
                     if (!indices.length) {{
                         return false;
                     }}
-                    Plotly.restyle(gd, {{
-                        zmin: zmin,
-                        zmax: zmax,
-                        "colorbar.tickvals": [tickvals],
-                        "colorbar.ticktext": [ticktext]
-                    }}, indices);
+                    const recolor = function() {{
+                        Plotly.restyle(gd, {{
+                            zmin: zmin,
+                            zmax: zmax,
+                            "colorbar.tickvals": [tickvals],
+                            "colorbar.ticktext": [ticktext]
+                        }}, indices);
+                    }};
+                    if (totalWidth) {{
+                        // Wider colorbar labels: widen the figure and its right margin by the same amount, so
+                        // the plot area keeps its size. Width and margin events are not zoom events.
+                        Plotly.relayout(gd, {{width: totalWidth, "margin.r": marginRight}}).then(recolor);
+                    }} else {{
+                        recolor();
+                    }}
                     return true;
+                }};
+                // Select Region: report the box (axis coordinates) without zooming. Plotly keeps its own
+                // outline after a selection, so it is removed at once; ours is drawn from the stored region.
+                gd.on("plotly_selected", function(eventData) {{
+                    if (window.__opviewApplying) {{
+                        return;
+                    }}
+                    setTimeout(function() {{
+                        window.__opviewApplying = true;
+                        Plotly.relayout(gd, {{selections: []}}).then(function() {{
+                            setTimeout(function() {{ window.__opviewApplying = false; }}, 60);
+                        }});
+                    }}, 0);
+                    if (eventData && eventData.range) {{
+                        bridge.sendEvent("select", JSON.stringify({{x: eventData.range.x, y: eventData.range.y}}));
+                    }} else {{
+                        bridge.sendEvent("select", "{{}}");
+                    }}
+                }});
+                gd.on("plotly_deselect", function() {{
+                    if (!window.__opviewApplying) {{
+                        bridge.sendEvent("select", "{{}}");
+                    }}
+                }});
+                window.opviewSetSelection = function(selectionShapes) {{
+                    const kept = (gd.layout.shapes || []).filter(function(shape) {{
+                        return (shape.name || "").indexOf("{_SELECTION_SHAPE_NAME}") !== 0;
+                    }});
+                    window.__opviewApplying = true;
+                    Plotly.relayout(gd, {{shapes: kept.concat(selectionShapes)}}).then(function() {{
+                        setTimeout(function() {{ window.__opviewApplying = false; }}, 60);
+                    }});
                 }};
                 const savedZoom = {zoom_json};
                 if (savedZoom) {{

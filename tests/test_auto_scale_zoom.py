@@ -1,5 +1,6 @@
 """Auto Scale on Zoom in Single View: zoom, pan, reset, manual override, time steps, export."""
 
+import json
 import os
 import unittest
 from pathlib import Path
@@ -64,8 +65,14 @@ class AutoScaleZoomTests(unittest.TestCase):
         self.canvas = self.panel.heatmap_canvas
 
     def _enable(self):
-        self.controls.auto_scale_check.setChecked(True)  # real toggle -> full render
+        """Auto scale has no switch: it is how the colours behave, so this only checks that it is active."""
         self.assertTrue(self.controller.auto_scale_enabled())
+
+    def _hold_manual_range(self):
+        """Type a range, as a user would: it is held until the region changes or Reset is pressed."""
+        lo, hi = self.controller.state.range_min, self.controller.state.range_max
+        self.controls.range_min_spin.setValue(lo + 0.2 * (hi - lo))
+        self.assertFalse(self.controller.auto_scale_enabled())
 
     def _expected_visible_range(self, window):
         x_axis, y_axis = _axes(self.controller)
@@ -81,15 +88,56 @@ class AutoScaleZoomTests(unittest.TestCase):
         return restyle, refresh
 
     # ---- defaults ------------------------------------------------------------------------------
-    def test_auto_scale_is_off_by_default_and_changes_nothing(self):
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
+    def test_there_is_no_auto_scale_switch_and_it_starts_at_the_full_domain_range(self):
+        self.assertFalse(hasattr(self.controls, "auto_scale_check"))  # always on, nothing to switch
+        self.assertTrue(self.controller.auto_scale_enabled())
+        full_stats = self.controller._last_grids[3]
+        self.assertAlmostEqual(self.controller.state.range_min, full_stats["min"])
+        self.assertAlmostEqual(self.controller.state.range_max, full_stats["max"])
+
+    def test_full_view_range_is_the_min_max_of_the_drawn_heatmap_not_the_raw_dataset(self):
+        z = self.controller._last_display_grids[2]
+        raw = self.controller.reader.get_interpolated_slice(
+            axis=self.controller.state.axis, index=self.controller.state.slice_index,
+            scalar_name="MoleFractionsTotal_CL", component=None, resolution=160,
+        )[3]
+        self.assertNotEqual(raw["min"], float(np.nanmin(z)))  # the raw statistics really do differ here
+
+        for action in ("start", "zoom out", "reset"):
+            if action == "zoom out":
+                self._zoom(_window(self.controller, 0.2, 0.5, 0.2, 0.5))
+                self._zoom(_window(self.controller, -0.01, 1.01, -0.01, 1.01))
+            elif action == "reset":
+                self._zoom(_window(self.controller, 0.2, 0.5, 0.2, 0.5))
+                self.controls.reset_button.click()
+
+            self.assertAlmostEqual(self.controller.state.range_min, float(np.nanmin(z)), msg=action)
+            self.assertAlmostEqual(self.controller.state.range_max, float(np.nanmax(z)), msg=action)
+            self.assertAlmostEqual(self.controls.range_max_spin.value(), float(np.nanmax(z)), places=6, msg=action)
+
+    def test_zoom_after_a_typed_range_returns_to_automatic_colours(self):
+        self._hold_manual_range()
+        typed = (self.controller.state.range_min, self.controller.state.range_max)
+        window = _window(self.controller, 0.0, 0.5, 0.5, 1.0)
+
+        restyle, _ = self._zoom(window)
+
+        self.assertTrue(self.controller.auto_scale_enabled())
+        lo, hi = self._expected_visible_range(window)
+        self.assertAlmostEqual(self.controller.state.range_min, lo)
+        self.assertAlmostEqual(self.controller.state.range_max, hi)
+        self.assertNotEqual((lo, hi), typed)
+        restyle.assert_called_once()
+
+    def test_a_held_manual_range_is_not_changed_by_unrelated_refreshes(self):
+        self._hold_manual_range()
+        held = (self.controller.state.range_min, self.controller.state.range_max)
+
+        self.controls.file_combo.setCurrentIndex(1)  # a time step keeps the manual limits, as before
+
         self.assertFalse(self.controller.auto_scale_enabled())
-        before = (self.controller.state.range_min, self.controller.state.range_max)
-
-        restyle, _ = self._zoom(_window(self.controller, 0.2, 0.5, 0.2, 0.5))
-
-        restyle.assert_not_called()
-        self.assertEqual((self.controller.state.range_min, self.controller.state.range_max), before)
+        self.assertAlmostEqual(self.controller.state.range_min, held[0], places=6)
+        self.assertAlmostEqual(self.controller.state.range_max, held[1], places=6)
 
     # ---- zoom, pan, reset ---------------------------------------------------------------------
     def test_zoom_recolors_in_place_to_the_visible_min_max(self):
@@ -166,26 +214,22 @@ class AutoScaleZoomTests(unittest.TestCase):
         refresh.assert_called_once()
 
     # ---- manual override and exclusivity -----------------------------------------------------
-    def test_typing_a_range_switches_auto_scale_off(self):
-        self._enable()
+    def test_typing_a_range_holds_it(self):
         self._zoom(_window(self.controller, 0.0, 0.5, 0.5, 1.0))
 
         self.controls.range_min_spin.setValue(0.01)
 
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
         self.assertFalse(self.controller.auto_scale_enabled())
         self.assertAlmostEqual(self.controller.state.range_min, 0.01, places=6)  # the typed value wins
 
-    def test_dragging_the_range_slider_switches_auto_scale_off(self):
-        self._enable()
+    def test_dragging_the_range_slider_holds_the_range(self):
         low, high = self.controls.range_slider.lower_value(), self.controls.range_slider.upper_value()
 
         self.controls.range_slider.set_values(low, (low + high) / 2.0, emit_signal=True)
 
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
+        self.assertFalse(self.controller.auto_scale_enabled())
 
-    def test_two_point_map_selection_switches_auto_scale_off_and_sets_the_range(self):
-        self._enable()
+    def test_two_point_map_selection_holds_the_range(self):
         x_axis, y_axis = _axes(self.controller)
         grid_z = self.controller._last_display_grids[2]
         p1 = (float(x_axis[5]), float(y_axis[5]))
@@ -196,72 +240,82 @@ class AutoScaleZoomTests(unittest.TestCase):
         self.assertTrue(self.controller.auto_scale_enabled())  # one click is not a selection yet
         self.controller._handle_heatmap_click(*p2)
 
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
+        self.assertFalse(self.controller.auto_scale_enabled())
         self.assertAlmostEqual(self.controller.state.range_min, lo, places=5)
         self.assertAlmostEqual(self.controller.state.range_max, hi, places=5)
 
-    def test_reset_button_switches_auto_scale_off(self):
-        self._enable()
+    def test_reset_button_returns_to_automatic_colours(self):
+        self.controls.range_min_spin.setValue(0.01)
+        self.assertFalse(self.controller.auto_scale_enabled())
 
         self.controls.reset_button.click()
 
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
-
-    def test_full_scale_and_auto_scale_are_mutually_exclusive(self):
-        self._enable()
-        self.controls.full_scale_check.setChecked(True)
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
-        self.assertTrue(self.controls.full_scale_check.isChecked())
-
-        self.controls.auto_scale_check.setChecked(True)
-        self.assertFalse(self.controls.full_scale_check.isChecked())
         self.assertTrue(self.controller.auto_scale_enabled())
-        self.assertEqual(self.controller.state.colorscale_mode, "normal")
+        full_stats = self.controller._last_grids[3]
+        self.assertAlmostEqual(self.controller.state.range_min, full_stats["min"])
 
-    def test_switching_auto_scale_off_restores_the_full_domain_range(self):
-        self._enable()
+    def test_reset_restores_the_full_domain_range_while_zoomed_and_holds_it(self):
         full_stats = self.controller._last_grids[3]
         self._zoom(_window(self.controller, 0.0, 0.5, 0.5, 1.0))
+        self.assertNotEqual(
+            (self.controller.state.range_min, self.controller.state.range_max),
+            (full_stats["min"], full_stats["max"]),
+        )
 
-        self.controls.auto_scale_check.setChecked(False)
+        self.controls.reset_button.click()
 
         self.assertAlmostEqual(self.controller.state.range_min, full_stats["min"])
         self.assertAlmostEqual(self.controller.state.range_max, full_stats["max"])
+        self.assertIsNotNone(self.controller._zoom_window)  # Reset does not touch the zoom
+        # the full range is held ... until the view changes again, when the colours follow it
+        window = _window(self.controller, 0.0, 0.3, 0.0, 0.3)
+        self._zoom(window)
+        lo, hi = self._expected_visible_range(window)
+        self.assertAlmostEqual(self.controller.state.range_min, lo)
 
-    # ---- incompatible modes ------------------------------------------------------------------
-    def test_disabled_in_threshold_mode(self):
-        self._enable()
-        index = self.controls.plot_type_combo.findData("threshold")
-
-        self.controls.plot_type_combo.setCurrentIndex(index)
-
-        self.assertFalse(self.controls.auto_scale_check.isEnabled())
-        self.assertFalse(self.controls.auto_scale_check.isChecked())
+    def test_full_scale_replaces_the_automatic_colours_and_leaving_it_brings_them_back(self):
+        self.controls.full_scale_check.setChecked(True)
         self.assertFalse(self.controller.auto_scale_enabled())
 
-    def test_disabled_for_contour_and_difference_plot_types(self):
+        self.controls.full_scale_check.setChecked(False)
+
+        self.assertTrue(self.controller.auto_scale_enabled())
+
+    def test_unsupported_plot_types_have_no_automatic_colours_and_it_returns_with_heatmap(self):
+        self.controls.plot_type_combo.setCurrentIndex(self.controls.plot_type_combo.findData("threshold"))
+        self.assertFalse(self.controller.auto_scale_enabled())
+
+        self.controls.plot_type_combo.setCurrentIndex(self.controls.plot_type_combo.findData("heatmap"))
+
+        self.assertTrue(self.controller.auto_scale_enabled())
+
+    # ---- incompatible modes ------------------------------------------------------------------
+    def test_not_applied_in_threshold_mode(self):
+        self.controls.plot_type_combo.setCurrentIndex(self.controls.plot_type_combo.findData("threshold"))
+
+        self.assertFalse(self.controller.auto_scale_enabled())
+
+    def test_not_applied_for_contour_and_difference_plot_types(self):
         for key in ("contour_filled", "contour_lines", "difference", "heatmap_contour"):
             index = self.controls.plot_type_combo.findData(key)
             if index < 0:
                 continue
             self.controls.plot_type_combo.setCurrentIndex(index)
-            self.assertFalse(self.controls.auto_scale_check.isEnabled(), key)
+            self.assertFalse(self.controller.auto_scale_enabled(), key)
 
-    def test_stays_enabled_for_heatmap_and_gradient_magnitude(self):
+    def test_applied_for_heatmap_and_gradient_magnitude(self):
         for key in ("heatmap", "gradient_magnitude"):
             self.controls.plot_type_combo.setCurrentIndex(self.controls.plot_type_combo.findData(key))
-            self.assertTrue(self.controls.auto_scale_check.isEnabled(), key)
+            self.assertTrue(self.controller.auto_scale_enabled(), key)
 
-    def test_disabled_with_the_discrete_palette(self):
+    def test_not_applied_with_the_discrete_palette(self):
         from viewer.colorscale import DISCRETE_CUSTOM_PALETTE
 
-        self._enable()
         index = self.controls.palette_combo.findData(DISCRETE_CUSTOM_PALETTE)
         self.assertGreaterEqual(index, 0)
 
         self.controls.palette_combo.setCurrentIndex(index)
 
-        self.assertFalse(self.controls.auto_scale_check.isEnabled())
         self.assertFalse(self.controller.auto_scale_enabled())
 
     # ---- time steps --------------------------------------------------------------------------
@@ -299,13 +353,15 @@ class AutoScaleZoomTests(unittest.TestCase):
 
         self.assertIsNone(self.controller._zoom_window)
 
-    def test_auto_scale_off_keeps_no_stale_zoom_after_a_render(self):
-        self._zoom(_window(self.controller, 0.0, 0.5, 0.5, 1.0))
-        self.assertIsNotNone(self.controller._zoom_window)
+    def test_zoom_survives_a_re_render_while_a_manual_range_is_held(self):
+        self._hold_manual_range()
+        window = _window(self.controller, 0.0, 0.5, 0.5, 1.0)
+        self._zoom(window)
 
         self.controls.file_combo.setCurrentIndex(1)
 
-        self.assertIsNone(self.controller._zoom_window)  # the page reload reset Plotly's view
+        self.assertEqual(self.controller._zoom_window, window)  # kept, and re-applied to the new page
+        self.assertEqual(self.canvas.zoom_window(), window)
 
     # ---- data and animation untouched ---------------------------------------------------------
     def test_underlying_data_is_not_modified_by_zooming(self):
@@ -397,6 +453,11 @@ class CanvasZoomPageTests(unittest.TestCase):
 
         return go.Figure()
 
+    def test_the_toolbar_is_always_visible_not_only_on_hover(self):
+        page_html = self.canvas._build_html(self._figure())
+
+        self.assertIn("displayModeBar: true", page_html)
+
     def test_no_saved_zoom_by_default(self):
         self.canvas.set_zoom_window(None)
 
@@ -404,15 +465,27 @@ class CanvasZoomPageTests(unittest.TestCase):
 
         self.assertIn("const savedZoom = null;", page_html)
 
-    def test_restyle_is_refused_when_the_new_labels_need_a_wider_colorbar(self):
+    def test_longer_labels_widen_the_colorbar_in_place_instead_of_forcing_a_reload(self):
         self.canvas._colorbar_width = 90  # reserved width for short labels
-        self.assertFalse(self.canvas.restyle_color_range(0.0, 1.0e-30))  # "1.0e-30": far wider
-        self.assertFalse(self.canvas.restyle_color_range(1.0, 1.0))  # no valid range
+        widths = []
+        self.canvas.geometry_changed.connect(lambda: widths.append(self.canvas.width()))
 
-    def test_restyle_is_accepted_when_the_new_labels_fit_the_reserved_width(self):
+        self.assertTrue(self.canvas.restyle_color_range(0.0, 1.0e-30))  # "1.0e-30": far wider labels
+
+        self.assertGreater(self.canvas._colorbar_width, 90)
+        self.assertEqual(self.canvas.width(), self.canvas._plot_width + self.canvas._colorbar_width)
+        self.assertEqual(widths, [self.canvas.width()])  # the layout is told once
+
+    def test_shorter_labels_never_shrink_the_reserved_width(self):
         self.canvas._colorbar_width = 400
 
-        self.assertTrue(self.canvas.restyle_color_range(0.0, 1.0e-30))
+        self.assertTrue(self.canvas.restyle_color_range(0.0, 1.0))
+
+        self.assertEqual(self.canvas._colorbar_width, 400)
+
+    def test_invalid_ranges_are_refused_so_the_caller_re_renders(self):
+        self.assertFalse(self.canvas.restyle_color_range(1.0, 1.0))
+        self.assertFalse(self.canvas.restyle_color_range(float("nan"), 1.0))
 
     def test_zoom_event_payload_is_turned_into_a_signal(self):
         received = []
@@ -540,9 +613,45 @@ class PlotlyEventIntegrationTests(unittest.TestCase):
         self.assertEqual(len(data["ticks"]), 5)
         self.assertEqual(self.events, [])  # restyle must not feed back as a zoom event
 
+    def test_wider_labels_widen_the_figure_in_place_and_keep_the_plot_area(self):
+        self._js("window.__sentinel = 'same page'; 1")
+        before = json.loads(self._js(
+            "var g=document.getElementById('heatmapDiv');"
+            "JSON.stringify({w:g._fullLayout.width,mr:g._fullLayout.margin.r,xl:g._fullLayout.xaxis._length,"
+            "yl:g._fullLayout.yaxis._length})"
+        ))
+        self.canvas._colorbar_width = 90
+        self.events.clear()
+
+        self.assertTrue(self.canvas.restyle_color_range(0.0, 1.0e-30))
+        self._settle(700)
+
+        after = json.loads(self._js(
+            "var g=document.getElementById('heatmapDiv');"
+            "JSON.stringify({s:window.__sentinel,w:g._fullLayout.width,mr:g._fullLayout.margin.r,"
+            "xl:g._fullLayout.xaxis._length,yl:g._fullLayout.yaxis._length,zmax:g._fullData[0].zmax})"
+        ))
+        self.assertEqual(after["s"], "same page")  # no reload
+        self.assertEqual(after["mr"], self.canvas._colorbar_width)  # the right margin grew ...
+        self.assertEqual(after["w"], self.canvas._plot_width + self.canvas._colorbar_width)  # ... with the width
+        self.assertAlmostEqual(after["zmax"], 1.0e-30, places=40)
+        self.assertEqual((after["xl"], after["yl"]), (before["xl"], before["yl"]))  # plot area unchanged
+        self.assertEqual(self.events, [])  # width / margin changes are not zoom events
+
+    def test_toolbar_has_zoom_pan_and_home_and_is_not_in_hover_only_mode(self):
+        info = json.loads(self._js(
+            "var m=document.querySelector('.modebar');"
+            "JSON.stringify({cls:m.className,titles:[].map.call(m.querySelectorAll('.modebar-btn'),"
+            "function(b){return b.getAttribute('data-title')})})"
+        ))
+
+        self.assertNotIn("modebar--hover", info["cls"])  # always visible
+        for title in ("Zoom", "Pan", "Zoom in", "Zoom out", "Reset axes"):
+            self.assertIn(title, info["titles"])
+
     def test_reapplied_zoom_after_a_reload_is_not_reported_back(self):
         window = (20.0, 60.0, 30.0, 70.0)
-        self.assertTrue(self._reload(lambda: self.panel.controls_widget.auto_scale_check.setChecked(True)))
+        self.assertTrue(self.panel.controller.auto_scale_enabled())  # always on
         self.panel.controller._zoom_window = window
         self.events.clear()
 
@@ -574,7 +683,7 @@ class PlotlyEventIntegrationTests(unittest.TestCase):
     def test_complete_workflow_zoom_reset_and_time_step_through_the_real_page(self):
         controller = self.panel.controller
         controls = self.panel.controls_widget
-        self.assertTrue(self._reload(lambda: controls.auto_scale_check.setChecked(True)))  # full render
+        self.assertTrue(controller.auto_scale_enabled())  # always on
         full_stats = controller._last_grids[3]
         full = self._page_state()
         self.assertAlmostEqual(full["zmin"], full_stats["min"], places=6)

@@ -77,9 +77,9 @@ class _PhaseFractionRenameDelegate(QStyledItemDelegate):
         return option.palette.text().color()
 
 
-_AUTO_SCALE_TOOLTIP = (
-    "Rescale the colors to the min/max of the visible (zoomed) region.\n"
-    "Switches off when you type a range or select one on the map."
+_COLOR_SCALING_TOOLTIP = (
+    "Colors follow the min/max of the selected region, or of the visible (zoomed) region, automatically.\n"
+    "A range you type or pick with two points is held until you zoom, pan, select a region or press Reset."
 )
 
 
@@ -97,6 +97,7 @@ class PanelControlsWidget(QWidget):
         self.dataset_info = dataset_info
         self._last_trigger = "init"
         self._layout_mode = ""
+        self._region_last_key: tuple[str, int] | None = None  # (mode, width) of the last placement decision
         self._rotation_degrees = 0
         self._selected_rotation_degrees = 0
         self._phase_fraction_keys: list[str] = []
@@ -159,6 +160,7 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.plot_type_combo)
         fit_combo_to_longest_item(self.plot_type_combo)
         self.range_label = QLabel("Range")
+        self.range_label.setToolTip(_COLOR_SCALING_TOOLTIP)
         self.range_label.setObjectName("mutedInfo")
 
         self.range_min_spin = TrimmedDoubleSpinBox()
@@ -192,7 +194,8 @@ class PanelControlsWidget(QWidget):
         self.reset_button.setFixedSize(32, 32)
         self.reset_button.setToolTip("Reset range to data min/max")
 
-        self.click_mode_range_check = ToggleSwitchWidget("Range Selection on Map", checked=True)
+        self.click_mode_range_check = ToggleSwitchWidget("Select Points", checked=True)
+        self.click_mode_range_check.setToolTip("Click two points on the map to set the color range")
         layout.addWidget(self.range_row)
         self.range_values_row = QWidget()
         self.range_values_row.setObjectName("controlsRow")
@@ -220,8 +223,13 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
-        self.auto_scale_check = ToggleSwitchWidget("Auto Scale on Zoom", checked=False)
-        self.auto_scale_check.setToolTip(_AUTO_SCALE_TOOLTIP)
+        self.select_region_check = ToggleSwitchWidget("Select Rectangle", checked=False)
+        self.select_region_check.setToolTip(
+            "On: drag to select a rectangle without zooming (statistics and colors follow it).\n"
+            "Off: drag pans and zoom works as usual. Replaces Select Points, Line Scan and Add Point while on."
+        )
+        self.show_selection_check = ToggleSwitchWidget("Show Rectangle", checked=False)
+        self.show_selection_check.setToolTip("Outline the selected rectangle on the map (the selection is kept either way)")
         self.discrete_band_count = 2
         self.discrete_minus_button = QPushButton("-")
         self.discrete_minus_button.setObjectName("discreteBandButton")
@@ -277,15 +285,24 @@ class PanelControlsWidget(QWidget):
         palette_row_layout.addWidget(self.full_scale_check)
         palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
-        # In compact mode the toggle does not fit beside the range row (it must stay within the narrow
-        # width), so it gets a row of its own; in wide mode it sits in the single range row instead.
-        self.auto_scale_row = QWidget()
-        self.auto_scale_row.setObjectName("controlsRow")
-        self.auto_scale_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.auto_scale_row_layout = QHBoxLayout(self.auto_scale_row)
-        self.auto_scale_row_layout.setContentsMargins(0, 0, 0, 0)
-        self.auto_scale_row_layout.setSpacing(8)
-        layout.addWidget(self.auto_scale_row)
+        # Select Points | Select Rectangle | Show Rectangle: one box, placed on the Range input row when it
+        # has room (labels shorten to fit) and on a line of its own below it only when it does not.
+        self.region_toggles = QWidget()
+        self.region_toggles.setObjectName("controlsRow")
+        toggles_layout = QHBoxLayout(self.region_toggles)
+        toggles_layout.setContentsMargins(0, 0, 0, 0)
+        toggles_layout.setSpacing(6)
+        toggles_layout.addWidget(self.click_mode_range_check)  # "Select Points": two clicks set the range
+        toggles_layout.addWidget(self.select_region_check)
+        toggles_layout.addWidget(self.show_selection_check)
+        self.region_row = QWidget()  # fallback line directly under the Range input
+        self.region_row.setObjectName("controlsRow")
+        self.region_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.region_row_layout = QHBoxLayout(self.region_row)
+        self.region_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.region_row_layout.setSpacing(8)
+        layout.insertWidget(layout.indexOf(self.range_values_row) + 1, self.region_row)
+        self._region_inline = True
         self._sync_discrete_controls()
         self._match_palette_width_to_plot_type()
         self._apply_layout_mode("wide", force=True)
@@ -391,36 +408,33 @@ class PanelControlsWidget(QWidget):
                     f"{widget.objectName() or widget.__class__.__name__}"
                 )
 
-    def _apply_layout_mode(self, mode: str, *, force: bool = False) -> None:
+    def _apply_layout_mode(self, mode: str, *, force: bool = False, inline: bool | None = None) -> None:
         debug_print("PanelControlsWidget._apply_layout_mode called")
-        if mode == self._layout_mode and not force:
+        if inline is None:
+            inline = self._region_inline
+        if mode == self._layout_mode and inline == self._region_inline and not force:
             debug_print(f"PanelControlsWidget layout mode unchanged={mode}")
             self._debug_range_layout("unchanged")
             return
         debug_print(f"PanelControlsWidget changing layout mode from={self._layout_mode} to={mode}")
         self._clear_layout(self.range_row_layout)
         self._clear_layout(self.range_values_row_layout)
-        self._clear_layout(self.auto_scale_row_layout)
+        self._clear_layout(self.region_row_layout)
+        self._region_inline = inline
         if mode == "compact":
             debug_print("PanelControlsWidget applying compact range rows")
-            self.click_mode_range_check.setText("Range")
-            self.click_mode_range_check.setToolTip("Range Selection on Map")
             self.range_row_layout.setSpacing(8)
             self.range_values_row_layout.setSpacing(2)
             self.range_row_layout.addWidget(self.plot_type_combo, 1)
-            self.range_row_layout.addWidget(self.click_mode_range_check)
             self.range_values_row_layout.addWidget(self.range_label)
             self.range_values_row_layout.addWidget(self.range_min_spin, 1)
             self.range_values_row_layout.addWidget(self.range_max_spin, 1)
             self.range_values_row_layout.addWidget(self.reset_button)
+            if inline:
+                self.range_values_row_layout.addWidget(self.region_toggles)  # on the Range input row
             self.range_values_row.show()
-            self.auto_scale_row_layout.addWidget(self.auto_scale_check)
-            self.auto_scale_row_layout.addStretch(1)
-            self.auto_scale_row.show()
         else:
             debug_print("PanelControlsWidget applying wide range row")
-            self.click_mode_range_check.setText("Range Selection on Map")
-            self.click_mode_range_check.setToolTip("")
             self.range_row_layout.setSpacing(8)
             self.range_values_row_layout.setSpacing(8)
             self.range_row_layout.addWidget(self.plot_type_combo)
@@ -428,15 +442,59 @@ class PanelControlsWidget(QWidget):
             self.range_row_layout.addWidget(self.range_min_spin, 1)
             self.range_row_layout.addWidget(self.range_max_spin, 1)
             self.range_row_layout.addWidget(self.reset_button)
-            self.range_row_layout.addWidget(self.auto_scale_check)
-            self.range_row_layout.addWidget(self.click_mode_range_check)
+            if inline:
+                self.range_row_layout.addWidget(self.region_toggles)  # on the Range input row
             self.range_values_row.hide()
-            self.auto_scale_row.hide()
+        if not inline:
+            self.region_row_layout.addWidget(self.region_toggles)
+            self.region_row_layout.addStretch(1)
+        self.region_row.setVisible(not inline)
         self._layout_mode = mode
         self.range_row.updateGeometry()
         self.range_values_row.updateGeometry()
         self.updateGeometry()
         self._debug_range_layout("applied")
+
+    # Label sets for the three region toggles, longest first: Select Points / Select Rectangle / Show Rectangle.
+    _REGION_LABEL_SETS = (
+        ("Select Points", "Select Rectangle", "Show Rectangle"),
+        ("Points", "Rectangle", "Show"),
+        ("Points", "Rect", "Show"),
+    )
+
+    def _set_region_labels(self, labels: tuple[str, str, str]) -> None:
+        for toggle, text in zip(
+            (self.click_mode_range_check, self.select_region_check, self.show_selection_check), labels
+        ):
+            toggle.setText(text)
+
+    def _row_min_width(self) -> int:
+        """Minimum width of whichever row currently holds the Range inputs (and so the toggles)."""
+        layout = self.range_values_row_layout if self._layout_mode == "compact" else self.range_row_layout
+        return layout.minimumSize().width()
+
+    def _place_region_toggles(self, mode: str, width: int) -> None:
+        """Put the toggles on the Range input row, with the longest labels that fit.
+
+        A single wide row that is too narrow falls back to the two-row layout (its Range row is shorter);
+        only when no label set fits on the Range row anywhere do the toggles take a line below it.
+        """
+        if (mode, width) == self._region_last_key:
+            return  # same inputs as last time: nothing to decide again
+        self._region_last_key = (mode, width)
+        margin = 8  # card padding
+        for candidate in (["wide", "compact"] if mode == "wide" else ["compact"]):
+            for labels in self._REGION_LABEL_SETS:
+                self._set_region_labels(labels)
+                self._apply_layout_mode(candidate, force=True, inline=True)
+                if not width or self._row_min_width() <= width - margin:
+                    return
+        self._set_region_labels(self._REGION_LABEL_SETS[1])  # nothing fits inline: own line below Range
+        self._apply_layout_mode(mode, force=True, inline=False)
+        if width and self.region_row_layout.minimumSize().width() > width - margin:
+            self._set_region_labels(self._REGION_LABEL_SETS[2])
+        elif width and width - margin >= 460:
+            self._set_region_labels(self._REGION_LABEL_SETS[0])
 
     def _update_layout_mode_for_width(self, width: int) -> None:
         debug_print("PanelControlsWidget._update_layout_mode_for_width called")
@@ -444,7 +502,7 @@ class PanelControlsWidget(QWidget):
         mode = "compact" if bounded_width and bounded_width < 680 else "wide"
         debug_print(f"PanelControlsWidget current width={bounded_width}")
         debug_print(f"PanelControlsWidget selected layout mode={mode}")
-        self._apply_layout_mode(mode)
+        self._place_region_toggles(mode, bounded_width)
 
     def _debug_range_layout(self, reason: str) -> None:
         debug_print(f"PanelControlsWidget._debug_range_layout reason={reason}")
@@ -483,10 +541,6 @@ class PanelControlsWidget(QWidget):
         self.discrete_minus_button.clicked.connect(lambda *_: self._change_discrete_band_count(-1))
         self.discrete_plus_button.clicked.connect(lambda *_: self._change_discrete_band_count(1))
         self.colorbar_mode_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("colorbar-mode"))
-        # Full Scale and Auto Scale on Zoom are mutually exclusive; switch the other off first (silently)
-        # so the refresh below already sees a consistent state.
-        self.full_scale_check.toggled.connect(lambda checked: checked and self.set_auto_scale_checked(False))
-        self.auto_scale_check.toggled.connect(lambda checked: checked and self._uncheck_full_scale())
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
         for degrees, button in self.rotation_buttons.items():
             button.clicked.connect(lambda _checked=False, value=degrees: self._set_rotation_degrees(value))
@@ -960,27 +1014,17 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
         debug_print("PanelControlsWidget.full_scale_enabled called")
         return self.full_scale_check.isChecked()
 
-    def auto_scale_enabled(self) -> bool:
-        """True when Auto Scale on Zoom is switched on and usable for the current visualization."""
-        return self.auto_scale_check.isChecked() and self.auto_scale_check.isEnabled()
+    def select_region_enabled(self) -> bool:
+        return self.select_region_check.isChecked()
 
-    def set_auto_scale_checked(self, checked: bool) -> None:
-        """Set the Auto Scale toggle without emitting its toggled signal."""
-        self.auto_scale_check.blockSignals(True)
-        self.auto_scale_check.setChecked(bool(checked))
-        self.auto_scale_check.blockSignals(False)
+    def show_selection_enabled(self) -> bool:
+        return self.show_selection_check.isChecked()
 
-    def set_auto_scale_available(self, available: bool, reason: str = "") -> None:
-        """Enable or disable the toggle; a disabled toggle is also switched off."""
-        self.auto_scale_check.setEnabled(bool(available))
-        if not available:
-            self.set_auto_scale_checked(False)
-        self.auto_scale_check.setToolTip(reason or _AUTO_SCALE_TOOLTIP)
-
-    def _uncheck_full_scale(self) -> None:
-        self.full_scale_check.blockSignals(True)
-        self.full_scale_check.setChecked(False)
-        self.full_scale_check.blockSignals(False)
+    def set_select_region_checked(self, checked: bool) -> None:
+        """Set the Select Region toggle without emitting its toggled signal."""
+        self.select_region_check.blockSignals(True)
+        self.select_region_check.setChecked(bool(checked))
+        self.select_region_check.blockSignals(False)
 
     def current_plot_type(self) -> str:
         return self.plot_type_combo.currentData() or "heatmap"

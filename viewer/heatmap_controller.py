@@ -150,6 +150,9 @@ class HeatmapController:
         self._last_scaled_grid = None
         self._zoom_window: visible_range.ZoomWindow | None = None  # current Plotly view; None = full domain
         self._status_prefix = ""
+        self._manual_range = False  # a typed / two-point range is held (see _prepare_auto_scale)
+        self._selection_window: visible_range.ZoomWindow | None = None  # Select Region box, plot coordinates
+        self._last_region_action = "zoom"  # which of selection / zoom the user touched last
         self._histogram_cache: dict | None = None
         self._time_plot_running = False
         self._time_plot_cancel_requested = False
@@ -366,7 +369,10 @@ class HeatmapController:
         self.export_button.clicked.connect(self._export_png)
         self.heatmap_canvas.heatmap_clicked.connect(self._handle_heatmap_click)
         self.heatmap_canvas.zoom_changed.connect(self._on_zoom_changed)
-        self.controls_widget.auto_scale_check.toggled.connect(self._on_auto_scale_toggled)
+        self.heatmap_canvas.region_selected.connect(self._on_region_selected)
+        self.heatmap_canvas.region_cleared.connect(self._on_region_cleared)
+        self.controls_widget.select_region_check.toggled.connect(self._on_select_region_toggled)
+        self.controls_widget.show_selection_check.toggled.connect(self._on_show_selection_toggled)
         self.colorbar_label_edit.editingFinished.connect(lambda *_: self._refresh_from_toolbar("colorbar-label"))
         self.unit_scale_combo.currentIndexChanged.connect(lambda *_: self._refresh_from_toolbar("unit-scale"))
         if self.phase_history_dt_spin is not None:
@@ -517,6 +523,7 @@ class HeatmapController:
             slice_index,
             plot_type=plot_type,
         )
+        stats_scaled = self._stats_from_displayed_grid(stats_scaled, z_grid)
         grid_rows, grid_cols = np.asarray(z_grid).shape[:2]
         debug_print(f"Controller heatmap grid rows={grid_rows}")
         debug_print(f"Controller heatmap grid cols={grid_cols}")
@@ -532,7 +539,7 @@ class HeatmapController:
             or trigger == "plot-type"
         ):
             self._reset_range_from_stats(stats_scaled)
-        elif trigger == "reset":
+        elif trigger in ("reset", "auto-scale-off"):
             self._reset_range_from_stats(stats_scaled)
         else:
             range_min, range_max = self.controls_widget.current_range()
@@ -1486,9 +1493,14 @@ class HeatmapController:
     _AUTO_SCALE_PLOT_TYPES = ("heatmap", "gradient_magnitude")  # single Plotly Heatmap trace
 
     def auto_scale_enabled(self) -> bool:
-        """Auto Scale on Zoom is on, usable in this visualization, and not combined with Full Scale."""
+        """Colours follow the selected / visible region: always, unless a manual range is held, Full Scale
+        is on, or the visualization has no meaningful automatic range (threshold, contours, ...)."""
         debug_print("HeatmapController.auto_scale_enabled called")
-        return self.controls_widget.auto_scale_enabled() and not self.controls_widget.full_scale_enabled()
+        return (
+            not self._manual_range
+            and not self.controls_widget.full_scale_enabled()
+            and self._auto_scale_unavailable_reason() is None
+        )
 
     def _auto_scale_unavailable_reason(self) -> str | None:
         """Why Auto Scale on Zoom cannot be used with the current visualization, or None if it can."""
@@ -1504,25 +1516,27 @@ class HeatmapController:
         return None
 
     def _prepare_auto_scale(self, previous_state, trigger: str) -> None:
-        """Before a refresh: enforce availability, let manual range input win, drop a stale zoom."""
+        """Before a refresh: manual ranges are held, Reset restores the full range, a stale view is dropped."""
         debug_print(f"HeatmapController._prepare_auto_scale trigger={trigger}")
-        reason = self._auto_scale_unavailable_reason()
-        self.controls_widget.set_auto_scale_available(reason is None, reason or "")
-        if trigger in ("range", "range-slider", "range-selection", "reset"):
-            if self.controls_widget.auto_scale_check.isChecked():
-                self.controls_widget.set_auto_scale_checked(False)  # manual limits override Auto Scale
+        if trigger in ("range", "range-slider", "range-selection"):
+            self._manual_range = True  # a typed or two-point range is held until the region changes or Reset
+        elif trigger == "reset":
+            # Reset always restores the full-domain min/max and drops the selected rectangle. A zoom stays, so
+            # the automatic range for it would immediately override Reset: the full range is held until the
+            # view changes again.
+            if self._selection_window is not None:
+                self._selection_window = None
+                self._last_region_action = "zoom"
+                self.heatmap_canvas.set_selection(None, self.controls_widget.show_selection_enabled())
+            self._manual_range = self._zoom_window is not None
         if (
             previous_state.axis != self.state.axis
             or previous_state.rotation_degrees != self.state.rotation_degrees
             or previous_state.dataset_id != self.state.dataset_id
         ):
             self._zoom_window = None  # the plot coordinates changed, so the old window is meaningless
-
-    def _on_auto_scale_toggled(self, checked: bool) -> None:
-        """User switched Auto Scale on (colors follow the saved zoom) or off (full-domain range)."""
-        debug_print(f"HeatmapController._on_auto_scale_toggled checked={checked}")
-        self.controls_widget.set_last_trigger("auto-scale" if checked else "reset")
-        self.refresh_view()
+            self._selection_window = None
+            self.heatmap_canvas.set_selection(None, self.controls_widget.show_selection_enabled())
 
     def _on_zoom_changed(self, x0: float, x1: float, y0: float, y1: float) -> None:
         """Plotly reported a settled zoom, pan or reset; recolour in place when Auto Scale is on."""
@@ -1536,8 +1550,88 @@ class HeatmapController:
         if visible_range.windows_equal(window, self._zoom_window):
             return  # nothing moved; also stops echoes of a view we applied ourselves
         self._zoom_window = window
-        if self.auto_scale_enabled():
+        self._manual_range = False  # the view changed: the colours follow it again
+        self._last_region_action = "zoom" if window is not None else "select"  # a reset hands back to the selection
+        self._refresh_region_outputs()
+
+    # ------------------------------------------------------------------------------------------
+    # Region selection, statistics
+    # ------------------------------------------------------------------------------------------
+    def _active_region(self, x_axis, y_axis) -> visible_range.ZoomWindow | None:
+        """The region that drives the colours: the selected box or the visible zoom window, else None.
+
+        The selected box wins when it is the last thing the user touched (or the only region); the visible
+        zoom window wins when the zoom was touched last or there is no selection. A stored region that does
+        not overlap this domain is ignored, not discarded.
+        """
+        selection = self._selection_window
+        zoom = self._zoom_window
+        if selection is not None and not visible_range.overlaps_domain(selection, x_axis, y_axis):
+            selection = None
+        if zoom is not None and not visible_range.overlaps_domain(zoom, x_axis, y_axis):
+            zoom = self._zoom_window = None  # e.g. a different file with another extent
+        if selection is not None and (zoom is None or self._last_region_action == "select"):
+            return selection
+        return zoom
+
+    def _refresh_region_outputs(self) -> None:
+        """The active region changed: the colours follow it, unless a manual range is held or none applies."""
+        if self.auto_scale_enabled() and self._last_display_grids:
             self._recolor_for_zoom()
+
+    def _on_region_selected(self, x0: float, x1: float, y0: float, y1: float) -> None:
+        """A box was dragged in Select Region mode: store it and update statistics and colours."""
+        debug_print(f"HeatmapController._on_region_selected {(x0, x1, y0, y1)}")
+        window = visible_range.normalize_window(x0, x1, y0, y1)
+        if window is None:
+            return
+        self._selection_window = window
+        self._manual_range = False
+        self._last_region_action = "select"
+        self.heatmap_canvas.set_selection(window, self.controls_widget.show_selection_enabled())
+        self._refresh_region_outputs()
+
+    def _on_region_cleared(self) -> None:
+        """Drop the selected rectangle (Reset does this): colours fall back to the zoom / full domain."""
+        debug_print("HeatmapController._on_region_cleared called")
+        if self._selection_window is None:
+            return
+        self._selection_window = None
+        self._manual_range = False
+        self._last_region_action = "zoom"
+        self.heatmap_canvas.set_selection(None, self.controls_widget.show_selection_enabled())
+        self._refresh_region_outputs()
+
+    def _on_show_selection_toggled(self, checked: bool) -> None:
+        """Show or hide the outline only; the region, colours and statistics are untouched."""
+        debug_print(f"HeatmapController._on_show_selection_toggled checked={checked}")
+        self.heatmap_canvas.set_selection(self._selection_window, checked)
+
+    def _on_select_region_toggled(self, checked: bool) -> None:
+        """Select Region on: drag selects without zooming (clicks are unavailable, so click modes go off)."""
+        debug_print(f"HeatmapController._on_select_region_toggled checked={checked}")
+        self.state.click_count = 0
+        self.state.first_click = None
+        if checked:
+            self._disable_time_plot_pick_mode("select-region")
+            for check in (self.controls_widget.click_mode_range_check, self.line_mode_check):
+                check.blockSignals(True)
+                check.setChecked(False)
+                check.blockSignals(False)
+            self.state.click_mode = "none"
+            self.heatmap_canvas.set_drag_mode("select")
+        else:
+            self.heatmap_canvas.set_drag_mode("pan")
+            self.controls_widget.click_mode_range_check.blockSignals(True)
+            self.controls_widget.click_mode_range_check.setChecked(True)  # back to the default two-point mode
+            self.controls_widget.click_mode_range_check.blockSignals(False)
+            self.state.click_mode = "range"
+
+    def _leave_select_region_mode(self) -> None:
+        """A click-based mode was switched on: Select Region (which swallows clicks) must go off."""
+        if self.controls_widget.select_region_enabled():
+            self.controls_widget.set_select_region_checked(False)
+            self.heatmap_canvas.set_drag_mode("pan")
 
     def _range_status_message(self) -> str:
         return f"{self._status_prefix}min={self.state.range_min:.4g} | max={self.state.range_max:.4g}"
@@ -1569,9 +1663,7 @@ class HeatmapController:
         """
         debug_print(f"HeatmapController._apply_auto_range zoom window={self._zoom_window}")
         x_axis, y_axis = Heatmap2DOrientation.plot_axes(x_grid, y_grid, z_grid)
-        window = self._zoom_window
-        if window is not None and not visible_range.overlaps_domain(window, x_axis, y_axis):
-            window = self._zoom_window = None  # e.g. a different file with another extent
+        window = self._active_region(x_axis, y_axis)
         if window is None:
             stats = self._last_grids[3] if self._last_grids else None
             span = (float(stats["min"]), float(stats["max"])) if stats else None
@@ -1586,6 +1678,19 @@ class HeatmapController:
         self.state.threshold = (lo + hi) / 2
         self.controls_widget.set_range_values(lo, hi)
         return True
+
+    @staticmethod
+    def _stats_from_displayed_grid(stats: dict[str, float], z_grid) -> dict[str, float]:
+        """min / max of the heatmap that is drawn, not of the raw dataset.
+
+        The reader's statistics cover every raw value (a whole 3D volume, extremes the resampled slice never
+        shows). The full-view colour range (start, Reset, zoom out, Home) must be the drawn heatmap's min/max.
+        """
+        values = np.asarray(z_grid, dtype=float)
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            return stats
+        return {**stats, "min": float(finite.min()), "max": float(finite.max())}
 
     def _reset_range_from_stats(self, stats_scaled: dict[str, float]) -> None:
         """Reset the color range slider and state bounds to the data's actual min/max values."""
@@ -1639,9 +1744,8 @@ class HeatmapController:
         if auto_scale:
             # Time-step changes land here too: the saved zoom is applied to the new file's data.
             self._apply_auto_range(display.x, display.y, display.z)
-        else:
-            self._zoom_window = None  # a page reload resets Plotly's view, so no zoom is kept
-        self.heatmap_canvas.set_zoom_window(self._zoom_window if auto_scale else None)
+        # The zoom (and the selection outline) survive the page reload, so time steps keep the same view.
+        self.heatmap_canvas.set_zoom_window(self._zoom_window)
         self.state.auto_scale_zoom = auto_scale
         debug_print("HeatmapController._render_heatmap called")
         if self.state.palette == DISCRETE_CUSTOM_PALETTE:
@@ -2054,6 +2158,7 @@ class HeatmapController:
         debug_print("HeatmapController._on_line_mode_toggled called")
         debug_print(f"HeatmapController line mode checked={checked}")
         if checked:
+            self._leave_select_region_mode()
             self._disable_time_plot_pick_mode("line-mode-selected")
             self.controls_widget.click_mode_range_check.blockSignals(True)
             self.controls_widget.click_mode_range_check.setChecked(False)
@@ -2069,6 +2174,7 @@ class HeatmapController:
         debug_print("HeatmapController._on_range_mode_toggled called")
         debug_print(f"HeatmapController range mode checked={checked}")
         if checked:
+            self._leave_select_region_mode()
             self._disable_time_plot_pick_mode("range-mode-selected")
             self.line_mode_check.blockSignals(True)
             self.line_mode_check.setChecked(False)
@@ -2151,6 +2257,8 @@ class HeatmapController:
         """Toggle heatmap point picking for Plot Over Time."""
         debug_print("HeatmapController._on_time_plot_add_point_toggled called")
         debug_print(f"PlotOverTime add point toggled={checked}")
+        if checked:
+            self._leave_select_region_mode()
         self._set_time_plot_add_point_button_text(checked)
         self.state.time_plot_pick_mode = bool(checked)
         self.state.click_count = 0
@@ -2904,6 +3012,7 @@ class HeatmapController:
             "plot_type": plot_type,
             "phase_fraction_overlays": phase_fraction_overlays,
             "vector_overlay": vector_overlay,
+            "selection_rect": self._selection_window if self.controls_widget.show_selection_enabled() else None,
         }
         debug_print(f"HeatmapController export payload final shape={payload['z_grid'].shape}")
         debug_print(f"HeatmapController export payload colorbar_label={colorbar_label}")
