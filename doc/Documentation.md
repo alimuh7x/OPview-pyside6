@@ -177,7 +177,7 @@ Use **Single View** for focused analysis of one dataset panel at a time.
 - **Settings** panel: collapse it with the toggle to give the heatmap more room; it shows as a rotated **Settings** rail when collapsed.
 - **Unconfigured arrays**: scalar, vector norm, and vector component arrays that have no predefined entry are listed automatically in **Select Field**.
 - **Plot types**: see the plot type table above.
-- **Unit scale**: `Raw`, `% ×100`, `M ÷1e6`, and `G ÷1e9` rescale displayed values. The colorbar title shows the unit (for example `[MPa]`).
+- **Unit conversion (from → to)**: two dropdowns next to the colorbar label. *From* follows the data (`Mega (M)` for stresses and CRSS, which are in MPa; a field with no unit offers every prefix and `percent`); pick another if the data is in a different scale. *To* shows the same scale as *from* without the unit chosen there (`—` for no conversion, then `milli`, `base`, `kilo`, ...), so you can go from kilo to base, milli to Mega and so on. The heatmap, colorbar, line scan, histogram and PNG export all use the converted values, and the colorbar title shows the *to* unit. Choosing another scalar resets the pair to that scalar's own unit. Temperature (`K`, `°C`) needs an offset and is only available in Custom Graph.
 
 ![Unit conversion](images/single_view_unit_conversion.png)
 - **Slice**: for 3D data choose the slice axis (`X`, `Y`, `Z`) and move the slice index.
@@ -252,7 +252,7 @@ Use **Multi View** when you need direct visual comparison across multiple select
 
 ### Layout Behavior
 - Files are added one at a time with **Select file to add**; each file gets its own heatmap and a shared colorbar.
-- Use the unit **Conversion** (`Raw`, `% x100`, `MPa /1e6`, `GPa /1e9`) and the **Label:** field to adjust the displayed units and colorbar title.
+- Use the unit **Conversion** (*from* → *to* dropdowns, as in Single View) and the **Label:** field to adjust the displayed units and colorbar title. Multi View and Multi Property show the stored values (stress and CRSS are in Pa), so *from* reads `base`; choose `Mega (M)` in *to* to see MPa or `Giga (G)` for GPa. The colorbar title shows the unit you chose.
 - Vector arrays can be shown as arrows with the vector toggle.
 - Line scan (with **Direction:**), histogram (with **Number of Bins**), and rotation controls apply to the comparison. Each file gets its own colour in the line scan and histogram.
 
@@ -277,7 +277,7 @@ Use **Multi Property** to view several properties of a single file side by side,
 2. In **ADD PANEL**, select a dataset. A new tab opens for it.
 3. Choose **Project** and **Select file**.
 4. Open the **Add Property** dropdown and tick the properties to show (one panel per property), or click **Add All** to add every property in the file.
-5. For each property, adjust **Range**, **palette**, plot type, and unit scale (`Raw`, `% x100`, `MPa /1e6`, `GPa /1e9`).
+5. For each property, adjust **Range**, **palette**, plot type, and the unit conversion (*from* → *to*). One conversion applies to all properties; *from* follows the first selected property's unit.
 6. Use the discrete palette **+** / **-** buttons and **Bar** / **Boxes** legend mode for banded data.
 7. Use **Reset** (selected property) or **Reset All**; **Clear** removes all properties.
 8. Click **Export PNG** to save the combined view.
@@ -300,12 +300,22 @@ Use **Custom Graph** to analyze `TextData` numerically and build multi-series tr
 4. In the graph tab, choose **Project**, **Folder**, and **Text File**, then click **Add To Graph**.
 5. In **Data Sources:**, select columns to plot from the added file sections.
 6. Configure graph settings in the right **Settings** area:
-   - **X-Axis**: choose **Column** and edit **Title**.
+   - **X-Axis**: choose **Column** and edit **Title**. The X column defaults to a `Time` column when the file has one.
    - **Display**: set **Legend Pos:**, toggle **Legend** / **Grid**, choose trace mode, and choose line style.
-   - **Y-Axis**: edit Y1 and Y2 axis titles.
+   - **Y-Axis**: edit Y1 and Y2 axis titles. Titles are filled in automatically from the plotted columns and their units (for example `Sigma_xx (MPa)` or `Sigma_xx, Mises`); type your own to keep it, or clear the field to return to automatic.
    - **Column Settings**: set legend labels, trace color, unit conversion, and assign each selected column to `Y1` or `Y2`.
+   - Every legend and axis-title field has a small **σ** button: click it to insert Greek letters, math signs or SI units (for example **σ**, **ε**, **N/m²**) at the cursor.
 7. Interact directly with the graph (zoom/pan/hover) and repeat adjustments until the plot is final.
 8. Optionally open the **reveal animation** from the graph toolbar (see below).
+
+### Supported text files
+Files are read with automatic detection, so most exports load without changes:
+- **Delimiters**: spaces, tabs, commas or semicolons; decimal commas (`1,5`) are understood.
+- **Header**: the first text line holds the column names. A commented header (`# time stress`) also works, and a file with no header at all gets the names `Column 1`, `Column 2`, ...
+- **Comments**: lines starting with `#`, `%` or `//` are ignored.
+- **Units row**: a row of units under the header (`[s] [Pa]`) is not plotted as data; the units are used in the axis titles.
+- **Ragged rows** are padded with empty values, duplicate column names are numbered (`Time`, `Time_2`), and columns without any numbers are skipped.
+- If a file cannot be loaded, the file section says why (for example, no numeric columns, or a single line of numbers without a header).
 
 ### Controls and Outcomes
 - **+** tab: creates an empty graph workspace.
@@ -319,7 +329,13 @@ Use **Custom Graph** to analyze `TextData` numerically and build multi-series tr
 - **Legend** / **Grid** toggles: show/hide legend and grid lines.
 - **Trace:** renders lines, markers, or lines plus sampled markers.
 - **Style:** changes the line dash pattern.
-- **Column Settings**: routes each trace to an axis, updates label text, chooses line color, and applies conversion (`As-is`, `%`, `MPa`, `GPa`, or `Log10`).
+- **Column Settings**: routes each trace to an axis, updates label text, chooses line color, and applies a conversion.
+
+  **Conversions.** Each column has two dropdowns, **from** and **to**. *From* is the unit the data is in the file; it is pre-filled from the file's units row when there is one (for example `MPa`), otherwise pick it. *To* lists the units of the same kind (`MPa` to `GPa`, `kN` to `MN`, `J` to `kJ`, `s` to `min`, `K` to `°C`, `-` to `%`, ...). Leave *to* on the same unit for no change. The X axis has the same two dropdowns next to **X Convert**.
+
+  **Units.** *From* and *to* name scales, not units. The unit you choose in *from* is not listed again in *to*; *to* starts on `—`, which means no conversion, so choose `—` to undo a conversion. The names are `milli (m)`, `base`, `kilo (k)`, `Mega (M)`, `Giga (G)`, and so on, from small to large, so you can go from kilo to base or milli to Mega. The unit itself (Pa, m, N, ...) comes from the data and is not repeated; the converted unit appears in the axis title (`MPa`). The scale depends on the unit: pressure `milli` to `Giga`; length `nano` to `kilo` (with `centi`); force, energy and power `milli` to `Giga`; mass `micro` to `kilo`; time `milli`, `base`, `minute`, `hour`, `day`; temperature `Kelvin`, `Celsius`. When a file gives **no unit**, the dropdowns offer every prefix plus `percent`, and `s`, `K`, `°C` at the end (seconds and temperature): pick one to say what the data is (for example `s` for a Time column), then *to* shows the scale of that unit without it (`milli`, `minute`, `hour`, `day` for seconds). The *from* list itself does not change while you pick from it; choose `base` again to go back to data with no unit. *Custom* is the last entry of *from*. Any other SI prefix in a file's units row (`TPa`, `dm`, `ns`) also converts.
+
+  **Custom formulas.** The last entry of the *from* dropdown is **Custom**. It opens the **Formula Editor**, a light rounded window you can drag by its header and resize from its edges. Write the formula in the large multiline editor, which colours functions, columns and numbers. The first button carries the name of the column being converted; click it to insert that column (`Stress / 1000`). The other buttons insert operators (`+ - * / ^ ( )`) and functions (`sqrt`, `abs`, `log10`, `ln`, `exp`, `pi`) followed by a space; a function button wraps selected text. Other columns of the same file can be typed by name, with names that contain spaces or symbols in square brackets (`Stress * Time`, `[Epsilon xx]`). Formulas written with `x` for the column still work. The preview shows example values or the reason a formula is invalid; **Apply Formula** (Ctrl+Enter) is enabled only for a valid formula. An optional unit label appears in the axis title. Choose Custom again to edit the formula, or choose a unit to go back to a unit conversion.
 
 ### Reveal Animation
 The animation dialog reveals every trace from left to right. Use play, pause, stop, the frame slider, and the FPS selector to preview it. Axis ranges stay fixed to the final data range. Click **Export MP4** to save the animation (requires `ffmpeg`). The graph itself is not modified.

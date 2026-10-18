@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QApplication, QComboBox
+from PySide6.QtWidgets import QApplication, QComboBox, QStyle, QStyledItemDelegate
 
 from app.debug import debug_print
 
@@ -47,6 +47,22 @@ def compute_combo_popup_width(combo: QComboBox, *, max_width: int | None = None)
         computed = min(computed, cap)
     debug_print(f"combo computed popup width={computed}")
     return int(computed)
+
+
+class _NoFocusRectDelegate(QStyledItemDelegate):
+    """Item delegate that never draws the focus rectangle around the current row."""
+
+    def initStyleOption(self, option, index) -> None:
+        super().initStyleOption(option, index)
+        option.state &= ~QStyle.StateFlag.State_HasFocus
+
+
+def hide_popup_focus_outline(combo: QComboBox) -> None:
+    """Remove the outline box around the current item in a combo's dropdown list."""
+    view = combo.view()
+    if isinstance(view.itemDelegate(), _NoFocusRectDelegate):
+        return
+    view.setItemDelegate(_NoFocusRectDelegate(view))
 
 
 def update_combo_popup_width(combo: QComboBox, *, max_width: int | None = None) -> int:

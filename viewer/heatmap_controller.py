@@ -496,6 +496,8 @@ class HeatmapController:
         self.state.rotation_degrees           = self.controls_widget.current_rotation_degrees()
         self.state.scale                      = scalar_def.get("scale", 1.0) or 1.0
         self.state.units                      = scalar_def.get("units")
+        if hasattr(self.unit_scale_combo, "set_native_unit"):
+            self.unit_scale_combo.set_native_unit(self.state.units)  # From follows the scalar's own unit
         self.state.colorscale_mode            = "dynamic" if self.controls_widget.full_scale_enabled() else "normal"
         self.state.line_overlay_visible       = self.show_line_check.isChecked()
         self.state.line_scan_direction        = self.direction_selector.current_line_scan_direction()

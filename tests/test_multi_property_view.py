@@ -979,18 +979,17 @@ class MultiPropertyViewTests(unittest.TestCase):
         self.assertEqual(panel._rotation_degrees, 270)
         self.assertTrue(panel.rotation_buttons[90].isChecked())
 
-    def test_multi_property_has_unit_conversion_combo_like_multiview(self):
+    def test_multi_property_has_unit_conversion_from_to_control_like_multiview(self):
+        from utils.unit_conversion_control import UnitConversionControl
+
         panel = MultiPropertyPanel({"available_projects": []})
         controls_card = panel.layout().itemAt(0).widget()
         controls_layout = controls_card.layout()
         range_layout = controls_layout.itemAt(1).widget().layout()
 
         self.assertIs(range_layout.itemAt(6).widget(), panel.unit_scale_combo)
-        self.assertEqual(panel.unit_scale_combo.itemText(0), "Raw")
-        self.assertEqual(panel.unit_scale_combo.itemData(0), (1.0, ""))
-        self.assertEqual(panel.unit_scale_combo.itemData(1), (100.0, "%"))
-        self.assertEqual(panel.unit_scale_combo.itemData(2), (1e-6, "MPa"))
-        self.assertEqual(panel.unit_scale_combo.itemData(3), (1e-9, "GPa"))
+        self.assertIsInstance(panel.unit_scale_combo, UnitConversionControl)
+        self.assertEqual(panel.unit_scale_combo.currentData(), (1.0, ""))
 
     def test_multi_property_has_analysis_graphs_like_multiview(self):
         panel = MultiPropertyPanel({"available_projects": []})

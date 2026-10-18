@@ -589,10 +589,11 @@ class HeatmapCanvas(QWidget):
         if line_overlay:
             debug_print(f"HeatmapCanvas export drawing line overlay={line_overlay}")
             orientation, value = line_overlay
+            guide_points = self._export_font_points(PlotStyle.GUIDE_LINE_WIDTH, dpi, layout["pixel_scale"])
             if orientation == "horizontal":
-                ax.axhline(value, color="#c50623", linewidth=PlotStyle.GUIDE_LINE_WIDTH, linestyle="--")
+                ax.axhline(value, color="#c50623", linewidth=guide_points, linestyle="--")
             else:
-                ax.axvline(value, color="#c50623", linewidth=PlotStyle.GUIDE_LINE_WIDTH, linestyle="--")
+                ax.axvline(value, color="#c50623", linewidth=guide_points, linestyle="--")
         for point in payload.get("time_plot_points") or []:
             debug_print(f"HeatmapCanvas export drawing time point={point}")
             ax.scatter(

@@ -480,7 +480,8 @@ class AppWidthConstraintTests(unittest.TestCase):
         self.assertGreaterEqual(panel.phase_history_dt_spin.width(), 120)
         self.assertGreaterEqual(panel.colorbar_label_edit.minimumWidth(), 300)
         self.assertGreaterEqual(panel.phase_history_time_unit_combo.width(), 120)
-        self.assertLessEqual(panel.unit_scale_combo.width(), 86)
+        self.assertLessEqual(panel.unit_scale_combo.from_combo.maximumWidth(), 130)
+        self.assertEqual(panel.unit_scale_combo.from_combo.maximumWidth(), panel.unit_scale_combo.to_combo.maximumWidth())
 
     def test_panel_widget_keeps_analysis_toolbar_compact(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})

@@ -210,7 +210,7 @@ def _draw_cell(
         int(width * _COLORBAR_SPAN) / sheet_width,
         _BAR_THICKNESS_PX / sheet_height,
     ])
-    mappable = _draw_property(heatmap_ax, payload)
+    mappable = _draw_property(heatmap_ax, payload, dpi)
     colorbar = figure.colorbar(mappable, cax=colorbar_ax, orientation="horizontal")
     ticks = [payload["vmin"], payload["vmin"] + (payload["vmax"] - payload["vmin"]) * 0.5, payload["vmax"]]
     colorbar.set_ticks(ticks)
@@ -232,7 +232,7 @@ def _draw_cell(
     debug_print("MultiPropertyExport colorbar drawn")
 
 
-def _draw_property(ax, payload: dict):
+def _draw_property(ax, payload: dict, dpi: int):
     debug_print("MultiPropertyExport._draw_property called")
     z_grid = np.asarray(payload["z_grid"], dtype=float)
     x_values, y_values = Heatmap2DOrientation.plot_axes(payload["x_grid"], payload["y_grid"], z_grid)
@@ -275,10 +275,11 @@ def _draw_property(ax, payload: dict):
     line_overlay = payload.get("line_overlay")
     if line_overlay:
         direction, value = line_overlay
+        guide_points = _px_to_pt(PlotStyle.GUIDE_LINE_WIDTH, dpi)
         if direction == "horizontal":
-            ax.axhline(value, color="#c50623", linewidth=PlotStyle.GUIDE_LINE_WIDTH, linestyle="--")
+            ax.axhline(value, color="#c50623", linewidth=guide_points, linestyle="--")
         else:
-            ax.axvline(value, color="#c50623", linewidth=PlotStyle.GUIDE_LINE_WIDTH, linestyle="--")
+            ax.axvline(value, color="#c50623", linewidth=guide_points, linestyle="--")
         debug_print(f"MultiPropertyExport line overlay direction={direction}")
     ax.set_axis_off()
     return mappable

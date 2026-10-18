@@ -13,6 +13,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from config import units
 from data.text_sources import GenericTextDataSource
 from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
@@ -20,6 +21,12 @@ from viewer.plot_style import PlotStyle
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 _GRAPH_WIDTH = 800
 _GRAPH_HEIGHT = 620
+_GREEK_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "STIXTwoText-Italic.ttf"
+# Greek letters (and µ) come from the bundled serif italic face; everything else falls through to the next family.
+_GREEK_FONT_FACE = (
+    "@font-face{font-family:'" + PlotStyle.GREEK_FONT_FAMILY + "';font-style:normal;font-weight:100 900;"
+    f"src:url('{_GREEK_FONT_PATH.as_uri()}') format('truetype');unicode-range:U+0370-03FF,U+00B5;}}"
+)
 
 
 class GraphCanvas(QWidget):
@@ -94,6 +101,7 @@ class GraphCanvas(QWidget):
         right_margin = 220 if legend_position == "right-outside" else 82
         figure = go.Figure()
         self._last_trace_count = 0
+        any_legend_visible = False
 
         if not files:
             debug_print("GraphCanvas._build_figure no files")
@@ -114,10 +122,10 @@ class GraphCanvas(QWidget):
             debug_print(f"GraphCanvas._build_figure fallback x column from={x_axis_column}")
             x_axis_column = available_x_columns[0]
         raw_x = np.asarray(x_source.series(x_axis_column), dtype=float)
-        x_conversion = state.get("x_axis_conversion", "as-is")
-        x_data = self._apply_x_conversion(raw_x, x_conversion)
+        x_columns = x_source.dataframe_dict()
+        x_data = self.x_transform(state, tuple(x_columns)).apply(raw_x, x_columns)
         debug_print(f"GraphCanvas._build_figure x_axis_column={x_axis_column} points={len(x_data)}")
-        debug_print(f"GraphCanvas._build_figure x_conversion={x_conversion}")
+        debug_print(f"GraphCanvas._build_figure x_conversion={state.get('x_axis_conversion', 'as-is')}")
         debug_print(f"GraphCanvas._build_figure raw_x_sample={raw_x[:3].tolist()}")
         debug_print(f"GraphCanvas._build_figure converted_x_sample={x_data[:3].tolist()}")
 
@@ -144,12 +152,15 @@ class GraphCanvas(QWidget):
                     continue
                 settings = column_settings.get(file_path, {}).get(column, {})
                 yaxis_side = settings.get("yaxis", "y1")
-                legend_label = settings.get("legend", column) or column
-                conversion = settings.get("conversion", "as-is")
+                raw_legend = settings.get("legend", column)
+                legend_visible = bool(str(raw_legend).strip())
+                legend_label = str(raw_legend) if legend_visible else column
+                any_legend_visible = any_legend_visible or legend_visible
                 yaxis = "y2" if yaxis_side == "y2" else "y"
                 raw_y = np.asarray(y_data, dtype=float)
-                converted_y = self._apply_conversion(raw_y, conversion)
-                debug_print(f"GraphCanvas._build_figure conversion column={column} conversion={conversion}")
+                y_columns = source.dataframe_dict()
+                converted_y = self.column_transform(settings, tuple(y_columns)).apply(raw_y, y_columns)
+                debug_print(f"GraphCanvas._build_figure conversion column={column} conversion={settings.get('conversion', 'as-is')}")
                 debug_print(f"GraphCanvas._build_figure raw_y_sample={raw_y[:3].tolist()}")
                 debug_print(f"GraphCanvas._build_figure converted_y_sample={converted_y[:3].tolist()}")
                 plotted_x_values.extend(float(value) for value in x_data if np.isfinite(value))
@@ -161,6 +172,7 @@ class GraphCanvas(QWidget):
                     trace_mode=trace_mode,
                     line_style=line_style,
                     legend_label=legend_label,
+                    legend_visible=legend_visible,
                     yaxis=yaxis,
                     color=color,
                     series_index=color_index,
@@ -172,11 +184,11 @@ class GraphCanvas(QWidget):
         figure.update_layout(
             height=_GRAPH_HEIGHT,
             width=self._graph_width,
-            margin=dict(l=82, r=right_margin, t=26, b=70),
+            margin=dict(l=82, r=right_margin, t=70, b=80),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
-            showlegend=show_legend,
+            showlegend=show_legend and any_legend_visible,
             legend=self._legend_config(legend_position),
             xaxis=dict(
                 title=dict(text=state.get("x_axis_title") or x_axis_column or "Time", font=PlotStyle.graph_axis_title_font()),
@@ -255,6 +267,7 @@ class GraphCanvas(QWidget):
         trace_mode: str,
         line_style: str,
         legend_label: str,
+        legend_visible: bool,
         yaxis: str,
         color: str,
         series_index: int,
@@ -270,6 +283,7 @@ class GraphCanvas(QWidget):
                     y=y_values,
                     mode="lines",
                     name=legend_label,
+                    showlegend=legend_visible,
                     yaxis=yaxis,
                     line=PlotStyle.trace_line(color=color, dash=line_style),
                 )
@@ -297,6 +311,7 @@ class GraphCanvas(QWidget):
                 y=[y_values[index] for index in marker_indices],
                 mode=trace_mode,
                 name=legend_label,
+                showlegend=legend_visible,
                 yaxis=yaxis,
                 line=PlotStyle.trace_line(color=color, dash=line_style),
                 marker=PlotStyle.marker_style(series_index, color=color),
@@ -339,111 +354,50 @@ class GraphCanvas(QWidget):
         debug_print("GraphCanvas._publication_axis_config complete")
         return config
 
+    @staticmethod
+    def column_transform(settings: dict, column_names=()) -> units.Transform:
+        """The conversion of one Y column: its target (or custom factor/offset) from its source unit."""
+        return units.resolve_transform(
+            settings.get("conversion", "as-is"),
+            source_unit=settings.get("source_unit", ""),
+            factor=settings.get("factor"),
+            offset=settings.get("offset"),
+            custom_unit=settings.get("custom_unit", ""),
+            formula=settings.get("formula", ""),
+            column_names=column_names,
+        )
+
+    @staticmethod
+    def x_transform(state: dict, column_names=()) -> units.Transform:
+        """The conversion of the X axis column."""
+        return units.resolve_transform(
+            state.get("x_axis_conversion", "as-is"),
+            source_unit=state.get("x_axis_source_unit", ""),
+            factor=state.get("x_axis_factor"),
+            offset=state.get("x_axis_offset"),
+            custom_unit=state.get("x_axis_custom_unit", ""),
+            formula=state.get("x_axis_formula", ""),
+            column_names=column_names,
+        )
+
     def _apply_conversion(self, values: np.ndarray, conversion: str | None) -> np.ndarray:
-        normalized = self._normalize_conversion(conversion)
-        if normalized == "log10":
-            return self._log10_values(values)
-        return np.asarray(values, dtype=float) * self._conversion_multiplier(normalized)
+        return units.resolve_transform(conversion).apply(values)
 
     def _apply_x_conversion(self, values: np.ndarray, conversion: str | None) -> np.ndarray:
-        normalized = self._normalize_x_conversion(conversion)
-        if normalized == "log10":
-            return self._log10_values(values)
-        return np.asarray(values, dtype=float) * self._x_conversion_multiplier(normalized)
-
-    def _log10_values(self, values: np.ndarray) -> np.ndarray:
-        data = np.asarray(values, dtype=float)
-        converted = np.full(data.shape, np.nan, dtype=float)
-        positive = data > 0
-        converted[positive] = np.log10(data[positive])
-        return converted
+        return units.resolve_transform(conversion).apply(values)
 
     def _conversion_multiplier(self, conversion: str) -> float:
-        debug_print(f"GraphCanvas._conversion_multiplier conversion={conversion}")
-        normalized = self._normalize_conversion(conversion)
-        debug_print(f"GraphCanvas._conversion_multiplier normalized={normalized}")
-        multipliers = {
-            "as-is": 1.0,
-            "percent": 100.0,
-            "mpa": 1e-6,
-            "gpa": 1e-9,
-            "log10": 1.0,
-        }
-        multiplier = multipliers.get(normalized, 1.0)
-        debug_print(f"GraphCanvas._conversion_multiplier multiplier={multiplier}")
-        return multiplier
+        """Factor of a conversion when no source unit is known (legacy keys assume Pa / fraction / s)."""
+        return units.resolve_transform(conversion).a
 
     def _x_conversion_multiplier(self, conversion: str) -> float:
-        debug_print(f"GraphCanvas._x_conversion_multiplier conversion={conversion}")
-        normalized = self._normalize_x_conversion(conversion)
-        debug_print(f"GraphCanvas._x_conversion_multiplier normalized={normalized}")
-        multipliers = {
-            "as-is": 1.0,
-            "percent": 100.0,
-            "sec-to-min": 1.0 / 60.0,
-            "sec-to-hour": 1.0 / 3600.0,
-            "log10": 1.0,
-        }
-        multiplier = multipliers.get(normalized, 1.0)
-        debug_print(f"GraphCanvas._x_conversion_multiplier multiplier={multiplier}")
-        return multiplier
-
-    def _normalize_x_conversion(self, conversion: str | None) -> str:
-        debug_print(f"GraphCanvas._normalize_x_conversion conversion={conversion}")
-        value = str(conversion or "as-is").strip().lower()
-        debug_print(f"GraphCanvas._normalize_x_conversion value={value}")
-        aliases = {
-            "": "as-is",
-            "as is": "as-is",
-            "as-is": "as-is",
-            "raw": "as-is",
-            "%": "percent",
-            "percent": "percent",
-            "percentage": "percent",
-            "sec": "as-is",
-            "s": "as-is",
-            "seconds": "as-is",
-            "sec -> min": "sec-to-min",
-            "sec-to-min": "sec-to-min",
-            "seconds to minutes": "sec-to-min",
-            "min": "sec-to-min",
-            "minutes": "sec-to-min",
-            "sec -> hour": "sec-to-hour",
-            "sec-to-hour": "sec-to-hour",
-            "seconds to hours": "sec-to-hour",
-            "hour": "sec-to-hour",
-            "hours": "sec-to-hour",
-            "log": "log10",
-            "log10": "log10",
-            "base 10 log": "log10",
-            "base-10 log": "log10",
-        }
-        normalized = aliases.get(value, "as-is")
-        debug_print(f"GraphCanvas._normalize_x_conversion normalized={normalized}")
-        return normalized
+        return units.resolve_transform(conversion).a
 
     def _normalize_conversion(self, conversion: str | None) -> str:
-        debug_print(f"GraphCanvas._normalize_conversion conversion={conversion}")
-        value = str(conversion or "as-is").strip().lower()
-        debug_print(f"GraphCanvas._normalize_conversion value={value}")
-        aliases = {
-            "": "as-is",
-            "as is": "as-is",
-            "as-is": "as-is",
-            "raw": "as-is",
-            "%": "percent",
-            "percent": "percent",
-            "percentage": "percent",
-            "mpa": "mpa",
-            "gpa": "gpa",
-            "log": "log10",
-            "log10": "log10",
-            "base 10 log": "log10",
-            "base-10 log": "log10",
-        }
-        normalized = aliases.get(value, "as-is")
-        debug_print(f"GraphCanvas._normalize_conversion normalized={normalized}")
-        return normalized
+        return units.normalize_conversion(conversion)
+
+    def _normalize_x_conversion(self, conversion: str | None) -> str:
+        return units.normalize_conversion(conversion)
 
     def _legend_config(self, position: str) -> dict[str, Any]:
         debug_print(f"GraphCanvas._legend_config position={position}")
@@ -479,7 +433,7 @@ class GraphCanvas(QWidget):
         figure.update_layout(
             width=self._graph_width,
             height=_GRAPH_HEIGHT,
-            margin=dict(l=82, r=82, t=26, b=70),
+            margin=dict(l=82, r=82, t=70, b=80),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
@@ -491,7 +445,7 @@ class GraphCanvas(QWidget):
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;display:flex;align-items:flex-start;justify-content:center;}}#graph{{width:{self._graph_width}px;height:{_GRAPH_HEIGHT}px;}}</style>
+<style>{_GREEK_FONT_FACE}html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;display:flex;align-items:flex-start;justify-content:center;}}#graph{{width:{self._graph_width}px;height:{_GRAPH_HEIGHT}px;}}</style>
 <script src="plotly.min.js"></script>
 </head><body>
 <div id="graph"></div>

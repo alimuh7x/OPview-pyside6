@@ -1,6 +1,8 @@
 import os
 import shutil
 import tempfile
+
+import numpy as np
 import unittest
 from pathlib import Path
 
@@ -20,6 +22,21 @@ from graphs.tab_widget import CustomGraphTab
 from sidebar.sidebar_widget import SidebarWidget
 from utils.project_scanner import get_textdata_files
 from viewer.plot_style import PlotStyle
+
+
+def _convert(panel, file_path, column, source, target):
+    """Pick the From entry, then the To entry, as a user does (entries keep their unit as data)."""
+    unit = panel._unit_combos[(file_path, column)]
+    unit.setCurrentIndex(unit.findData(source))
+    combo = panel._conversion_combos[(file_path, column)]
+    combo.setCurrentIndex(combo.findData("as-is" if target == source else f"to:{target}"))
+
+
+def _convert_x(panel, source, target):
+    panel.x_axis_unit_combo.setCurrentIndex(panel.x_axis_unit_combo.findData(source))
+    combo = panel.x_axis_conversion_combo
+    combo.setCurrentIndex(combo.findData("as-is" if target == source else f"to:{target}"))
+
 
 
 class CustomGraphPySide6Tests(unittest.TestCase):
@@ -1313,12 +1330,11 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         panel.add_files([str(path)])
         check = panel._column_checkboxes[(str(path.resolve()), "A")]
         check.setChecked(True)
-        combo = panel._conversion_combos[(str(path.resolve()), "A")]
-        combo.setCurrentIndex(combo.findData("percent"))
+        _convert(panel, str(path.resolve()), "A", "-", "%")
 
         state = panel.state()
 
-        self.assertEqual(state["column_settings"][str(path.resolve())]["A"]["conversion"], "percent")
+        self.assertEqual(state["column_settings"][str(path.resolve())]["A"]["conversion"], "to:%")
 
     def test_graph_panel_legend_edit_renders_only_after_editing_finished(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -1368,39 +1384,10 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         tab = CustomGraphTab()
         panel = tab.add_graph_panel()
 
-        panel.x_axis_conversion_combo.setCurrentIndex(panel.x_axis_conversion_combo.findData("sec-to-min"))
+        _convert_x(panel, "s", "min")
         state = panel.state()
 
-        self.assertEqual(state["x_axis_conversion"], "sec-to-min")
-
-    def test_graph_panel_x_axis_conversion_combo_includes_percent(self):
-        panel = GraphPanelWidget(panel_number=1)
-
-        panel.x_axis_conversion_combo.setCurrentIndex(panel.x_axis_conversion_combo.findData("percent"))
-        state = panel.state()
-
-        self.assertEqual(state["x_axis_conversion"], "percent")
-
-    def test_graph_panel_conversion_dropdown_includes_log10(self):
-        temp_dir = Path(tempfile.mkdtemp())
-        path = temp_dir / "curves.txt"
-        path.write_text("Time A\n0 1\n1 10\n", encoding="utf-8")
-        panel = GraphPanelWidget(panel_number=1)
-
-        panel.add_files([str(path)])
-        resolved = str(path.resolve())
-        panel._column_checkboxes[(resolved, "A")].setChecked(True)
-        combo = panel._conversion_combos[(resolved, "A")]
-
-        self.assertGreaterEqual(combo.findData("log10"), 0)
-
-    def test_graph_panel_x_axis_conversion_combo_includes_log10(self):
-        panel = GraphPanelWidget(panel_number=1)
-
-        panel.x_axis_conversion_combo.setCurrentIndex(panel.x_axis_conversion_combo.findData("log10"))
-        state = panel.state()
-
-        self.assertEqual(state["x_axis_conversion"], "log10")
+        self.assertEqual(state["x_axis_conversion"], "to:min")
 
     def test_graph_panel_conversion_dropdown_updates_rendered_trace_values(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -1412,8 +1399,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         panel.add_files([str(path)])
         check = panel._column_checkboxes[(str(path.resolve()), "A")]
         check.setChecked(True)
-        combo = panel._conversion_combos[(str(path.resolve()), "A")]
-        combo.setCurrentIndex(combo.findData("percent"))
+        _convert(panel, str(path.resolve()), "A", "-", "%")
 
         figure = panel.canvas._build_figure(panel.state())
 
@@ -1429,7 +1415,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         panel.add_files([str(path)])
         check = panel._column_checkboxes[(str(path.resolve()), "A")]
         check.setChecked(True)
-        panel.x_axis_conversion_combo.setCurrentIndex(panel.x_axis_conversion_combo.findData("sec-to-min"))
+        _convert_x(panel, "s", "min")
 
         figure = panel.canvas._build_figure(panel.state())
 
@@ -1610,8 +1596,9 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         self.assertEqual(list(figure.data[0].y), [2, 4])
         self.assertEqual(list(figure.data[1].y), [25, 50])
-        self.assertEqual(list(figure.data[2].y), [3000, 6000])
-        self.assertEqual(list(figure.data[3].y), [3, 6])
+        # Legacy keys assume the data is in Pa.
+        self.assertTrue(np.allclose(figure.data[2].y, [0.003, 0.006]))
+        self.assertTrue(np.allclose(figure.data[3].y, [3e-6, 6e-6]))
 
     def test_graph_canvas_lines_plus_markers_uses_full_line_and_20_sampled_markers(self):
         temp_dir = Path(tempfile.mkdtemp())
@@ -1702,8 +1689,8 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         canvas = GraphCanvas()
 
         self.assertEqual(canvas._conversion_multiplier("%"), 100.0)
-        self.assertEqual(canvas._conversion_multiplier("GPa"), 0.001)
-        self.assertEqual(canvas._conversion_multiplier("MPa"), 1.0)
+        self.assertAlmostEqual(canvas._conversion_multiplier("GPa"), 1e-9)
+        self.assertAlmostEqual(canvas._conversion_multiplier("MPa"), 1e-6)
         self.assertEqual(canvas._conversion_multiplier("As-is"), 1.0)
 
     def test_graph_panel_uses_opview_like_dimensions_and_light_scoped_widgets(self):
@@ -1757,9 +1744,9 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         for axis in (figure.layout.xaxis, figure.layout.yaxis, figure.layout.yaxis2):
             self.assertEqual(axis.title.font.size, PlotStyle.GRAPH_AXIS_TITLE_SIZE)
-            self.assertEqual(axis.title.font.family, "Arial")
+            self.assertEqual(axis.title.font.family, "OPViewGreek, Arial")
             self.assertEqual(axis.tickfont.size, PlotStyle.GRAPH_TICK_FONT_SIZE)
-            self.assertEqual(axis.tickfont.family, "Arial")
+            self.assertEqual(axis.tickfont.family, "OPViewGreek, Arial")
             self.assertEqual(axis.exponentformat, "e")
             self.assertEqual(axis.showexponent, "all")
             self.assertEqual(axis.minexponent, 4)

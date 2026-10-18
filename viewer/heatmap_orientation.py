@@ -165,6 +165,16 @@ class Heatmap2DOrientation:
         return ("vertical", x_position)
 
     @staticmethod
+    def default_line_position(direction: str, x_grid, y_grid, z_grid) -> float:
+        """Coordinate of the middle row/column, the one extract_line_scan samples without a click."""
+        x_values, y_values = Heatmap2DOrientation.plot_axes(
+            np.asarray(x_grid), np.asarray(y_grid), np.asarray(z_grid)
+        )
+        if direction == "horizontal":
+            return float(y_values[np.asarray(z_grid).shape[0] // 2])
+        return float(x_values[np.asarray(z_grid).shape[1] // 2])
+
+    @staticmethod
     def extract_line_scan(x_grid, y_grid, z_grid, direction: str, position):
         x_arr = np.asarray(x_grid)
         y_arr = np.asarray(y_grid)

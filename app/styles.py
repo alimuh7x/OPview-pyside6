@@ -750,8 +750,16 @@ QComboBox#graphCombo QAbstractItemView::item {{
     min-height: 28px;
     padding: 4px 8px;
 }}
-QComboBox#graphCombo QAbstractItemView::item:hover,
+QComboBox#graphCombo QAbstractItemView {{
+    outline: none;
+}}
+QComboBox#graphCombo QAbstractItemView::item:focus,
 QComboBox#graphCombo QAbstractItemView::item:selected {{
+    background: #e3ecf8;
+    color: #102a52;
+    border: none;
+}}
+QComboBox#graphCombo QAbstractItemView::item:hover {{
     background: #1e4a8a;
     color: #ffffff;
 }}

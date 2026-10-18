@@ -25,6 +25,7 @@ from viewer.animation_player import AnimationPlayer
 from app.debug import debug_print
 from app.resources import HEATMAP_LOGO_PATH
 from utils.combo_box_utils import update_combo_popup_width
+from utils.unit_conversion_control import UnitConversionControl
 from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.heatmap_controller import HeatmapController
 from viewer.histogram_canvas import HistogramCanvas
@@ -262,15 +263,8 @@ class PanelWidget(QWidget):
         self.phase_history_time_unit_combo.setFixedWidth(120)
         update_combo_popup_width(self.phase_history_time_unit_combo)
         debug_print("PanelWidget phase history time unit combo initialized width=120")
-        self.unit_scale_combo = QComboBox()
-        self.unit_scale_combo.setObjectName("viewerCombo")
-        self.unit_scale_combo.addItem("Raw",     (1.0,   ""))
-        self.unit_scale_combo.addItem("% ×100",  (100.0, ""))
-        self.unit_scale_combo.addItem("M ÷1e6",  (1e-6,  ""))
-        self.unit_scale_combo.addItem("G ÷1e9",  (1e-9,  ""))
-        self.unit_scale_combo.setFixedWidth(86)
-        update_combo_popup_width(self.unit_scale_combo)
-        debug_print("PanelWidget unit scale combo initialized width=86")
+        self.unit_scale_combo = UnitConversionControl()
+        debug_print("PanelWidget unit conversion control initialized (from -> to)")
         self.export_button = QPushButton(
             QIcon(str(self._ASSETS / "download.png")), "Export"
         )
@@ -778,10 +772,11 @@ class PanelWidget(QWidget):
         self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_dt_label)
         self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_dt_spin)
         self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_time_unit_combo)
-        self.heatmap_toolbar_primary_layout.addWidget(self.unit_scale_combo)
         if mode == "compact":
             debug_print("PanelWidget applying compact heatmap toolbar")
             self.heatmap_toolbar_secondary_layout.addStretch(1)
+            # The from -> to pair is wide, so it moves to the second row instead of squeezing the label field.
+            self.heatmap_toolbar_secondary_layout.addWidget(self.unit_scale_combo)
             self.heatmap_toolbar_secondary_layout.addWidget(self.phase_overlay_button)
             self.heatmap_toolbar_secondary_layout.addWidget(self.vector_overlay_check)
             self.heatmap_toolbar_secondary_layout.addWidget(self.export_button)
@@ -789,6 +784,7 @@ class PanelWidget(QWidget):
             self.heatmap_toolbar_secondary_row.show()
         else:
             debug_print("PanelWidget applying wide heatmap toolbar")
+            self.heatmap_toolbar_primary_layout.addWidget(self.unit_scale_combo)
             self.heatmap_toolbar_primary_layout.addStretch(1)
             self.heatmap_toolbar_primary_layout.addWidget(self.phase_overlay_button)
             self.heatmap_toolbar_primary_layout.addWidget(self.vector_overlay_check)

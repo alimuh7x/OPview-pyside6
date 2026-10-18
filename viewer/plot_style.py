@@ -9,6 +9,7 @@ class PlotStyle:
     """Central style object for Plotly-based charts."""
 
     FONT_FAMILY = "Arial"
+    GREEK_FONT_FAMILY = "OPViewGreek"  # @font-face (STIX Two Text Italic, Greek only) declared by the graph page
     TEXT_COLOR = "#102a52"
     MUTED_COLOR = "#6a7e9f"
     GRID_COLOR = "rgba(128, 128, 128, 0.2)"
@@ -43,9 +44,9 @@ class PlotStyle:
         "#8c564b",
     )
 
-    GRAPH_LEGEND_FONT_SIZE  = 28
-    GRAPH_AXIS_TITLE_SIZE   = 32
-    GRAPH_TICK_FONT_SIZE    = 26
+    GRAPH_LEGEND_FONT_SIZE  = 32
+    GRAPH_AXIS_TITLE_SIZE   = 36
+    GRAPH_TICK_FONT_SIZE    = 30
     GUIDE_LINE_WIDTH        = 6
 
     # Interface overlay (fill and outline share both values). Opaque, so the outline never stacks
@@ -72,6 +73,10 @@ class PlotStyle:
         }
 
     @classmethod
+    def _graph_family(cls) -> str:
+        return f"{cls.GREEK_FONT_FAMILY}, {cls.FONT_FAMILY}"
+
+    @classmethod
     def layout_font(cls) -> dict[str, Any]:
         return cls.font()
 
@@ -85,11 +90,11 @@ class PlotStyle:
 
     @classmethod
     def graph_axis_title_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.GRAPH_AXIS_TITLE_SIZE)
+        return cls.font(size=cls.GRAPH_AXIS_TITLE_SIZE, family=cls._graph_family())
 
     @classmethod
     def graph_tick_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.GRAPH_TICK_FONT_SIZE)
+        return cls.font(size=cls.GRAPH_TICK_FONT_SIZE, family=cls._graph_family())
 
     @classmethod
     def colorbar_title_font(cls) -> dict[str, Any]:
@@ -117,7 +122,7 @@ class PlotStyle:
 
     @classmethod
     def graph_legend_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.GRAPH_LEGEND_FONT_SIZE)
+        return cls.font(size=cls.GRAPH_LEGEND_FONT_SIZE, family=cls._graph_family())
 
     @classmethod
     def empty_annotation_font(cls) -> dict[str, Any]:

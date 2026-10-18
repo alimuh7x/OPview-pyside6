@@ -26,7 +26,9 @@ from config.constants import DEFAULTS, PALETTES
 from multi_view.colorbar_canvas import ColorbarCanvas, _W as _CB_W
 from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader, _CELL_W
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
+from config import units as unit_table
 from utils.time_series import compact_timestep_label
+from utils.unit_conversion_control import UnitConversionControl
 from utils.vtk_utils import get_reader
 from viewer.colorscale import (
     DISCRETE_CUSTOM_PALETTE,
@@ -198,13 +200,7 @@ class MultiViewPanel(QWidget):
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
         self.colorbar_label_edit.setMinimumWidth(72)
         debug_print("MultiViewPanel colorbar label min width set to 72")
-        self.unit_scale_combo = QComboBox()
-        self.unit_scale_combo.setObjectName("viewerCombo")
-        self.unit_scale_combo.addItem("Raw", (1.0, ""))
-        self.unit_scale_combo.addItem("% x100", (100.0, "%"))
-        self.unit_scale_combo.addItem("MPa /1e6", (1e-6, "MPa"))
-        self.unit_scale_combo.addItem("GPa /1e9", (1e-9, "GPa"))
-        update_combo_popup_width(self.unit_scale_combo)
+        self.unit_scale_combo = UnitConversionControl()  # from -> to
         self.range_slider  = RangeSliderWidget()
         debug_print("MultiViewPanel range slider created")
         self.reset_button = QPushButton()
@@ -283,7 +279,7 @@ class MultiViewPanel(QWidget):
         conversion_caption.setObjectName("mutedInfo")
         r2_bottom.addWidget(conversion_caption)
         debug_print("MultiViewPanel row 2b conversion label added")
-        r2_bottom.addWidget(self.unit_scale_combo, 1)
+        r2_bottom.addWidget(self.unit_scale_combo)
         debug_print("MultiViewPanel row 2b unit scale combo added")
         r2_bottom.addStretch()
         r2_bottom.addWidget(self.vectors_on)
@@ -722,7 +718,7 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel selected plot_type={plot_type}")
         scale = sd.get("scale", 1.0) or 1.0
         label = sd.get("label", "")
-        units = sd.get("units")
+        units = sd.get("native_units")
         extra_scale, cb_label = self._get_display_params(label, units)
         total_scale = scale * extra_scale
         debug_print(f"MultiViewPanel base scale={scale}")
@@ -828,7 +824,7 @@ class MultiViewPanel(QWidget):
             _, cell = self._columns[fp]
             if z is not None:
                 debug_print(f"MultiViewPanel rendering cell={fp}")
-                line_overlay = self._current_line_overlay()
+                line_overlay = self._current_line_overlay((x, y, z))
                 debug_print(f"MultiViewPanel line_overlay={line_overlay}")
                 debug_print(f"MultiViewPanel vector_overlay present={vector_overlay is not None}")
                 cell.render(
@@ -1151,7 +1147,7 @@ class MultiViewPanel(QWidget):
         debug_print(f"MultiViewPanel analysis-only base scale={scale}")
         label = sd.get("label", "")
         debug_print(f"MultiViewPanel analysis-only label={label}")
-        units = sd.get("units")
+        units = sd.get("native_units")
         debug_print(f"MultiViewPanel analysis-only units={units}")
         extra_scale, display_label = self._get_display_params(label, units)
         debug_print(f"MultiViewPanel analysis-only extra scale={extra_scale}")
@@ -1291,7 +1287,7 @@ class MultiViewPanel(QWidget):
             debug_print(f"MultiViewPanel histogram load failed: {exc}")
             return None
 
-    def _current_line_overlay(self):
+    def _current_line_overlay(self, grid=None):
         debug_print("MultiViewPanel._current_line_overlay called")
         if not self.line_mode_check.isChecked():
             debug_print("MultiViewPanel line overlay skipped: line mode off")
@@ -1301,11 +1297,13 @@ class MultiViewPanel(QWidget):
             return None
         direction = self._current_line_scan_direction()
         debug_print(f"MultiViewPanel line overlay direction={direction}")
-        if direction == "horizontal":
-            if self._line_scan_y is None:
-                debug_print("MultiViewPanel line overlay skipped: no y yet")
-                return None
-        overlay = Heatmap2DOrientation.line_overlay(direction, self._line_scan_x, self._line_scan_y)
+        x_position, y_position = self._line_scan_x, self._line_scan_y
+        position = y_position if direction == "horizontal" else x_position
+        if position is None and grid is not None:
+            default = Heatmap2DOrientation.default_line_position(direction, *grid)
+            debug_print(f"MultiViewPanel line overlay defaulting to centre={default}")
+            x_position, y_position = (x_position, default) if direction == "horizontal" else (default, y_position)
+        overlay = Heatmap2DOrientation.line_overlay(direction, x_position, y_position)
         if overlay is None:
             debug_print("MultiViewPanel line overlay skipped: no position yet")
         return overlay
@@ -1365,6 +1363,10 @@ class MultiViewPanel(QWidget):
                     "component": d.get("component"),
                     "scale": 1.0,
                     "units": None,
+                    # The values stay raw here; this is the unit they are in (Pa for a config of MPa x 1e-6).
+                    "native_units": unit_table.raw_unit(
+                        d.get("units", cfg.get("units")), d.get("scale", cfg.get("scale"))
+                    ),
                 }
                 for i, d in enumerate(scalars)
             ]
@@ -1484,6 +1486,8 @@ class MultiViewPanel(QWidget):
     def _get_display_params(self, scalar_label: str, units: str | None) -> tuple[float, str]:
         debug_print("MultiViewPanel._get_display_params called")
         custom_name = self.colorbar_label_edit.text().strip() if hasattr(self, "colorbar_label_edit") else ""
+        if hasattr(getattr(self, "unit_scale_combo", None), "set_native_unit"):
+            self.unit_scale_combo.set_native_unit(units)  # From follows the scalar's own unit
         extra_scale, unit_suffix = self.unit_scale_combo.currentData() if hasattr(self, "unit_scale_combo") else (1.0, "")
         debug_print(f"MultiViewPanel custom colorbar label={custom_name}")
         debug_print(f"MultiViewPanel unit suffix={unit_suffix}")

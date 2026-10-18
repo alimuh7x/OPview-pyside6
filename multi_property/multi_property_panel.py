@@ -35,6 +35,7 @@ from multi_property.multi_property_cell import MultiPropertyCell, ScientificRang
 from multi_view.multi_view_cell import _CELL_W
 from multi_view.multi_view_panel import MultiViewPanel, _LOGO_W
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
+from utils.unit_conversion_control import UnitConversionControl
 from utils.vtk_utils import get_reader
 from viewer.colorscale import (
     DISCRETE_CUSTOM_PALETTE,
@@ -314,15 +315,8 @@ class MultiPropertyPanel(QWidget):
         self.range_min.link_peer(self.range_max)
         self.range_slider = RangeSliderWidget()
         self.range_slider.setMinimumWidth(240)
-        self.unit_scale_combo = QComboBox()
-        self.unit_scale_combo.setObjectName("viewerCombo")
-        self.unit_scale_combo.addItem("Raw", (1.0, ""))
-        self.unit_scale_combo.addItem("% x100", (100.0, "%"))
-        self.unit_scale_combo.addItem("MPa /1e6", (1e-6, "MPa"))
-        self.unit_scale_combo.addItem("GPa /1e9", (1e-9, "GPa"))
-        update_combo_popup_width(self.unit_scale_combo)
-        debug_print("MultiPropertyPanel unit scale combo created")
-        debug_print(f"MultiPropertyPanel unit scale count={self.unit_scale_combo.count()}")
+        self.unit_scale_combo = UnitConversionControl()  # from -> to
+        debug_print("MultiPropertyPanel unit conversion control created")
         self.reset_button = QPushButton()
         self.reset_button.setObjectName("multiPropertyTopRangeReset")
         self.reset_button.setFlat(False)
@@ -1210,8 +1204,23 @@ class MultiPropertyPanel(QWidget):
         self._render_all()
         debug_print("MultiPropertyPanel._on_unit_scale_changed complete")
 
+    def _follow_first_property_unit(self) -> None:
+        """From follows the unit of the first selected property; one conversion applies to all properties.
+
+        A different unit resets From/To, so the stored ranges (kept in displayed units) are dropped too.
+        """
+        combo = getattr(self, "unit_scale_combo", None)
+        keys = getattr(self, "_selected_keys", None)
+        if not keys or not hasattr(combo, "set_native_unit"):
+            return
+        scalar_def = self._scalar_def_for_key(keys[0])
+        if combo.set_native_unit(scalar_def.get("native_units") if scalar_def else None):
+            self._ranges.clear()
+            debug_print("MultiPropertyPanel unit changed with the first property: stored ranges cleared")
+
     def _get_display_params(self, scalar_label: str, *, override_label: str | None = None) -> tuple[float, str]:
         debug_print("MultiPropertyPanel._get_display_params called")
+        self._follow_first_property_unit()
         extra_scale, unit_suffix = self.unit_scale_combo.currentData() if hasattr(self, "unit_scale_combo") else (1.0, "")
         debug_print(f"MultiPropertyPanel unit scale multiplier={extra_scale}")
         debug_print(f"MultiPropertyPanel unit suffix={unit_suffix}")
