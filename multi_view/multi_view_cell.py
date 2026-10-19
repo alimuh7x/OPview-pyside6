@@ -26,6 +26,7 @@ from viewer.colorscale import cmap_to_plotly_scale
 from viewer.heatmap_canvas import HeatmapCanvas, _CANVAS_HEIGHT, _CANVAS_WIDTH
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from utils.time_series import compact_timestep_label
 
 _ASSETS     = Path(__file__).resolve().parent.parent / "assets"
@@ -78,6 +79,8 @@ class MultiViewHeader(QWidget):
         legend_lbl.setObjectName("mutedInfo")
 
         self._name_edit = QLineEdit(compact_timestep_label(file_path))
+        attach_symbol_picker(self._name_edit)
+        debug_print("MultiViewHeader legend symbol picker attached")
         self._name_edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self._name_edit.setFixedHeight(30)
         name_font = QFont(self._name_edit.font())

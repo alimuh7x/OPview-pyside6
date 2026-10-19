@@ -1,4 +1,4 @@
-"""Symbol picker (Custom Graph): click Greek letters, math signs or SI units to insert them into a text field."""
+"""Shared symbol picker: insert Greek letters, math signs or SI units into label fields."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ SYMBOL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Greek variants", ("ϕ", "ϑ", "ϵ", "ϰ", "ϖ", "ϱ", "ς")),
     ("Greek capitals", tuple("ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ")),
     ("Math", ("±", "·", "°", "∂", "∇", "∞", "∫", "∑", "→")),
-    ("Powers", ("⁻⁴", "⁻³", "⁻²", "⁻¹", "¹", "²", "³", "⁴")),
+    ("Powers", ("⁻⁴", "⁻³", "⁻²", "⁻¹", "¹", "²", "³", "⁴", "¹⁺", "²⁺", "³⁺", "⁴⁺")),
     ("SI units", ("N/m²", "N/m", "N", "Pa", "kPa", "MPa", "GPa", "J/m³", "J/m²", "J/mol", "m²/s", "m/s",
                   "s⁻¹", "µm", "mm", "µs", "K", "°C", "W/m²", "kg/m³")),
 )
@@ -83,24 +83,33 @@ class SymbolPicker(QFrame):
 
     def show_centered(self, widget) -> None:
         """Open in the middle of the screen the field is on."""
+        debug_print(f"SymbolPicker.show_centered field={widget.objectName()}")
         self.show()  # size settles after the stylesheet is applied, so centre only afterwards
         self.adjustSize()
+        debug_print(f"SymbolPicker popup size={self.size()}")
         screen = widget.screen() or QGuiApplication.primaryScreen()
         area = screen.availableGeometry()
         self.move(area.x() + (area.width() - self.width()) // 2, area.y() + (area.height() - self.height()) // 2)
+        debug_print(f"SymbolPicker popup position={self.pos()}")
 
 
 def attach_symbol_picker(edit: QLineEdit) -> SymbolPicker:
     """Add a small σ button inside `edit`; symbols are inserted at the cursor and the edit is committed."""
+    debug_print(f"attach_symbol_picker field={edit.objectName()}")
     picker = SymbolPicker(edit)
+    debug_print("attach_symbol_picker popup created")
 
     def insert(symbol: str) -> None:
+        debug_print(f"SymbolPicker insert symbol={symbol} cursor={edit.cursorPosition()}")
         edit.insert(symbol)
+        debug_print(f"SymbolPicker updated label={edit.text()}")
         edit.editingFinished.emit()
+        debug_print("SymbolPicker label editingFinished emitted")
 
     picker.symbol_chosen.connect(insert)
     action = QAction(_icon("σ"), "Insert symbol", edit)
     action.setToolTip("Insert Greek letter, math sign or unit")
     action.triggered.connect(lambda: picker.show_centered(edit))
     edit.addAction(action, QLineEdit.ActionPosition.TrailingPosition)
+    debug_print("attach_symbol_picker trailing action attached")
     return picker

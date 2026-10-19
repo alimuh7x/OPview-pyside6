@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QStyle,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from config.constants import PALETTES
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
 from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
@@ -751,6 +753,8 @@ class PanelControlsWidget(QWidget):
         dialog.setLabelText(f"{key}\nName:")
         dialog.setTextValue(current_label)
         dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        attach_symbol_picker(dialog.findChild(QLineEdit))
+        debug_print("PanelControlsWidget phase rename symbol picker attached")
         dialog.setMinimumWidth(360)
         dialog.setStyleSheet(
             """

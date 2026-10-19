@@ -33,6 +33,19 @@ class SymbolPickerTests(unittest.TestCase):
         self.assertEqual(sigma.font().family(), "STIX Two Text")
         self.assertFalse(unit.font().italic())
 
+    def test_ion_charge_buttons_insert_superscript_charges(self):
+        for charge, ion in (("¹⁺", "Na"), ("²⁺", "Ca"), ("³⁺", "Fe"), ("⁴⁺", "Ti")):
+            with self.subTest(charge=charge):
+                self.assertIn(charge, dict(SYMBOL_GROUPS)["Powers"])
+                edit = QLineEdit(ion)
+                picker = attach_symbol_picker(edit)
+                finished = []
+                edit.editingFinished.connect(lambda: finished.append(edit.text()))
+                button = next(b for b in picker.findChildren(QPushButton) if b.text() == charge)
+                button.click()
+                self.assertEqual(edit.text(), ion + charge)
+                self.assertEqual(finished, [ion + charge])
+
     def test_clicking_symbol_emits_it(self):
         picker = SymbolPicker()
         chosen = []

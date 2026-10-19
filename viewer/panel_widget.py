@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from viewer.animation_player import AnimationPlayer
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from utils.combo_box_utils import update_combo_popup_width
 from utils.unit_conversion_control import UnitConversionControl
@@ -205,6 +206,8 @@ class PanelWidget(QWidget):
         self.vector_overlay_check.setToolTip("Show fixed-size vector arrows colored by magnitude")
         debug_print("PanelWidget vector overlay toggle initialized")
         self.colorbar_label_edit = QLineEdit()
+        attach_symbol_picker(self.colorbar_label_edit)
+        debug_print("PanelWidget colorbar label symbol picker attached")
         self.colorbar_label_edit.setPlaceholderText("Colorbar label…")
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
         # The app stylesheet's `min-width: 72px` beats setMinimumWidth(), so the width has to

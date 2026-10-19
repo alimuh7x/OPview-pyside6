@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLayout,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from viewer.trimmed_spin_box import TrimmedDoubleSpinBox, format_trimmed
 from multi_property.colorbar_canvas import MultiPropertyColorbarCanvas
 from multi_view.multi_view_cell import MultiViewCell, _CELL_W
@@ -289,6 +291,8 @@ class MultiPropertyCell(QWidget):
         dialog.setLabelText("Property name:")
         dialog.setTextValue(self.label)
         dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        attach_symbol_picker(dialog.findChild(QLineEdit))
+        debug_print("MultiPropertyCell property rename symbol picker attached")
         dialog.setMinimumWidth(360)
         dialog.setStyleSheet(
             """

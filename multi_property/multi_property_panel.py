@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS, PALETTES
 from multi_property.export_renderer import save_multi_property_png
@@ -487,6 +488,8 @@ class MultiPropertyPanel(QWidget):
         value_label = QLabel("Value:")
         value_label.setObjectName("mutedInfo")
         self.analysis_value_label_edit = QLineEdit("Value")
+        attach_symbol_picker(self.analysis_value_label_edit)
+        debug_print("MultiPropertyPanel analysis value label symbol picker attached")
         self.analysis_value_label_edit.setObjectName("viewerLineEdit")
         self.analysis_value_label_edit.setToolTip("Rename value label for line and frequency graphs")
         self.analysis_value_label_edit.setFixedWidth(150)

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS, PALETTES
 from multi_view.colorbar_canvas import ColorbarCanvas, _W as _CB_W
@@ -196,6 +197,8 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel range_max minimum width set to 200")
         self.range_max.setValue(1.0)
         self.colorbar_label_edit = QLineEdit()
+        attach_symbol_picker(self.colorbar_label_edit)
+        debug_print("MultiViewPanel colorbar label symbol picker attached")
         self.colorbar_label_edit.setPlaceholderText("Colorbar label...")
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
         self.colorbar_label_edit.setMinimumWidth(72)
