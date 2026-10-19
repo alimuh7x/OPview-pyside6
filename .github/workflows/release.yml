@@ -50,7 +50,25 @@ jobs:
           python-version: "3.12"
 
       - name: Install NSIS + Ninja
-        run: choco install nsis ninja -y
+        shell: pwsh
+        run: |
+          choco install ninja -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "Ninja installation failed" }
+          $nsisDir = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            Write-Host "Installing NSIS (attempt $attempt of 3)"
+            choco install nsis -y --no-progress
+            $installed = $LASTEXITCODE -eq 0 -and (Test-Path "$nsisDir\makensis.exe")
+            Write-Host "NSIS installation verified: $installed"
+            if ($installed) { break }
+            if ($attempt -lt 3) { Start-Sleep -Seconds 10 }
+          }
+          if (-not $installed) { throw "NSIS installation failed; refusing to build without an installer compiler" }
+          $nsisDir >> $env:GITHUB_PATH
+          Write-Host "Added NSIS to subsequent steps' PATH: $nsisDir"
+
+      - name: Verify NSIS compiler
+        run: makensis /VERSION
 
       - name: Configure
         # -G Ninja: this project has LANGUAGES NONE (no compiler needed, just
