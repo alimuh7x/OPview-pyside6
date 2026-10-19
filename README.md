@@ -6,6 +6,8 @@ A desktop post-processing application for inspecting OpenPhase simulation output
 
 - Single View heatmaps with range controls, rotation, overlays, line scans, and histogram analysis.
 - Multi View comparison across selected VTK files with shared orientation/range controls.
+- Multi Property heatmaps for comparing several properties from one VTK file.
+- Shared symbol pickers, superscript ion charges, and consistent Greek fonts in colorbars and analysis graphs.
 - Custom Graph panels for plotting `TextData` files with per-series colors, conversions, Y-axis routing, markers, and legend placement.
 - Local in-app documentation from **Help > Documentation** or the header **Documentation** button.
 
@@ -19,27 +21,33 @@ A desktop post-processing application for inspecting OpenPhase simulation output
 
 ![OPView Multi View](assets/Multi-View.png)
 
+### Multi Property
+
+![OPView Multi Property](doc/images/multi_property_selection.png)
+
 ### Custom Graph
 
 ![OPView Custom Graph](assets/Custom-Graph.png)
+
+See the [complete user guide](doc/Documentation.md) and [changelog](CHANGELOG.md) for workflows and release changes.
 
 ## Installing a Release Build
 
 For most users this is simpler than the from-source setup below: download a
 prebuilt, self-contained package (no Python/pip/venv required) from the
-[Releases page](https://github.com/schiedung/opview/releases).
+[Releases page](https://github.com/alimuh7x/OPview-pyside6/releases).
 
 - **Windows**: download and run `OPView-<version>-win64.exe`. It installs to
   Program Files and adds a Start Menu "OPView" shortcut. To uninstall, use
   Windows Settings > Apps, or the shortcut in the Start Menu folder.
 - **Linux, `.deb` (Ubuntu 22.04+)**:
   ```bash
-  sudo dpkg -i opview_<version>_amd64.deb
+  sudo apt install ./opview_<version>_amd64.deb
   ```
   then launch from the applications menu or run `opview` in a terminal. On a
   VM or machine without working 3D acceleration, use
   `OPVIEW_NO_GPU=1 opview` instead.
-- **Linux, AppImage (any distro)**:
+- **Linux, AppImage (x86_64, glibc-based distributions compatible with Ubuntu 22.04 or newer)**:
   ```bash
   chmod +x OPView-<version>-x86_64.AppImage
   ./OPView-<version>-x86_64.AppImage
@@ -130,12 +138,13 @@ deactivate
 - Plotly
 - PyVista
 - SciPy
+- PyQtGraph
 
 ## Usage
 
 1. Start the app with `opview.bat` on Windows, `OPview-No-GPU.bat` for software rendering, or `./opview.sh` on Linux / macOS / WSL.
 2. Select or add a project in the sidebar.
-3. Choose **Single View**, **Multi View**, or **Custom Graph** from the top tabs.
+3. Choose **Single View**, **Multi View**, **Multi Property**, or **Custom Graph** from the top tabs.
 4. Use **Help > Documentation** for the complete local guide.
 
 ## Supported File Formats
@@ -147,7 +156,7 @@ deactivate
 
 ## Python Version
 
-Requires Python 3.8 or higher (Python 3.14 requires VTK >= 9.6.2, the first release with Python 3.14 wheels).
+Use Python **3.12** for the tested development and release build path. Source launchers support Python 3.10–3.13; the Windows launcher currently rejects 3.14. Direct CMake builds also support Python 3.14 with VTK >= 9.6.2. Packaged releases include Python.
 
 ## Packaging / Installers
 
@@ -156,3 +165,13 @@ Looking to download a package rather than build one? See
 
 See [packaging/README.md](packaging/README.md) for building the Linux `.deb`,
 the Linux AppImage, and the Windows NSIS installer via CMake.
+
+## Testing
+
+Run the tests from the repository root with the bundled sample project available:
+
+```bash
+QT_QPA_PLATFORM=offscreen QTWEBENGINE_DISABLE_SANDBOX=1 venv/bin/python -m unittest discover tests -v
+```
+
+The sandbox override is for headless tests running as root. For normal desktop use, launch OPView without that override.

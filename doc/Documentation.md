@@ -1,4 +1,4 @@
-# OpenPhase Post-Processing Suite
+# OPView User Guide
 
 ## Overview
 The OpenPhase Post-Processing Suite is an interactive application for inspecting simulation outputs through four primary work modes:
@@ -170,6 +170,9 @@ Use **Single View** for focused analysis of one dataset panel at a time.
 7. Click **PNG** to export the current view.
 
 ### Additional Single View Features
+- **Symbols in labels**: click the **σ** button inside a label field to insert Greek letters, math signs, powers, ion charges (**¹⁺, ²⁺, ³⁺, ⁴⁺**), or SI units at the cursor. This is available in Single View and Multi View colorbar labels, Multi View legends, Multi Property analysis value labels and property rename dialogs, and phase rename dialogs. The same picker is used in Custom Graph. Rename dialogs still require **OK** to apply the name.
+- **Greek colorbar text**: on-screen colorbar titles use the same bundled STIX Two Text Italic Greek symbols as Custom Graph. Latin letters and units keep their usual font.
+- **Greek graph labels**: line scans and frequency histograms in all three data views, plus Single View time and phase-history graphs, use that same Greek font in axis labels and legends.
 - **Vector overlay**: when the selected array is a vector field, arrows are drawn over the heatmap. Arrow density is thinned automatically and the arrows follow the heatmap rotation.
 - **Line Scan direction**: choose horizontal or vertical with the direction buttons next to **Line Scan**. The line keeps its relative position when the file extent changes between files.
 - **Rotation** buttons (0, 90, 180, 270 degrees) rotate the heatmap, overlays, and line scans together.
@@ -202,6 +205,9 @@ How they interact:
 - **Full Scale** replaces the automatic colors while it is on.
 - The automatic colors apply to the **Heatmap** and **Gradient magnitude** plot types with a continuous palette and the **Bar** colorbar. They are not applied for Threshold, Difference, contour plot types, the discrete palette, the **Boxes** legend and phase-fraction fields.
 - **Animation** (MP4) uses the single range that is set when you start it, so every frame is read on the same scale.
+
+### Linked Single View Tabs
+Changing the timestep in one dataset tab selects that same numeric timestep in the other tabs when it exists. File-list order does not need to match; tabs without that timestep keep their current file. Rotation selections are also shared across Single View dataset tabs.
 
 ### Playback and Animation
 When a dataset has several files (timesteps), the playback bar below the heatmap provides:
@@ -348,7 +354,8 @@ The animation dialog reveals every trace from left to right. Use play, pause, st
 ## Exporting Results
 - Heatmaps: click the **PNG** button in `Single View` or `Multi View` controls, or **Export PNG** in `Multi Property`.
 - Animations: use **Export MP4** in the `Custom Graph` animation dialog.
-- Graphs: use the graph toolbar export action in each `Custom Graph` panel.
+- Graphs: use the camera/export action in the line-scan, histogram, history, or Custom Graph toolbar.
+- On-screen Greek typography uses the bundled STIX font. Heatmap PNG export uses a separate rendering path, so its text font can differ.
 - Exported files are saved through your browser/system download flow.
 
 Recommended usage:

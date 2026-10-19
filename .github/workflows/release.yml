@@ -81,6 +81,8 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           name: opview-linux
@@ -91,7 +93,12 @@ jobs:
           name: opview-windows
           path: dist/
 
+      - name: Generate package checksums
+        working-directory: dist
+        run: sha256sum *.deb *.AppImage *.exe > SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}
+          body_path: doc/releases/${{ github.ref_name }}.md
           files: dist/*

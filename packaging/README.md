@@ -6,7 +6,7 @@ The frozen bundle is self-contained — end users do not need Python.
 
 ## Prerequisites
 
-- CMake >= 3.25
+- CMake >= 3.22
 - Python 3.10–3.14 (3.14 requires vtk >= 9.6.2, which is the first release
   with cp314 wheels). If your default `python3` is unsuitable, pass
   `-DOPVIEW_PYTHON_EXECUTABLE=/path/to/python3.12`.
@@ -31,9 +31,9 @@ docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_p
 Manual build (on a suitably old machine):
 
 ```bash
-cmake -S . -B build [-DOPVIEW_PYTHON_EXECUTABLE=/usr/bin/python3] [-DOPVIEW_VERSION=2.1.0]
+cmake -S . -B build [-DOPVIEW_PYTHON_EXECUTABLE=/usr/bin/python3] [-DOPVIEW_VERSION=2.0.0]
 cmake --build build            # venv -> pip -> PyInstaller freeze
-ctest --test-dir build --output-on-failure
+ctest --test-dir build -R opview_frozen --output-on-failure
 cpack --config build/CPackConfig.cmake -B build/packages   # -> opview_<version>_amd64.deb
 cmake --build build --target opview_appimage               # -> build/packages/OPView-<version>-x86_64.AppImage
 ```
@@ -43,7 +43,7 @@ cmake --build build --target opview_appimage               # -> build/packages/O
 ```bat
 cmake -S . -B build -G Ninja
 cmake --build build
-ctest --test-dir build
+ctest --test-dir build -R opview_frozen --output-on-failure
 cpack --config build\CPackConfig.cmake -B build\packages   :: -> OPView-<version>-win64.exe
 ```
 
@@ -66,7 +66,7 @@ publishes them to a GitHub Release when triggered by a `vX.Y.Z` tag push.
 
 ## Version
 
-The package version defaults to 2.1.0 and can be overridden with
+The package version defaults to 2.0.0 and can be overridden with
 `-DOPVIEW_VERSION=x.y.z`. When this project is built as a subdirectory of the
 OPStudio superproject it inherits `OPStudio_VERSION` automatically. The version
 is baked into the bundle as `version.txt`; `opview --version` reports it.
@@ -84,3 +84,13 @@ is baked into the bundle as `version.txt`; `opview --version` reports it.
 
 Set `OPVIEW_NO_GPU=1` before launching (wrapper and AppRun append
 `--disable-gpu` to `QTWEBENGINE_CHROMIUM_FLAGS`), matching `OPview-No-GPU.bat`.
+
+## Release checklist
+
+1. Update the CMake default version, changelog, and release notes together.
+2. Run the source tests and check documentation links.
+3. Push the release commit and run the Release workflow manually on that branch to validate both packages.
+4. Create and push the annotated `vX.Y.Z` tag at the validated commit. The tag selects the package version and triggers release builds.
+5. Confirm the Windows installer, Linux `.deb`, and AppImage are attached to the release before announcing it.
+
+A successful frozen smoke test checks startup, version handling, and Linux library dependencies. Interactive installation, rendering, and export still need platform testing.

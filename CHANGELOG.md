@@ -3,7 +3,7 @@
 All notable changes to OPView are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.1.0] - 2026-10-06
+## [2.0.0] - 2026-10-19
 
 Changes since **v1.0.0** (`ce42b833`).
 
@@ -15,6 +15,16 @@ Changes since **v1.0.0** (`ce42b833`).
 - **Vector-field overlays** (arrows) and **line-scan direction / heatmap rotation** controls in Single View.
 - **Software-rendering mode** (`OPVIEW_NO_GPU`) for VMs and machines without usable GPU.
 - Reload now picks up new VTK files, drops deleted ones and clears stale cache.
+
+### Latest updates in this release
+
+- Rectangle-based range selection and automatic colors based on the visible region in Single View.
+- Linked timestep and rotation selection across Single View dataset tabs.
+- Shared symbol picker in colorbar labels, legends, property names, phase names, and Multi Property analysis labels.
+- Superscript ion charges **¹⁺, ²⁺, ³⁺, ⁴⁺** in the picker’s Powers group.
+- Bundled STIX Two Text Italic Greek symbols in on-screen colorbars and the axes and legends of analysis graphs.
+- Expanded Custom Graph formulas, cross-column expressions, and unit conversions with a live formula preview.
+- Improved Single View layouts, PNG exports, and title-bar behavior.
 
 ### New features
 
@@ -44,7 +54,7 @@ Changes since **v1.0.0** (`ce42b833`).
 
 #### Custom Graph
 - **Reveal animation** dialog: left-to-right line reveal with play, pause, stop, frame slider and FPS selector. Final axis ranges stay locked. MP4 export via ffmpeg.
-- Value conversion for Y data: As-is, %, MPa, GPa, Log10 (X conversion also supported).
+- Unit conversion for X and Y data, plus custom arithmetic formulas, mathematical functions, and references to other columns.
 - Long traces are downsampled for responsiveness; axis ranges are padded.
 - Layout and settings panel rework.
 
