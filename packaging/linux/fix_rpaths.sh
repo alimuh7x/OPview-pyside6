@@ -44,6 +44,14 @@ for icu in $ICU_LIBS; do
         mv "$f" "$(dirname "$f")/$newname"
         patchelf --set-soname "$newname" "$(dirname "$f")/$newname"
     done
+    # PyInstaller 6 also puts a top-level _internal/ symlink next to each
+    # collected lib, pointing into its package dir (PySide6/Qt/lib/) - and
+    # a lib loaded through such a symlink resolves $ORIGIN to _internal/,
+    # so the renamed copy must be reachable under its new name there too.
+    find "$DIST" -type l -name "$icu" -print0 | while IFS= read -r -d '' l; do
+        ln -s "$(readlink "$l").opview" "$(dirname "$l")/${icu}.opview"
+        rm "$l"
+    done
 done
 find "$DIST" -type f -print0 | while IFS= read -r -d '' f; do
     file "$f" | grep -q "ELF" || continue

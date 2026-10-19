@@ -76,11 +76,11 @@ is baked into the bundle as `version.txt`; `opview --version` reports it.
 | File | Purpose |
 |---|---|
 | `opview.spec` | PyInstaller spec (datas, VTK hidden imports, excludes) |
-| `linux/opview` | `/usr/bin` wrapper (honors `OPVIEW_NO_GPU=1`) |
+| `linux/install_merged.cmake` | Installs the frozen tree into OPStudio's shared `lib/`, reusing OPStudio's Qt6 libraries (embedded builds only) |
 | `linux/opview.desktop` | Desktop entry (used by .deb and AppImage) |
 | `linux/AppRun` | AppImage entry point |
 
 ## GPU-less machines / VMs
 
-Set `OPVIEW_NO_GPU=1` before launching (wrapper and AppRun append
+Set `OPVIEW_NO_GPU=1` before launching (`main.py` and AppRun append
 `--disable-gpu` to `QTWEBENGINE_CHROMIUM_FLAGS`), matching `OPview-No-GPU.bat`.

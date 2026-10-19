@@ -153,57 +153,56 @@ if(WIN32)
     install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION ${OPVIEW_WIN_INSTALL_DESTINATION}
         USE_SOURCE_PERMISSIONS COMPONENT opview)
 else()
-    # Merge OPView's runtime closet into OPStudio's own ${CMAKE_INSTALL_LIBDIR}
-    # (flat, no lib/opview/ subfolder) instead of a private copy, and put
-    # just the executable in the shared ${CMAKE_INSTALL_BINDIR} alongside
-    # OPStudio - GNUInstallDirs bin/lib split preserved, no per-app subdirs.
-    #
-    # OPVIEW_QT6_SHARED_LIBS: sonames that exist, name-identical, in
-    # OPStudio's own Qt6 (Core/Gui/Widgets/Charts/Help/Svg/Sql plus their
-    # transitive deps - see OPStudio/CMakeLists.txt's find_package(Qt6 ...)).
-    # PySide6 privately bundles a superset of Qt6 modules (WebEngine*,
-    # WebChannel, PrintSupport, Positioning, QuickWidgets) OPStudio doesn't
-    # ship at all, so those keep shipping from OPView's own tree - only the
-    # overlapping sonames are dropped here in favor of OPStudio's copy.
-    # Verified (2026-09-11 Qt6-sharing spike): OPStudio's commercial Qt 6.11.2
-    # and PySide6's bundled Qt 6.11.2 are ABI-compatible for these modules -
-    # OPView launches, and no ELF file across its frozen tree resolves to a
-    # missing library, once relinked (via the additive $ORIGIN rpath swept in
-    # packaging/linux/fix_rpaths.sh) against the merged, flattened lib/.
-    set(OPVIEW_QT6_SHARED_LIBS
-        libQt6Core.so.6
-        libQt6DBus.so.6
-        libQt6Gui.so.6
-        libQt6Network.so.6
-        libQt6OpenGL.so.6
-        libQt6Qml.so.6
-        libQt6QmlMeta.so.6
-        libQt6QmlModels.so.6
-        libQt6QmlWorkerScript.so.6
-        libQt6Quick.so.6
-        libQt6Widgets.so.6
-    )
-    # Promoted to the top-level scope: the opview_dll_collision_check target
-    # (root CMakeLists.txt) needs this exact list too, to skip these
-    # deliberate/expected overlaps rather than flagging them.
-    set(OPVIEW_QT6_SHARED_LIBS ${OPVIEW_QT6_SHARED_LIBS} CACHE INTERNAL
-        "Qt6 sonames OPView relies on OPStudio's own copy of, post-merge")
-    set(_opview_install_dir_args DIRECTORY ${OPVIEW_DIST}/_internal/
-        DESTINATION ${CMAKE_INSTALL_LIBDIR} USE_SOURCE_PERMISSIONS COMPONENT opview)
-    foreach(_lib IN LISTS OPVIEW_QT6_SHARED_LIBS)
-        list(APPEND _opview_install_dir_args PATTERN "${_lib}" EXCLUDE)
-    endforeach()
-    install(${_opview_install_dir_args})
-    unset(_opview_install_dir_args)
+    if(OPVIEW_STANDALONE)
+        # The standalone .deb installs to /usr: keep the frozen tree private
+        # under lib/opview/ so its bundled Qt6 can't clash with a distro Qt6
+        # in /usr/lib. PyInstaller's bootloader resolves its own symlink
+        # (/proc/self/exe) before looking for _internal/, so plain bin/
+        # symlinks to the executable are enough: `opview` for the terminal,
+        # `OPView` for opview.desktop's Exec= (shared with the embedded layout).
+        install(DIRECTORY ${OPVIEW_DIST}/ DESTINATION ${CMAKE_INSTALL_LIBDIR}/opview
+            USE_SOURCE_PERMISSIONS COMPONENT opview)
+        install(CODE "file(MAKE_DIRECTORY \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}\")
+            foreach(_name opview OPView)
+                execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink \
+../${CMAKE_INSTALL_LIBDIR}/opview/OPView \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/\${_name}\")
+            endforeach()"
+            COMPONENT opview)
+    else()
+        # Embedded: merge OPView's runtime closet flat into OPStudio's own
+        # ${CMAKE_INSTALL_LIBDIR} (no lib/opview/ subfolder) and put just the
+        # executable in the shared ${CMAKE_INSTALL_BINDIR} - GNUInstallDirs
+        # bin/lib split preserved, no per-app subdirs.
+        #
+        # Qt6 is shared: every Qt6 library OPStudio's own Qt deploy already
+        # installed is skipped, so the merged lib/ holds one copy of it;
+        # the modules only OPView uses (WebEngine*, Quick3D*, ...) still come
+        # from PySide6. That only works when PySide6 is built on exactly
+        # OPStudio's Qt version (requirements.txt pins it) - Qt's private
+        # API, which the PySide6-only modules use, is version-tagged. The
+        # set is decided at install time (packaging/linux/install_merged.cmake)
+        # since it is whatever OPStudio's deploy pulled in, so this install
+        # is deferred to the end of the top-level directory to run after it.
+        set(OPVIEW_MERGE_SCRIPT ${CMAKE_CURRENT_SOURCE_DIR}/packaging/linux/install_merged.cmake
+            CACHE INTERNAL "Installs OPView's frozen tree into the shared lib/")
+        function(_opview_install_merged)
+            install(CODE "
+                set(OPVIEW_INTERNAL \"${OPVIEW_DIST}/_internal\")
+                set(OPVIEW_LIBDIR \"${CMAKE_INSTALL_LIBDIR}\")
+                include(\"${OPVIEW_MERGE_SCRIPT}\")"
+                COMPONENT opview)
+        endfunction()
+        cmake_language(DEFER DIRECTORY ${CMAKE_SOURCE_DIR} CALL _opview_install_merged)
 
-    install(PROGRAMS ${OPVIEW_DIST}/OPView DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT opview)
-    # PyInstaller's frozen bootloader looks for `_internal` as a literal
-    # sibling directory of the executable (--contents-directory relocation to
-    # a genuinely separate directory isn't supported upstream) - this symlink
-    # is what makes the bin/lib split transparent to it.
-    install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink \
-../${CMAKE_INSTALL_LIBDIR} \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/_internal\")"
-        COMPONENT opview)
+        install(PROGRAMS ${OPVIEW_DIST}/OPView DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT opview)
+        # PyInstaller's frozen bootloader looks for `_internal` as a literal
+        # sibling directory of the executable (--contents-directory relocation to
+        # a genuinely separate directory isn't supported upstream) - this symlink
+        # is what makes the bin/lib split transparent to it.
+        install(CODE "execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink \
+../${CMAKE_INSTALL_LIBDIR} \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/_internal\")"
+            COMPONENT opview)
+    endif()
 
     install(FILES packaging/linux/opview.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications COMPONENT opview)
