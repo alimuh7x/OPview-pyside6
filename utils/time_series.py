@@ -31,6 +31,19 @@ def _parse_series_name(path: str | Path):
     return parsed
 
 
+def timestep_from_path(path: str | Path) -> int | None:
+    """Return the numeric timestep suffix from a series filename."""
+    debug_print("timestep_from_path called")
+    debug_print(f"timestep_from_path path={path}")
+    parsed = _parse_series_name(path)
+    if parsed is None:
+        debug_print("timestep_from_path result=None")
+        return None
+    _prefix, step, _suffix = parsed
+    debug_print(f"timestep_from_path result={step}")
+    return step
+
+
 def compact_timestep_label(path: str | Path) -> str:
     """Return a short legend label based on the timestep number in a VTK filename."""
     debug_print("compact_timestep_label called")

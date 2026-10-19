@@ -375,6 +375,64 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertAlmostEqual(float(target.controller.state.time_plot_points[1]["x"]), 20.0)
         self.assertAlmostEqual(float(target.controller.state.time_plot_points[1]["y"]), 25.0)
 
+    def test_single_view_tabs_share_selected_file_number_across_different_combo_orders(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "Temperature", "files": []})
+        target = PanelWidget({"label": "Stress", "files": []})
+        source.controls_widget.set_file_options([
+            "/tmp/Temperature_00000000.vts",
+            "/tmp/Temperature_00000500.vts",
+            "/tmp/Temperature_00001000.vts",
+        ])
+        target.controls_widget.set_file_options([
+            "/tmp/Stress_00000000.vts",
+            "/tmp/Stress_00001000.vts",
+            "/tmp/Stress_00000500.vts",
+        ])
+        tab._attach_file_number_sharing(source)
+        tab._attach_file_number_sharing(target)
+
+        source.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(target.controls_widget.file_combo.currentIndex(), 2)
+        self.assertEqual(Path(target.controls_widget.current_file_path()).name, "Stress_00000500.vts")
+
+    def test_single_view_file_number_sharing_keeps_panel_without_matching_file(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "Temperature", "files": []})
+        target = PanelWidget({"label": "Stress", "files": []})
+        source.controls_widget.set_file_options([
+            "/tmp/Temperature_00000000.vts",
+            "/tmp/Temperature_00000500.vts",
+        ])
+        target.controls_widget.set_file_options([
+            "/tmp/Stress_00000000.vts",
+            "/tmp/Stress_00001000.vts",
+        ])
+        tab._attach_file_number_sharing(source)
+        tab._attach_file_number_sharing(target)
+        target.controls_widget.file_combo.setCurrentIndex(1)
+
+        source.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(target.controls_widget.file_combo.currentIndex(), 1)
+        self.assertEqual(Path(target.controls_widget.current_file_path()).name, "Stress_00001000.vts")
+
+    def test_single_view_tabs_share_rotation(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "Temperature", "files": []})
+        target = PanelWidget({"label": "Stress", "files": []})
+        tab._attach_rotation_sharing(source)
+        tab._attach_rotation_sharing(target)
+
+        source.controls_widget.rotation_buttons[90].click()
+
+        self.assertEqual(source.controls_widget.selected_rotation_degrees(), 90)
+        self.assertEqual(target.controls_widget.selected_rotation_degrees(), 90)
+        self.assertEqual(source.controls_widget.current_rotation_degrees(), 270)
+        self.assertEqual(target.controls_widget.current_rotation_degrees(), 270)
+        self.assertTrue(target.controls_widget.rotation_buttons[90].isChecked())
+
     def test_plot_over_time_add_point_toggle_disables_range_and_line_modes(self):
         panel = PanelWidget(
             dataset_info={

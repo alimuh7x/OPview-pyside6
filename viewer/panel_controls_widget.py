@@ -90,6 +90,8 @@ class PanelControlsWidget(QWidget):
     export_requested = Signal()
     range_slider_changed = Signal(float, float)
     phase_fraction_selection_changed = Signal()
+    rotation_changed = Signal(int)
+    file_options_changed = Signal()
 
     def __init__(self, dataset_info: dict) -> None:
         debug_print("PanelControlsWidget.__init__ start")
@@ -602,6 +604,8 @@ class PanelControlsWidget(QWidget):
         self.file_combo.blockSignals(False)
         update_combo_popup_width(self.file_combo)
         debug_print(f"PanelControlsWidget file count={self.file_combo.count()}")
+        self.file_options_changed.emit()
+        debug_print("PanelControlsWidget file_options_changed emitted")
 
     def set_scalar_options(self, scalar_defs: list[dict]) -> None:
         debug_print("PanelControlsWidget.set_scalar_options called")
@@ -1006,6 +1010,25 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
         debug_print(f"PanelControlsWidget current rotation degrees={self._rotation_degrees}")
         return self._rotation_degrees
 
+    def selected_rotation_degrees(self) -> int:
+        """Return the clockwise angle shown by the selected rotation button."""
+        debug_print("PanelControlsWidget.selected_rotation_degrees called")
+        debug_print(f"PanelControlsWidget selected rotation degrees={self._selected_rotation_degrees}")
+        return self._selected_rotation_degrees
+
+    def set_rotation_degrees(self, degrees: int) -> None:
+        """Select a clockwise rotation angle through the normal refresh path."""
+        debug_print("PanelControlsWidget.set_rotation_degrees called")
+        normalized_degrees = int(degrees) % 360
+        debug_print(f"PanelControlsWidget requested rotation degrees={normalized_degrees}")
+        if normalized_degrees not in self.rotation_buttons:
+            debug_print("PanelControlsWidget requested rotation is unsupported")
+            return
+        if self._selected_rotation_degrees == normalized_degrees:
+            debug_print("PanelControlsWidget requested rotation already selected")
+            return
+        self._set_rotation_degrees(normalized_degrees)
+
     def current_range(self) -> tuple[float, float]:
         debug_print("PanelControlsWidget.current_range called")
         return (self.range_min_spin.value(), self.range_max_spin.value())
@@ -1055,6 +1078,8 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
         debug_print(f"PanelControlsWidget internal rotation degrees={self._rotation_degrees}")
         self._sync_rotation_buttons()
         self._emit_refresh_requested("rotation")
+        self.rotation_changed.emit(self._selected_rotation_degrees)
+        debug_print("PanelControlsWidget rotation_changed emitted")
 
     def _handle_range_slider_changed(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget._handle_range_slider_changed called")
