@@ -10,7 +10,7 @@ class PlotStyleTests(unittest.TestCase):
         self.assertEqual(axis["title"]["text"], "X Position")
         self.assertEqual(axis["title"]["font"], PlotStyle.panel_axis_title_font())
         self.assertEqual(axis["tickfont"], PlotStyle.panel_tick_font())
-        self.assertEqual(axis["title"]["font"]["family"], "Arial")
+        self.assertEqual(axis["title"]["font"]["family"], "OPViewGreek, Arial")
         self.assertEqual(axis["title"]["font"]["color"], "#102a52")
         self.assertEqual(axis["title"]["font"]["size"], PlotStyle.PANEL_AXIS_TITLE_SIZE)
         self.assertEqual(axis["tickfont"]["size"], PlotStyle.PANEL_TICK_FONT_SIZE)
@@ -28,7 +28,7 @@ class PlotStyleTests(unittest.TestCase):
     def test_graph_fonts_put_greek_face_before_arial(self):
         for font in (PlotStyle.graph_axis_title_font(), PlotStyle.graph_tick_font(), PlotStyle.graph_legend_font()):
             self.assertEqual(font["family"], f"{PlotStyle.GREEK_FONT_FAMILY}, Arial")
-        self.assertEqual(PlotStyle.panel_axis_title_font()["family"], "Arial")
+        self.assertEqual(PlotStyle.panel_axis_title_font()["family"], "OPViewGreek, Arial")
 
     def test_panel_legend_uses_compact_font_with_position_overrides(self):
         legend = PlotStyle.panel_legend(x=1.0, y=1.02, xanchor="right")

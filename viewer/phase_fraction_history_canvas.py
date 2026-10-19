@@ -256,6 +256,7 @@ class PhaseFractionHistoryCanvas(QWidget):
         return f"""<!DOCTYPE html>
 <html><head><meta charset=\"utf-8\"/>
 <style>
+{PlotStyle.greek_font_face()}
 html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}
 .modebar{{top: 0px !important;}}
 </style>

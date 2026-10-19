@@ -34,11 +34,12 @@ def build_discrete_legend_html(colors: list[str], label: str = "", *, width: int
     html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
 <style>
+{PlotStyle.greek_font_face()}
 html,body{{margin:0;padding:0;overflow:hidden;background:white;width:100%;height:100%;}}
 body{{font-family:{PlotStyle.FONT_FAMILY};color:{PlotStyle.TEXT_COLOR};}}
 .wrap{{box-sizing:border-box;width:{width}px;height:{height}px;display:flex;align-items:center;justify-content:center;padding:24px 8px;}}
 .legend{{display:grid;grid-template-columns:auto auto;gap:8px 28px;align-items:center;justify-content:start;}}
-.title{{font-size:22px;font-weight:700;writing-mode:vertical-rl;text-orientation:mixed;transform:rotate(180deg);white-space:nowrap;grid-column:2;align-self:center;justify-self:center;}}
+.title{{font-size:22px;font-weight:700;writing-mode:vertical-rl;text-orientation:mixed;transform:rotate(180deg);white-space:nowrap;grid-column:2;align-self:center;justify-self:center;font-family:{PlotStyle.colorbar_title_font()['family']};}}
 .rows{{grid-column:1;display:grid;gap:8px;}}
 .row{{display:grid;grid-template-columns:36px auto;gap:10px;align-items:center;font-size:22px;line-height:1;}}
 .swatch{{display:block;width:30px;height:26px;border:1px solid #4a4a4a;box-sizing:border-box;}}

@@ -135,7 +135,7 @@ class ColorbarCanvas(QWidget):
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
-<style>html,body{{margin:0;padding:0;overflow:hidden;background:white;}}</style>
+<style>{PlotStyle.greek_font_face()}html,body{{margin:0;padding:0;overflow:hidden;background:white;}}</style>
 <script src="plotly.min.js"></script></head>
 <body><div id="d"></div>
 	<script>Plotly.newPlot('d',{fig_json}.data,{fig_json}.layout,{{displayModeBar:false,responsive:false}});</script>

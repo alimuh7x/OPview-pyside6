@@ -918,7 +918,7 @@ class HeatmapCanvas(QWidget):
             thickness     = 18,
             thicknessmode = "pixels",
             outlinewidth  = 0,
-            title         = dict(text=colorbar_label, side="right", font=PlotStyle.font(size=_COLORBAR_TITLE_FONT_SIZE)),
+            title         = dict(text=colorbar_label, side="right", font={**PlotStyle.colorbar_title_font(), "size": _COLORBAR_TITLE_FONT_SIZE}),
             tickfont      = PlotStyle.font(size=_COLORBAR_TICK_FONT_SIZE),
             tickmode      = "array",
             tickvals      = ticks,
@@ -1346,6 +1346,7 @@ class HeatmapCanvas(QWidget):
 <head>
     <meta charset="utf-8" />
     <style>
+        {PlotStyle.greek_font_face()}
         html, body, #heatmapDiv {{
             margin: 0;
             padding: 0;

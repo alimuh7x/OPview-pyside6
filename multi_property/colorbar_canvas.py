@@ -18,7 +18,7 @@ _PLOTLY_JS = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.m
 _W = 360
 _H = 78
 _BAR_THICKNESS = 14
-_TITLE_FONT = {"family": PlotStyle.FONT_FAMILY, "size": 22, "color": PlotStyle.TEXT_COLOR, "weight": 700}
+_TITLE_FONT = {**PlotStyle.colorbar_title_font(), "size": 22, "weight": 700}
 _TICK_FONT = {"family": PlotStyle.FONT_FAMILY, "size": 20, "color": PlotStyle.TEXT_COLOR}
 
 
@@ -143,7 +143,7 @@ class MultiPropertyColorbarCanvas(QWidget):
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
-<style>html,body,#d{{margin:0;padding:0;overflow:hidden;background:white;width:100%;height:100%;}}</style>
+<style>{PlotStyle.greek_font_face()}html,body,#d{{margin:0;padding:0;overflow:hidden;background:white;width:100%;height:100%;}}</style>
 <script src="plotly.min.js"></script></head>
 <body><div id="d"></div>
 <script>var fig={fig_json}; Plotly.newPlot('d', fig.data, fig.layout, {{displayModeBar:false,responsive:false}});</script>

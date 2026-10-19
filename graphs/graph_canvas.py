@@ -21,12 +21,7 @@ from viewer.plot_style import PlotStyle
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 _GRAPH_WIDTH = 800
 _GRAPH_HEIGHT = 620
-_GREEK_FONT_PATH = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "STIXTwoText-Italic.ttf"
-# Greek letters (and µ) come from the bundled serif italic face; everything else falls through to the next family.
-_GREEK_FONT_FACE = (
-    "@font-face{font-family:'" + PlotStyle.GREEK_FONT_FAMILY + "';font-style:normal;font-weight:100 900;"
-    f"src:url('{_GREEK_FONT_PATH.as_uri()}') format('truetype');unicode-range:U+0370-03FF,U+00B5;}}"
-)
+_GREEK_FONT_FACE = PlotStyle.greek_font_face()
 
 
 class GraphCanvas(QWidget):
