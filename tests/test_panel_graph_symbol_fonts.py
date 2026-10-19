@@ -5,6 +5,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
 from viewer.histogram_canvas import HistogramCanvas
@@ -18,6 +19,9 @@ class PanelGraphSymbolFontTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.addCleanup(lambda: QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete))
 
     def assert_graph_fonts(self, canvas, figure):
         family = PlotStyle.graph_axis_title_font()["family"]

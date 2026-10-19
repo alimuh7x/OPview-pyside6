@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import numpy as np
 import plotly.graph_objects as go
+from PySide6.QtCore import QCoreApplication, QEvent
 from PySide6.QtWidgets import QApplication
 
 from graphs.graph_canvas import GraphCanvas
@@ -24,6 +25,9 @@ class ColorbarSymbolFontTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        self.addCleanup(lambda: QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete))
 
     def assert_greek_family(self, font):
         self.assertEqual(font.family, PlotStyle.graph_axis_title_font()["family"])
