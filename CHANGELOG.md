@@ -3,7 +3,7 @@
 All notable changes to OPView are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [2.0.0] - 2026-10-19
+## [2.0.0] - 2026-10-20
 
 Changes since **v1.0.0** (`ce42b833`).
 
