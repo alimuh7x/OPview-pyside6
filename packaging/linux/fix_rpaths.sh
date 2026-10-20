@@ -17,9 +17,9 @@
 # PyInstaller's onedir COLLECT step puts every bundled file in other than the
 # top-level launcher executable itself) to every ELF file's rpath.
 # Deliberately uses --add-rpath, never --set-rpath/--remove-rpath: some files
-# (e.g. libqtiff.so) already carry a correct, working rpath for their own
-# direct deps, and clobbering it would trade one missing-library bug for
-# another.
+# (e.g. the PySide6 imageformats plugins such as libqjpeg.so) already carry a
+# correct, working rpath for their own direct deps, and clobbering it would
+# trade one missing-library bug for another.
 set -euo pipefail
 
 DIST="$1"

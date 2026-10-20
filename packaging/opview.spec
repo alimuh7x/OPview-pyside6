@@ -35,6 +35,15 @@ a = Analysis(
     noarchive=False,
 )
 
+# PySide6's manylinux wheel links imageformats/libqtiff.so against libtiff.so.5
+# but does not ship that library, and no Ubuntu past 22.04 provides the soname
+# (libtiff6 is not ABI-compatible). OPView never loads TIFFs, so drop the plugin
+# rather than require a freeze host that still has the old soname - otherwise
+# the opview_frozen_no_missing_libs ctest fails everywhere but ubuntu:22.04.
+# The dest path is Linux-only by construction (Windows ships qtiff.dll), so this
+# is a no-op on other platforms.
+a.binaries = [b for b in a.binaries if not b[0].endswith("imageformats/libqtiff.so")]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

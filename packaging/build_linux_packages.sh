@@ -25,16 +25,22 @@ apt-get install -y -q python3 python3-venv python3-pip binutils ca-certificates 
 # libs surface only at runtime on machines that lack them — keep this list
 # in sync with what the desktop dev machines have.
 #
-# libtiff5/libpcre3/libmpdec3 specifically: these carry sonames
-# (libtiff.so.5, libpcre.so.3, libmpdec.so.3) that PySide6's manylinux wheels
-# and Python's stdlib _decimal module were built against, but that Ubuntu
-# dropped or ABI-bumped starting with 24.04 (no `libtiff5`/`libpcre3` package
-# exists there at all; `libmpdec3` is absent on 24.04 and ABI-bumped to
-# `libmpdec4` on 26.04). No CPack Depends string can satisfy all supported
-# Ubuntu targets for these three, so they must travel bundled with the app
-# instead — installing them here lets PyInstaller's own dependency collector
-# pick up plain-named copies at freeze time on this (22.04) host, the only
-# place these old sonames still exist.
+# libpcre3/libmpdec3 specifically: these carry sonames (libpcre.so.3,
+# libmpdec.so.3) that PySide6's manylinux wheels and Python's stdlib _decimal
+# module were built against, but that Ubuntu dropped or ABI-bumped starting
+# with 24.04 (no `libpcre3` package exists there at all; `libmpdec3` is absent
+# on 24.04 and ABI-bumped to `libmpdec4` on 26.04). No CPack Depends string can
+# satisfy all supported Ubuntu targets for these, so they must travel bundled
+# with the app instead — installing them here lets PyInstaller's own dependency
+# collector pick up plain-named copies at freeze time on this (22.04) host, the
+# only place these old sonames still exist.
+#
+# libtiff5 is kept in the list below but no longer needs bundling: its only
+# consumer was PySide6's TIFF image-format plugin, which packaging/opview.spec
+# now drops outright (that plugin's unbundleable libtiff.so.5 dependency made
+# the opview_frozen_no_missing_libs ctest fail on every host newer than 22.04).
+# Left installed because other packages in this closure — the GTK theme stack
+# via gdk-pixbuf, for one — may still link it.
 apt-get install -y -q libglib2.0-0 \
     libgl1 libegl1 libopengl0 libfontconfig1 libdbus-1-3 \
     libnss3 libnspr4 libasound2 libxkbcommon0 libxkbcommon-x11-0 \
