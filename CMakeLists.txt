@@ -190,6 +190,7 @@ else()
             install(CODE "
                 set(OPVIEW_INTERNAL \"${OPVIEW_DIST}/_internal\")
                 set(OPVIEW_LIBDIR \"${CMAKE_INSTALL_LIBDIR}\")
+                set(OPVIEW_BINDIR \"${CMAKE_INSTALL_BINDIR}\")
                 include(\"${OPVIEW_MERGE_SCRIPT}\")"
                 COMPONENT opview)
         endfunction()
