@@ -14,6 +14,11 @@ _MAX_EAGER_FILES_PER_DATASET = int(os.environ.get("OPVIEW_MAX_EAGER_VTK_FILES", 
 _VTK_FOLDER_CACHE: dict[tuple[str, int, int], List[Path]] = {}
 
 
+def eager_file_limit() -> int:
+    """Return the maximum number of file paths eagerly stored per dataset."""
+    return _MAX_EAGER_FILES_PER_DATASET
+
+
 @dataclass
 class DatasetInfo:
     """Resolved dataset metadata for a project VTK folder."""
@@ -80,7 +85,7 @@ def detect_available_datasets(vtk_folder: Path, tab_configs: List[Dict[str, Any]
 
 
 def detect_unconfigured_vtk_files(vtk_folder: Path, tab_configs: List[Dict[str, Any]]) -> List[Path]:
-    """Find VTK files that are not covered by configured dataset patterns."""
+    """Find all VTK files that are not covered by configured dataset patterns."""
     debug_print("detect_unconfigured_vtk_files called")
     start = perf_counter()
     if not vtk_folder or not vtk_folder.exists():
@@ -93,15 +98,12 @@ def detect_unconfigured_vtk_files(vtk_folder: Path, tab_configs: List[Dict[str, 
         if dataset.get("file_glob")
     ]
     remaining: List[Path] = []
-    remaining_count = 0
     for file_path in all_files:
         if any(fnmatchcase(file_path.name, pattern) for pattern in configured_patterns):
             continue
-        remaining_count += 1
-        if len(remaining) < _MAX_EAGER_FILES_PER_DATASET:
-            remaining.append(file_path)
+        remaining.append(file_path)
     debug_print(
-        f"Unconfigured VTK file count={remaining_count}; eager={len(remaining)}; seconds={perf_counter() - start:.3f}"
+        f"Unconfigured VTK file count={len(remaining)}; seconds={perf_counter() - start:.3f}"
     )
     return remaining
 

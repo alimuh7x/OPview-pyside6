@@ -8,6 +8,9 @@ import numpy as np
 import plotly.graph_objects as go
 
 
+CONTOUR_LINE_WIDTH = 2.5
+
+
 class PlotTypeRenderer(ABC):
     """Abstract base — each subclass knows how to build its Plotly traces."""
 
@@ -69,12 +72,13 @@ class ContourLinesRenderer(PlotTypeRenderer):
                 showlabels= True,
                 labelfont = dict(size=11, color="black"),
             ),
+            line          = dict(width=CONTOUR_LINE_WIDTH),
             hovertemplate = hovertemplate,
         )]
 
 
 class ContourFilledRenderer(PlotTypeRenderer):
-    """Discrete colour bands between isolines, with labels."""
+    """Discrete colour bands between isolines."""
 
     key   = "contour_filled"
     label = "Contour Filled"
@@ -91,6 +95,31 @@ class ContourFilledRenderer(PlotTypeRenderer):
             contours      = dict(
                 coloring  = "fill",
                 showlabels= False,
+            ),
+            line          = dict(width=0),
+            hovertemplate = hovertemplate,
+        )]
+
+
+class ContourFilledValuesRenderer(PlotTypeRenderer):
+    """Discrete colour bands with labeled contour values."""
+
+    key   = "contour_filled_values"
+    label = "Contour Filled + Values"
+
+    def build_traces(self, x, y, z, zmin, zmax, colorscale, colorbar_cfg, hovertemplate):
+        return [go.Contour(
+            x             = x,
+            y             = y,
+            z             = np.asarray(z),
+            zmin          = zmin,
+            zmax          = zmax,
+            colorscale    = colorscale,
+            colorbar      = colorbar_cfg,
+            contours      = dict(
+                coloring  = "fill",
+                showlabels= True,
+                labelfont = dict(size=11, color="black"),
             ),
             hovertemplate = hovertemplate,
         )]
@@ -123,7 +152,7 @@ class HeatmapContourRenderer(PlotTypeRenderer):
                 showscale  = False,
                 colorscale = colorscale,
                 contours   = dict(coloring="lines"),
-                line       = dict(color="black", width=1),
+                line       = dict(color="black", width=CONTOUR_LINE_WIDTH),
                 hoverinfo  = "skip",
             ),
         ]
@@ -173,12 +202,33 @@ class DifferencePlotRenderer(PlotTypeRenderer):
         )]
 
 
+class GradientMagnitudeRenderer(PlotTypeRenderer):
+    """Display the controller-computed |grad| map as a heatmap."""
+
+    key   = "gradient_magnitude"
+    label = "|grad|"
+
+    def build_traces(self, x, y, z, zmin, zmax, colorscale, colorbar_cfg, hovertemplate):
+        return [go.Heatmap(
+            x             = x,
+            y             = y,
+            z             = np.asarray(z),
+            zmin          = zmin,
+            zmax          = zmax,
+            colorscale    = colorscale,
+            colorbar      = colorbar_cfg,
+            hovertemplate = hovertemplate,
+        )]
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 PLOT_TYPE_REGISTRY: list[PlotTypeRenderer] = [
     HeatmapRenderer(),
+    GradientMagnitudeRenderer(),
     ContourLinesRenderer(),
     ContourFilledRenderer(),
+    ContourFilledValuesRenderer(),
     HeatmapContourRenderer(),
     ThresholdRenderer(),
     DifferencePlotRenderer(),

@@ -2,9 +2,10 @@
 
 from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QAction, QDesktopServices
-from PySide6.QtWidgets import QApplication, QMenuBar, QMessageBox
+from PySide6.QtWidgets import QApplication, QMenuBar
 
 from app.debug import debug_print
+from app.readable_dialogs import readable_information
 from app.resources import DOCUMENTATION_PATH
 
 
@@ -114,7 +115,7 @@ class AppMenuBar(QMenuBar):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(DOCUMENTATION_PATH)))
 
     def _show_about(self) -> None:
-        QMessageBox.about(
+        readable_information(
             self.parent(),
             "About OPView",
             "<b>OPView</b><br>PySide6 desktop viewer<br><br>"

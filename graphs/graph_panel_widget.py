@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QIcon, QPixmap
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import Qt, QRect, QSize
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -25,13 +26,68 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from config import units
 from config.constants import ALLOWED_TEXTDATA_EXTENSIONS, SKIP_FOLDERS
 from data.text_sources import GenericTextDataSource
+from graphs.graph_animation_player import GraphAnimationPlayer
+from graphs.formula_dialog import FormulaDialog
 from graphs.graph_canvas import GraphCanvas
-from utils.combo_box_utils import update_combo_popup_width
+from graphs.symbol_picker import attach_symbol_picker
+from utils.combo_box_utils import hide_popup_focus_outline, update_combo_popup_width
 from viewer.plot_style import PlotStyle
 
 _ASSETS = Path(__file__).resolve().parent.parent / "assets"
+_FILE_COMBO_MAX_VISIBLE_ITEMS = 12
+
+
+_TIME_LIKE_COLUMNS = ("time", "t")  # preferred X column, case-insensitive
+_DEFAULT_TITLES = {"x": "Time", "y1": "Y1", "y2": "Y2"}
+_SETTINGS_SCROLLBAR_ALLOWANCE = 20  # room for the vertical scrollbar beside the settings
+_CUSTOM = "Custom"  # last entry of a From dropdown: opens the formula dialog
+_NO_UNIT = "-"  # shown when a column has no unit; also the dimensionless unit
+_UNIT_COMBO_WIDTH = 128  # the from and to dropdowns are the same width; room for "percent (%)"
+_MAX_LISTED_COLUMNS = 2  # more columns on one axis are abbreviated: "a, b, …"
+
+
+def conversion_options(source_unit: str) -> list[tuple[str, str]]:
+    """Entries of a "To" combo: an em dash (no conversion), then the scale of the source unit without the source.
+
+    The scale runs small to large (milli ... base ... Mega) and is named by prefix; the unit chosen in From is
+    not listed again. An unknown unit has nothing to convert to.
+    """
+    family = units.family_units(source_unit)
+    options = [("\u2014", "as-is")]
+    return options + [(units.scale_label(unit), f"to:{unit}") for unit in family if unit != source_unit]
+
+
+class _RotatedSettingsLabel(QWidget):
+    """Paints a single word rotated for the collapsed settings rail."""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._text = text
+        self.setObjectName("graphSettingsCollapsedLabel")
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+    def text(self) -> str:
+        return self._text
+
+    def rotation_degrees(self) -> int:
+        return 90
+
+    def sizeHint(self) -> QSize:
+        metrics = self.fontMetrics()
+        return QSize(metrics.height() + 8, metrics.horizontalAdvance(self._text) + 8)
+
+    def paintEvent(self, event) -> None:
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setPen(QColor("#0d2b55"))
+        painter.setFont(self.font())
+        painter.translate(self.width(), 0)
+        painter.rotate(self.rotation_degrees())
+        painter.drawText(QRect(0, 0, self.height(), self.width()), Qt.AlignmentFlag.AlignCenter, self._text)
 
 
 class GraphPanelWidget(QWidget):
@@ -59,9 +115,18 @@ class GraphPanelWidget(QWidget):
         self._axis_radios: dict[tuple[str, str, str], QRadioButton] = {}
         self._legend_edits: dict[tuple[str, str], QLineEdit] = {}
         self._conversion_combos: dict[tuple[str, str], QComboBox] = {}
+        self._unit_combos: dict[tuple[str, str], QComboBox] = {}
+        self._x_formula = ""
+        self._x_custom_unit = ""
+        self._file_column_names: dict[str, tuple[str, ...]] = {}  # columns of each file, by file path
         self._color_combos: dict[tuple[str, str], QComboBox] = {}
         self._sources_layout: QVBoxLayout | None = None
         self._settings_layout: QGridLayout | None = None
+        self._title_user_set = {"x": False, "y1": False, "y2": False}  # a typed title is never overwritten
+        self._auto_titles = dict(_DEFAULT_TITLES)  # what the panel itself last wrote into each title
+        self._file_units: dict[str, dict[str, str]] = {}  # units row of each file, by file path
+        self._animation_player_class = GraphAnimationPlayer
+        self._animation_player = None
         self._build_ui()
         self._refresh_file_sections()
         self._refresh_graph()
@@ -94,6 +159,9 @@ class GraphPanelWidget(QWidget):
             "column_settings": self._column_settings,
             "x_axis_column": self.x_axis_combo.currentData(),
             "x_axis_conversion": self.x_axis_conversion_combo.currentData() or "as-is",
+            "x_axis_source_unit": self._unit_of(self.x_axis_unit_combo),
+            "x_axis_formula": self._x_formula,
+            "x_axis_custom_unit": self._x_custom_unit,
             "x_axis_title": self.x_title_edit.text().strip() or "Time",
             "yaxis1_title": self.y1_title_edit.text().strip() or "Y1",
             "yaxis2_title": self.y2_title_edit.text().strip() or "Y2",
@@ -138,13 +206,9 @@ class GraphPanelWidget(QWidget):
         self.file_combo = QComboBox()
         self.file_combo.setObjectName("graphCombo")
         self.file_combo.setMinimumWidth(260)
-        self.file_combo.currentIndexChanged.connect(self._sync_add_button_state)
+        self.file_combo.setMaxVisibleItems(_FILE_COMBO_MAX_VISIBLE_ITEMS)
+        self.file_combo.currentIndexChanged.connect(self._add_selected_graph_file)
         toolbar.addWidget(self.file_combo)
-
-        self.add_file_button = QPushButton("+ Add To Graph")
-        self.add_file_button.setProperty("accent", True)
-        self.add_file_button.clicked.connect(self._add_selected_graph_file)
-        toolbar.addWidget(self.add_file_button)
 
         self.external_file_button = QPushButton("Add External Text File")
         self.external_file_button.setProperty("accent", True)
@@ -156,10 +220,14 @@ class GraphPanelWidget(QWidget):
         self.download_png_button.setToolTip("Download graph as PNG")
         self.download_png_button.clicked.connect(self._download_png)
         toolbar.addWidget(self.download_png_button)
+        self.download_animation_button = QPushButton(QIcon(str(_ASSETS / "play.png")), "Animate")
+        self.download_animation_button.setIconSize(QSize(16, 16))
+        self.download_animation_button.setProperty("accent", True)
+        self.download_animation_button.setToolTip("Open reveal animation")
+        self.download_animation_button.clicked.connect(self._open_animation_player)
+        toolbar.addWidget(self.download_animation_button)
         toolbar.addStretch(1)
         top_layout.addLayout(toolbar)
-
-        self._refresh_project_selector()
 
         self.sources_group = QGroupBox("Data Sources")
         self.sources_group.setObjectName("graphDataSources")
@@ -190,14 +258,24 @@ class GraphPanelWidget(QWidget):
         settings = self._build_settings_panel()
         main_split.addWidget(settings, 0)
         root.addWidget(self.main_content, 1)
+        self._refresh_project_selector()
+        self._hide_combo_outlines()
         debug_print("GraphPanelWidget._build_ui complete")
 
     def _build_settings_panel(self) -> QWidget:
         debug_print("GraphPanelWidget._build_settings_panel called")
+        container = QWidget()
+        container.setObjectName("graphSettingsContainer")
+        container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        container_layout = QVBoxLayout(container)
+        container_layout.setContentsMargins(0, 0, 0, 0)
+        container_layout.setSpacing(0)
+
         scroll = QScrollArea()
         scroll.setObjectName("graphSettingsScroll")
         scroll.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # never scroll sideways
         scroll.setMinimumWidth(280)
         debug_print("GraphPanelWidget._build_settings_panel width min=280")
         scroll.setMaximumWidth(720)
@@ -212,9 +290,24 @@ class GraphPanelWidget(QWidget):
         self._settings_layout.setColumnStretch(0, 1)
         self._settings_layout.setColumnStretch(1, 1)
 
+        header = QWidget()
+        header.setObjectName("graphSettingsHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
         title = QLabel("SETTINGS")
         title.setObjectName("graphSettingsTitle")
-        self._settings_layout.addWidget(title, 0, 0, 1, 2)
+        header_layout.addWidget(title)
+        header_layout.addStretch(1)
+        self.settings_toggle_button = QPushButton(header)
+        self.settings_toggle_button.setObjectName("graphSettingsToggleButton")
+        self.settings_toggle_button.setCheckable(True)
+        self.settings_toggle_button.setChecked(True)
+        self.settings_toggle_button.setFlat(True)
+        self.settings_toggle_button.setIconSize(QSize(28, 28))
+        self.settings_toggle_button.toggled.connect(self._set_settings_visible)
+        header_layout.addWidget(self.settings_toggle_button)
+        self._settings_layout.addWidget(header, 0, 0, 1, 2)
 
         self._settings_layout.addWidget(self._build_axis_group(), 1, 0)
         self._settings_layout.addWidget(self._build_display_group(), 1, 1)
@@ -227,7 +320,30 @@ class GraphPanelWidget(QWidget):
         self._settings_layout.addWidget(self.column_settings_group, 2, 0, 1, 2)
         self._settings_layout.setRowStretch(3, 1)
         scroll.setWidget(content)
-        return scroll
+        container_layout.addWidget(scroll)
+
+        self.settings_collapsed_rail = QWidget()
+        self.settings_collapsed_rail.setObjectName("graphSettingsCollapsedRail")
+        self.settings_collapsed_rail.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.settings_collapsed_rail.setFixedWidth(56)
+        rail_layout = QVBoxLayout(self.settings_collapsed_rail)
+        rail_layout.setContentsMargins(8, 18, 8, 8)
+        rail_layout.setSpacing(8)
+        self.settings_collapsed_toggle_button = QPushButton(self.settings_collapsed_rail)
+        self.settings_collapsed_toggle_button.setObjectName("graphSettingsCollapsedToggleButton")
+        self.settings_collapsed_toggle_button.setCheckable(True)
+        self.settings_collapsed_toggle_button.setChecked(False)
+        self.settings_collapsed_toggle_button.setFlat(True)
+        self.settings_collapsed_toggle_button.setIconSize(QSize(28, 28))
+        self.settings_collapsed_toggle_button.toggled.connect(self._set_settings_visible)
+        self.settings_collapsed_label = _RotatedSettingsLabel("Settings", self.settings_collapsed_rail)
+        rail_layout.addWidget(self.settings_collapsed_toggle_button, 0, Qt.AlignmentFlag.AlignHCenter)
+        rail_layout.addWidget(self.settings_collapsed_label, 0, Qt.AlignmentFlag.AlignHCenter)
+        rail_layout.addStretch(1)
+        self.settings_collapsed_rail.hide()
+        container_layout.addWidget(self.settings_collapsed_rail)
+        self._update_settings_toggle_button(True)
+        return container
 
     def set_available_width(self, width: int) -> None:
         debug_print(f"GraphPanelWidget.set_available_width width={width}")
@@ -239,10 +355,34 @@ class GraphPanelWidget(QWidget):
         self.graph_area.setMinimumWidth(800)
         self.graph_area.setMaximumWidth(16777215)
         self.canvas.set_available_width(bounded_width)
-        settings_width = min(720, bounded_width)
-        self.settings_scroll.setMinimumWidth(min(280, settings_width))
+        # Wide enough for the settings content, so nothing is cut off and no horizontal scrollbar is needed.
+        content_width = self.settings_scroll.widget().minimumSizeHint().width() + _SETTINGS_SCROLLBAR_ALLOWANCE
+        settings_width = min(max(720, content_width), bounded_width)
+        self.settings_scroll.setMinimumWidth(min(max(280, content_width), settings_width))
         self.settings_scroll.setMaximumWidth(settings_width)
         debug_print(f"GraphPanelWidget settings max width={settings_width}")
+
+    def _set_settings_visible(self, visible: bool) -> None:
+        debug_print(f"GraphPanelWidget._set_settings_visible visible={visible}")
+        settings_visible = bool(visible)
+        self.settings_scroll.setVisible(settings_visible)
+        self.settings_collapsed_rail.setVisible(not settings_visible)
+        for button in (self.settings_toggle_button, self.settings_collapsed_toggle_button):
+            was_blocked = button.blockSignals(True)
+            button.setChecked(settings_visible)
+            button.blockSignals(was_blocked)
+        self._update_settings_toggle_button(settings_visible)
+
+    def _update_settings_toggle_button(self, settings_visible: bool) -> None:
+        asset_name = "show_sidebar.png" if settings_visible else "hide_sidebar.png"
+        icon = QIcon(str(_ASSETS / asset_name))
+        self.settings_toggle_button.setIcon(icon)
+        self.settings_collapsed_toggle_button.setIcon(icon)
+        self.settings_toggle_button.setProperty("icon_asset", asset_name)
+        self.settings_collapsed_toggle_button.setProperty("icon_asset", asset_name)
+        tooltip = "Hide settings" if settings_visible else "Show settings"
+        self.settings_toggle_button.setToolTip(tooltip)
+        self.settings_collapsed_toggle_button.setToolTip(tooltip)
 
     def _build_axis_group(self) -> QWidget:
         debug_print("GraphPanelWidget._build_axis_group called")
@@ -258,34 +398,46 @@ class GraphPanelWidget(QWidget):
         self.x_axis_combo = QComboBox()
         self.x_axis_combo.setObjectName("graphCombo")
         self.x_axis_combo.setFixedWidth(120)
-        self.x_axis_combo.currentIndexChanged.connect(self._refresh_graph)
+        self.x_axis_combo.currentIndexChanged.connect(self._on_x_column_changed)
         layout.addWidget(self.x_axis_combo, 0, 1)
-        layout.addWidget(QLabel("X Conversion:"), 1, 0)
+        layout.addWidget(QLabel("X Convert:"), 1, 0)
         self.x_axis_conversion_combo = QComboBox()
         self.x_axis_conversion_combo.setObjectName("graphCombo")
-        self.x_axis_conversion_combo.setFixedWidth(120)
-        for label, value in [("As-is", "as-is"), ("sec -> min", "sec-to-min"), ("sec -> hour", "sec-to-hour")]:
-            self.x_axis_conversion_combo.addItem(label, value)
-        update_combo_popup_width(self.x_axis_conversion_combo)
+        self.x_axis_conversion_combo.setFixedWidth(_UNIT_COMBO_WIDTH)
+        self.x_axis_unit_combo = self._build_unit_combo()
+        self._fill_conversion_combo(self.x_axis_conversion_combo, _NO_UNIT, "as-is")
         self.x_axis_conversion_combo.currentIndexChanged.connect(self._refresh_graph)
-        layout.addWidget(self.x_axis_conversion_combo, 1, 1)
+        self.x_axis_unit_combo.currentIndexChanged.connect(self._on_x_unit_changed)
+        self.x_axis_unit_combo.activated.connect(self._on_x_unit_activated)
+        x_conversion_row = QWidget()
+        x_conversion_layout = QHBoxLayout(x_conversion_row)
+        x_conversion_layout.setContentsMargins(0, 0, 0, 0)
+        x_conversion_layout.setSpacing(6)
+        x_conversion_layout.addWidget(self.x_axis_unit_combo)
+        x_conversion_layout.addWidget(QLabel("to"))
+        x_conversion_layout.addWidget(self.x_axis_conversion_combo)
+        x_conversion_layout.addStretch(1)
+        layout.addWidget(x_conversion_row, 1, 1)
         layout.addWidget(QLabel("X Title:"), 2, 0)
         self.x_title_edit = QLineEdit("Time")
         self.x_title_edit.setObjectName("graphLineEdit")
-        self.x_title_edit.setFixedWidth(120)
-        self.x_title_edit.textChanged.connect(self._refresh_graph)
+        self.x_title_edit.setMinimumWidth(120)  # grows to fill the column
+        self.x_title_edit.editingFinished.connect(self._refresh_graph)
+        attach_symbol_picker(self.x_title_edit)
         layout.addWidget(self.x_title_edit, 2, 1)
         layout.addWidget(QLabel("Y-Axis 1 Title:"), 3, 0)
         self.y1_title_edit = QLineEdit("Y1")
         self.y1_title_edit.setObjectName("graphLineEdit")
-        self.y1_title_edit.setFixedWidth(120)
-        self.y1_title_edit.textChanged.connect(self._refresh_graph)
+        self.y1_title_edit.setMinimumWidth(120)  # grows to fill the column
+        self.y1_title_edit.editingFinished.connect(self._refresh_graph)
+        attach_symbol_picker(self.y1_title_edit)
         layout.addWidget(self.y1_title_edit, 3, 1)
         layout.addWidget(QLabel("Y-Axis 2 Title:"), 4, 0)
         self.y2_title_edit = QLineEdit("Y2")
         self.y2_title_edit.setObjectName("graphLineEdit")
-        self.y2_title_edit.setFixedWidth(120)
-        self.y2_title_edit.textChanged.connect(self._refresh_graph)
+        self.y2_title_edit.setMinimumWidth(120)  # grows to fill the column
+        self.y2_title_edit.editingFinished.connect(self._refresh_graph)
+        attach_symbol_picker(self.y2_title_edit)
         layout.addWidget(self.y2_title_edit, 4, 1)
         return group
 
@@ -302,14 +454,19 @@ class GraphPanelWidget(QWidget):
         layout.addWidget(QLabel("Legend Pos:"), 0, 0)
         self.legend_position_combo = QComboBox()
         self.legend_position_combo.setObjectName("graphCombo")
-        self.legend_position_combo.setMinimumWidth(170)
+        self.legend_position_combo.setMinimumWidth(130)
         for label, value in [
             ("Top Left", "top-left"),
+            ("Middle Top", "middle-top"),
             ("Top Right", "top-right"),
+            ("Middle Left", "middle-left"),
+            ("Middle Right", "middle-right"),
             ("Bottom Left", "bottom-left"),
+            ("Middle Bottom", "middle-bottom"),
             ("Bottom Right", "bottom-right"),
             ("Right Outside", "right-outside"),
         ]:
+            debug_print(f"GraphPanelWidget adding legend position label={label} value={value}")
             self.legend_position_combo.addItem(label, value)
         update_combo_popup_width(self.legend_position_combo)
         self.legend_position_combo.currentIndexChanged.connect(self._refresh_graph)
@@ -326,7 +483,7 @@ class GraphPanelWidget(QWidget):
         layout.addWidget(QLabel("Trace:"), 2, 0)
         self.trace_mode_combo = QComboBox()
         self.trace_mode_combo.setObjectName("graphCombo")
-        self.trace_mode_combo.setMinimumWidth(170)
+        self.trace_mode_combo.setMinimumWidth(130)
         for label, value in [("Lines", "lines"), ("Markers", "markers"), ("Lines + Markers", "lines+markers")]:
             self.trace_mode_combo.addItem(label, value)
         update_combo_popup_width(self.trace_mode_combo)
@@ -336,7 +493,7 @@ class GraphPanelWidget(QWidget):
         layout.addWidget(QLabel("Style:"), 3, 0)
         self.line_style_combo = QComboBox()
         self.line_style_combo.setObjectName("graphCombo")
-        self.line_style_combo.setMinimumWidth(170)
+        self.line_style_combo.setMinimumWidth(130)
         for label, value in [("Solid", "solid"), ("Dash", "dash"), ("Dot", "dot"), ("Dash Dot", "dashdot")]:
             self.line_style_combo.addItem(label, value)
         update_combo_popup_width(self.line_style_combo)
@@ -363,10 +520,12 @@ class GraphPanelWidget(QWidget):
                 continue
             self.project_combo.addItem(project_name, project_name)
             self.project_combo.setItemData(self.project_combo.count() - 1, self._project_tooltip(info), Qt.ItemDataRole.ToolTipRole)
-        index = self.project_combo.findData(current)
+        index = self.project_combo.findData(current) if current else -1
         if index < 0 and self.project_combo.count() > 1:
             index = 1
+            debug_print("GraphPanelWidget selecting first available project")
         self.project_combo.setCurrentIndex(index if index >= 0 else 0)
+        debug_print(f"GraphPanelWidget project selector index={self.project_combo.currentIndex()}")
         self.project_combo.blockSignals(False)
         update_combo_popup_width(self.project_combo)
         self._refresh_folder_selector()
@@ -384,10 +543,12 @@ class GraphPanelWidget(QWidget):
                 self._folder_files[folder_path] = files
                 self.folder_combo.addItem(label, folder_path)
                 self.folder_combo.setItemData(self.folder_combo.count() - 1, folder_path, Qt.ItemDataRole.ToolTipRole)
-        index = self.folder_combo.findData(current)
+        index = self.folder_combo.findData(current) if current else -1
         if index < 0 and self.folder_combo.count() > 1:
             index = 1
+            debug_print("GraphPanelWidget selecting first available folder")
         self.folder_combo.setCurrentIndex(index if index >= 0 else 0)
+        debug_print(f"GraphPanelWidget folder selector index={self.folder_combo.currentIndex()}")
         self.folder_combo.blockSignals(False)
         update_combo_popup_width(self.folder_combo)
         self._refresh_file_selector()
@@ -403,16 +564,28 @@ class GraphPanelWidget(QWidget):
             path = Path(file_path)
             self.file_combo.addItem(path.name, file_path)
             self.file_combo.setItemData(self.file_combo.count() - 1, str(path), Qt.ItemDataRole.ToolTipRole)
-        index = self.file_combo.findData(current)
-        if index < 0 and self.file_combo.count() > 1:
-            index = 1
+        index = self.file_combo.findData(current) if current else -1
+        if index < 0:
+            debug_print("GraphPanelWidget no previous file selection; waiting for user click")
         self.file_combo.setCurrentIndex(index if index >= 0 else 0)
+        debug_print(f"GraphPanelWidget file selector index={self.file_combo.currentIndex()}")
         self.file_combo.blockSignals(False)
+        self._update_file_combo_scrollbar()
         update_combo_popup_width(self.file_combo)
-        self._sync_add_button_state()
+        debug_print("GraphPanelWidget file selector refreshed without auto-add")
 
-    def _sync_add_button_state(self, *args) -> None:
-        self.add_file_button.setEnabled(bool(self.file_combo.currentData()))
+    def _update_file_combo_scrollbar(self) -> None:
+        item_count = self.file_combo.count()
+        debug_print(f"GraphPanelWidget._update_file_combo_scrollbar count={item_count}")
+        debug_print(f"GraphPanelWidget._update_file_combo_scrollbar max_visible={_FILE_COMBO_MAX_VISIBLE_ITEMS}")
+        scrollbar_policy = (
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOn
+            if item_count > _FILE_COMBO_MAX_VISIBLE_ITEMS
+            else Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        debug_print(f"GraphPanelWidget._update_file_combo_scrollbar policy={scrollbar_policy}")
+        self.file_combo.view().setVerticalScrollBarPolicy(scrollbar_policy)
+        debug_print("GraphPanelWidget._update_file_combo_scrollbar applied")
 
     def _add_selected_graph_file(self) -> None:
         debug_print("GraphPanelWidget._add_selected_graph_file called")
@@ -420,11 +593,33 @@ class GraphPanelWidget(QWidget):
         if not file_path:
             debug_print("GraphPanelWidget._add_selected_graph_file no file")
             return
+        debug_print(f"GraphPanelWidget._add_selected_graph_file file={file_path}")
         self.add_files([file_path])
 
     def _download_png(self) -> None:
         debug_print("GraphPanelWidget._download_png called")
         self.canvas.download_png(f"custom_graph_{self.panel_number}")
+
+    def _open_animation_player(self) -> None:
+        debug_print("GraphPanelWidget._open_animation_player called")
+        if self._animation_player is not None and self._animation_player.isVisible():
+            debug_print("GraphPanelWidget animation player already visible")
+            self._animation_player.raise_()
+            debug_print("GraphPanelWidget animation player raised")
+            self._animation_player.activateWindow()
+            debug_print("GraphPanelWidget animation player activated")
+            return
+        state = self.state()
+        debug_print(f"GraphPanelWidget animation file count={len(state.get('files', []))}")
+        debug_print(f"GraphPanelWidget animation panel_number={self.panel_number}")
+        self._animation_player = self._animation_player_class(
+            state,
+            self.panel_number,
+            parent=self,
+        )
+        debug_print("GraphPanelWidget animation player created")
+        self._animation_player.show()
+        debug_print("GraphPanelWidget animation player shown")
 
     def _folder_options(self, project_name: str) -> list[tuple[str, str, list[str]]]:
         info = self._projects.get(project_name) or {}
@@ -510,8 +705,12 @@ class GraphPanelWidget(QWidget):
 
         source = GenericTextDataSource(file_path)
         if not source.load():
-            layout.addWidget(QLabel("Could not load file"))
+            reason = QLabel(source.error or "Could not load file")
+            reason.setWordWrap(True)
+            layout.addWidget(reason)
             return frame
+        self._file_units[file_path] = source.units()
+        self._file_column_names[file_path] = tuple(source.columns())
         row = QHBoxLayout()
         for column in source.columns():
             check = QCheckBox(column)
@@ -557,10 +756,18 @@ class GraphPanelWidget(QWidget):
                 for column in source.columns():
                     self.x_axis_combo.addItem(column, column)
         idx = self.x_axis_combo.findData(current)
-        self.x_axis_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        if idx < 0:
+            idx = self._default_x_index()
+        self.x_axis_combo.setCurrentIndex(idx)
         self.x_axis_combo.blockSignals(False)
         update_combo_popup_width(self.x_axis_combo)
+        if self.x_axis_combo.currentData() != current:
+            self._sync_x_unit_from_file()
         debug_print(f"GraphPanelWidget._refresh_x_axis_options count={self.x_axis_combo.count()}")
+
+    def _hide_combo_outlines(self) -> None:
+        for combo in self.findChildren(QComboBox):
+            hide_popup_focus_outline(combo)
 
     def _refresh_column_settings(self) -> None:
         debug_print("GraphPanelWidget._refresh_column_settings called")
@@ -568,13 +775,119 @@ class GraphPanelWidget(QWidget):
         self._axis_radios.clear()
         self._legend_edits.clear()
         self._conversion_combos.clear()
+        self._unit_combos.clear()
         self._color_combos.clear()
         for file_path, columns in self._columns_by_file.items():
             for column in columns:
                 self.column_settings_layout.addWidget(self._build_column_setting(file_path, column))
         if not any(self._columns_by_file.values()):
             self.column_settings_layout.addWidget(QLabel("Select columns to configure traces."))
+        self._hide_combo_outlines()
         debug_print("GraphPanelWidget._refresh_column_settings complete")
+
+    @staticmethod
+    def _build_unit_combo() -> QComboBox:
+        combo = QComboBox()
+        combo.setObjectName("graphCombo")
+        combo.setFixedWidth(_UNIT_COMBO_WIDTH)
+        GraphPanelWidget._rebuild_unit_combo(combo, _NO_UNIT, _NO_UNIT)
+        combo.setToolTip(
+            "Unit of the data in the file, pre-filled from its units row. Custom: write a formula instead."
+        )
+        return combo
+
+    @staticmethod
+    def _rebuild_unit_combo(combo: QComboBox, selected: str, native: str = "") -> None:
+        """From lists the scale of the data's own unit by prefix, then Custom.
+
+        Each entry keeps its unit as data, so the base unit's name never has to be shown. When the file gives
+        no unit (`native`), `s`, `K` and `°C` follow so the user can say what the data is. The list belongs to
+        the data, not to the selection: it does not change while the user picks from it.
+        """
+        no_unit = not units.display_unit(native)
+        combo.blockSignals(True)
+        combo.clear()
+        for unit in units.family_units(_NO_UNIT if no_unit else native):  # the data's own scale, whatever is selected
+            combo.addItem(units.scale_label(unit), unit)
+        if no_unit:
+            for base in units.declarable_units():
+                combo.addItem(base, base)
+        combo.addItem(_CUSTOM, _CUSTOM)
+        index = combo.findData(selected)
+        combo.setCurrentIndex(index if index >= 0 else 0)
+        update_combo_popup_width(combo)
+        combo.blockSignals(False)
+
+    @staticmethod
+    def _show_unit(combo: QComboBox, unit: str, native: str = "") -> None:
+        """Show a unit in a From dropdown, with its whole scale listed (also for a unit like "TPa" or "mol")."""
+        GraphPanelWidget._rebuild_unit_combo(combo, unit or _NO_UNIT, native)
+
+    @staticmethod
+    def _unit_of(combo: QComboBox) -> str:
+        """The unit (or "Custom") behind the selected entry of a From dropdown."""
+        return combo.currentData() or _NO_UNIT
+
+    @staticmethod
+    def _fill_conversion_combo(combo: QComboBox, source_unit: str, current: str) -> str:
+        """Rebuild the "To" entries for a source unit; returns the conversion now selected."""
+        combo.blockSignals(True)
+        combo.clear()
+        for label, value in conversion_options(source_unit):
+            combo.addItem(label, value)
+        index = combo.findData(units.normalize_conversion(current))
+        if index < 0:
+            index = max(0, combo.findData("as-is"))  # no change: the source unit itself
+        combo.setCurrentIndex(index)
+        update_combo_popup_width(combo)
+        combo.blockSignals(False)
+        return combo.currentData() or "as-is"
+
+    def _on_x_column_changed(self, _index: int = 0) -> None:
+        self._sync_x_unit_from_file()
+
+    def _on_x_unit_changed(self, _index: int = 0) -> None:
+        if self._unit_of(self.x_axis_unit_combo) == _CUSTOM:
+            return  # handled when activated: the formula dialog decides
+        unit = units.normalize_unit(self._unit_of(self.x_axis_unit_combo)) or _NO_UNIT
+        self._fill_conversion_combo(
+            self.x_axis_conversion_combo, unit, self.x_axis_conversion_combo.currentData() or "as-is"
+        )
+        self._refresh_graph()
+
+    def _on_x_unit_activated(self, _index: int = 0) -> None:
+        if self._unit_of(self.x_axis_unit_combo) != _CUSTOM:
+            return
+        column = self.x_axis_combo.currentData()
+        answer = self._ask_formula(self._files[0], column, self._x_formula, self._x_custom_unit) if (
+            column and self._files
+        ) else None
+        if answer is None:
+            if self.x_axis_conversion_combo.currentData() != "custom":
+                self._show_unit(self.x_axis_unit_combo, self._x_previous_unit(), self._x_native_unit())
+            return
+        self._x_formula, self._x_custom_unit = answer
+        self._show_custom(self.x_axis_unit_combo, self.x_axis_conversion_combo, self._x_custom_unit)
+        self._refresh_graph()
+
+    def _x_native_unit(self) -> str:
+        """The unit the file gives for the X column ("" when it gives none)."""
+        column = self.x_axis_combo.currentData()
+        return units.normalize_unit(self._file_unit(self._files[0], column)) if (column and self._files) else ""
+
+    def _x_previous_unit(self) -> str:
+        column = self.x_axis_combo.currentData()
+        file_unit = self._file_unit(self._files[0], column) if (column and self._files) else ""
+        return units.normalize_unit(file_unit)
+
+    def _sync_x_unit_from_file(self) -> None:
+        """Default the X unit to the file's units row for the chosen X column."""
+        column = self.x_axis_combo.currentData()
+        file_unit = self._file_unit(self._files[0], column) if (column and self._files) else ""
+        self.x_axis_unit_combo.blockSignals(True)
+        self._show_unit(self.x_axis_unit_combo, units.normalize_unit(file_unit), units.normalize_unit(file_unit))
+        self.x_axis_unit_combo.blockSignals(False)
+        self._on_x_unit_changed()
 
     def _build_column_setting(self, file_path: str, column: str) -> QWidget:
         debug_print(f"GraphPanelWidget._build_column_setting file={file_path} column={column}")
@@ -594,15 +907,16 @@ class GraphPanelWidget(QWidget):
         layout.addWidget(title, 0, 0, 1, 4)
         layout.addWidget(QLabel("Legend:"), 1, 0)
         layout.addWidget(QLabel("Color:"), 1, 1)
-        layout.addWidget(QLabel("Conversions:"), 1, 2)
+        layout.addWidget(QLabel("Convert from / to:"), 1, 2)
         layout.addWidget(QLabel("Y-axis:"), 1, 3)
 
         legend = QLineEdit(settings.get("legend", column))
         legend.setObjectName("graphLineEdit")
         legend.setFixedWidth(145)
         legend.setFixedHeight(30)
-        legend.textChanged.connect(lambda text, f=file_path, c=column: self._set_legend(f, c, text))
+        legend.editingFinished.connect(lambda f=file_path, c=column, edit=legend: self._set_legend(f, c, edit.text()))
         self._legend_edits[(file_path, column)] = legend
+        attach_symbol_picker(legend)
         layout.addWidget(legend, 2, 0)
 
         color_combo = QComboBox()
@@ -625,20 +939,35 @@ class GraphPanelWidget(QWidget):
         self._color_combos[(file_path, column)] = color_combo
         layout.addWidget(color_combo, 2, 1)
 
+        conversion_widget = QWidget()
+        conversion_layout = QHBoxLayout(conversion_widget)
+        conversion_layout.setContentsMargins(0, 0, 0, 0)
+        conversion_layout.setSpacing(6)
+        unit_combo = self._build_unit_combo()
+        unit_combo.setFixedHeight(30)
+        self._show_unit(unit_combo, settings.get("source_unit", ""), self._file_unit(file_path, column))
         conversion_combo = QComboBox()
         conversion_combo.setObjectName("graphCombo")
-        conversion_combo.setFixedWidth(125)
+        conversion_combo.setFixedWidth(_UNIT_COMBO_WIDTH)
         conversion_combo.setFixedHeight(30)
-        for label, value in [("As-is", "as-is"), ("%", "percent"), ("MPa", "mpa"), ("GPa", "gpa")]:
-            conversion_combo.addItem(label, value)
-        update_combo_popup_width(conversion_combo)
-        conversion_index = conversion_combo.findData(settings.get("conversion", "as-is"))
-        conversion_combo.setCurrentIndex(conversion_index if conversion_index >= 0 else 0)
+        settings["conversion"] = self._fill_conversion_combo(
+            conversion_combo, settings.get("source_unit", ""), settings.get("conversion", "as-is")
+        ) if settings.get("conversion") != "custom" else "custom"
         conversion_combo.currentIndexChanged.connect(
             lambda _index, f=file_path, c=column, combo=conversion_combo: self._set_conversion(f, c, combo.currentData())
         )
+        unit_combo.currentIndexChanged.connect(
+            lambda _index, f=file_path, c=column, combo=unit_combo: self._set_source_unit(f, c, self._unit_of(combo))
+        )
+        unit_combo.activated.connect(lambda _index, f=file_path, c=column: self._on_unit_activated(f, c))
+        if settings.get("conversion") == "custom":
+            self._show_custom(unit_combo, conversion_combo, settings.get("custom_unit", ""))
         self._conversion_combos[(file_path, column)] = conversion_combo
-        layout.addWidget(conversion_combo, 2, 2)
+        self._unit_combos[(file_path, column)] = unit_combo
+        conversion_layout.addWidget(unit_combo)
+        conversion_layout.addWidget(QLabel("to"))
+        conversion_layout.addWidget(conversion_combo)
+        layout.addWidget(conversion_widget, 2, 2)
 
         y_axis_widget = QWidget()
         y_axis_layout = QHBoxLayout(y_axis_widget)
@@ -676,6 +1005,62 @@ class GraphPanelWidget(QWidget):
         self._ensure_column_setting(file_path, column)["conversion"] = conversion or "as-is"
         self._refresh_graph()
 
+    def _set_source_unit(self, file_path: str, column: str, text: str) -> None:
+        debug_print(f"GraphPanelWidget._set_source_unit file={file_path} column={column} unit={text}")
+        if text == _CUSTOM:
+            return  # handled when activated: the formula dialog decides
+        settings = self._ensure_column_setting(file_path, column)
+        settings["source_unit"] = units.normalize_unit(text) or _NO_UNIT
+        combo = self._conversion_combos.get((file_path, column))
+        if combo is not None:
+            settings["conversion"] = self._fill_conversion_combo(
+                combo, settings["source_unit"], settings.get("conversion", "as-is")
+            )
+        self._refresh_graph()
+
+    def _on_unit_activated(self, file_path: str, column: str) -> None:
+        combo = self._unit_combos.get((file_path, column))
+        if combo is None or self._unit_of(combo) != _CUSTOM:
+            return
+        settings = self._ensure_column_setting(file_path, column)
+        answer = self._ask_formula(file_path, column, settings.get("formula", ""), settings.get("custom_unit", ""))
+        if answer is None:
+            if settings.get("conversion") != "custom":
+                self._show_unit(combo, settings.get("source_unit", ""), self._file_unit(file_path, column))
+            return
+        settings["formula"], settings["custom_unit"] = answer
+        settings["conversion"] = "custom"
+        self._show_custom(combo, self._conversion_combos[(file_path, column)], answer[1])
+        self._refresh_graph()
+
+    def _show_custom(self, unit_combo: QComboBox, conversion_combo: QComboBox, label: str) -> None:
+        """Show a formula conversion: the From dropdown reads Custom, the To dropdown the result's unit label."""
+        unit_combo.blockSignals(True)
+        unit_combo.setCurrentIndex(max(0, unit_combo.findData(_CUSTOM)))
+        unit_combo.blockSignals(False)
+        conversion_combo.blockSignals(True)
+        conversion_combo.clear()
+        conversion_combo.addItem(label or _NO_UNIT, "custom")
+        conversion_combo.setCurrentIndex(0)
+        conversion_combo.blockSignals(False)
+
+    def _ask_formula(self, file_path: str, column: str, formula: str, unit: str) -> tuple[str, str] | None:
+        """Open the formula dialog for one column; returns (formula, unit label), or None when cancelled."""
+        source = GenericTextDataSource(file_path)
+        data = source.dataframe_dict() if source.load() else {}
+        if column not in data:
+            return None
+        dialog = FormulaDialog(
+            self,
+            current_column=column,
+            column_data=data,
+            formula=formula,
+            unit=unit,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            return dialog.formula(), dialog.unit()
+        return None
+
     def _set_color(self, file_path: str, column: str, color: str) -> None:
         debug_print(f"GraphPanelWidget._set_color file={file_path} column={column} color={color}")
         self._ensure_column_setting(file_path, column)["color"] = color or PlotStyle.series_color(0)
@@ -693,6 +1078,7 @@ class GraphPanelWidget(QWidget):
         settings.setdefault("legend", self._default_legend(file_path, column))
         settings.setdefault("yaxis", "y1")
         settings.setdefault("conversion", "as-is")
+        settings.setdefault("source_unit", units.normalize_unit(self._file_unit(file_path, column)) or _NO_UNIT)
         settings.setdefault("color", PlotStyle.series_color(self._series_index(file_path, column)))
         debug_print(f"GraphPanelWidget._ensure_column_setting settings={settings}")
         return settings
@@ -705,6 +1091,70 @@ class GraphPanelWidget(QWidget):
                     return index
                 index += 1
         return index
+
+    def _default_x_index(self) -> int:
+        """A time-like column when the file has one (TimeStep, the first column, is rarely what you plot against)."""
+        for index in range(self.x_axis_combo.count()):
+            if str(self.x_axis_combo.itemData(index)).strip().lower() in _TIME_LIKE_COLUMNS:
+                return index
+        return 0
+
+    def _file_unit(self, file_path: str, column: str) -> str:
+        return self._file_units.get(file_path, {}).get(column, "")
+
+    @staticmethod
+    def _axis_title(base: str, unit_list: list[str]) -> str:
+        shared = unit_list[0] if unit_list and all(unit == unit_list[0] for unit in unit_list) else ""
+        shared = units.display_unit(shared)  # data with no unit shows none, whatever its prefix
+        return f"{base} ({shared})" if shared else base
+
+    def _auto_x_title(self) -> str:
+        column = self.x_axis_combo.currentData()
+        if not column:
+            return _DEFAULT_TITLES["x"]
+        names = self._file_column_names.get(self._files[0], ()) if self._files else ()
+        transform = self.canvas.x_transform(self.state(), names)
+        fallback = self._file_unit(self._files[0], column) if (self._files and transform.kind != "formula") else ""
+        return self._axis_title(str(column), [transform.unit or fallback])
+
+    def _auto_y_title(self, axis: str) -> str:
+        names: list[str] = []
+        shown_units: list[str] = []
+        for file_path, columns in self._columns_by_file.items():
+            for column in columns:
+                settings = self._column_settings.get(file_path, {}).get(column, {})
+                if settings.get("yaxis", "y1") != axis:
+                    continue
+                transform = self.canvas.column_transform(settings, self._file_column_names.get(file_path, ()))
+                custom = settings.get("conversion") == "custom"
+                unit = transform.unit or ("" if custom else self._file_unit(file_path, column))
+                shown_units.append(unit)
+                if column not in names:
+                    names.append(column)
+        if not names:
+            return _DEFAULT_TITLES[axis]
+        base = ", ".join(names[:_MAX_LISTED_COLUMNS]) + (", …" if len(names) > _MAX_LISTED_COLUMNS else "")
+        return self._axis_title(base, shown_units)
+
+    def _refresh_auto_titles(self) -> None:
+        """Axis titles follow the X column, the plotted columns and their units, unless you typed a title.
+
+        A title that differs from what this method last wrote was typed by the user and is left alone;
+        clearing it hands it back to automatic.
+        """
+        edits = {"x": self.x_title_edit, "y1": self.y1_title_edit, "y2": self.y2_title_edit}
+        for key, edit in edits.items():
+            text = edit.text()
+            if not text.strip():
+                self._title_user_set[key] = False
+            elif text != self._auto_titles[key]:
+                self._title_user_set[key] = True
+            if self._title_user_set[key]:
+                continue
+            title = self._auto_x_title() if key == "x" else self._auto_y_title(key)
+            self._auto_titles[key] = title
+            if text != title:
+                edit.setText(title)
 
     def _refresh_auto_legends(self) -> None:
         selected: list[tuple[str, str]] = [
@@ -745,6 +1195,7 @@ class GraphPanelWidget(QWidget):
     def _refresh_graph(self, *args) -> None:
         debug_print("GraphPanelWidget._refresh_graph called")
         self._refresh_auto_legends()
+        self._refresh_auto_titles()
         self.canvas.render(self.state())
         debug_print("GraphPanelWidget._refresh_graph complete")
 

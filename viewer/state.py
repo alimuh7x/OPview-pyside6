@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Any, Dict, Optional
 
 
@@ -27,6 +27,9 @@ class ViewerState:
     first_click: Optional[float] = None
     clicked_message: Optional[str] = None
     colorscale_mode: str = "normal"
+    auto_scale_zoom: bool = False
+    discrete_band_count: int = 2
+    colorbar_mode: str = "bar"
     line_scan_y: Optional[float] = None
     line_scan_x: Optional[float] = None
     line_scan_direction: str = "horizontal"
@@ -35,6 +38,11 @@ class ViewerState:
     interfaces_overlay_visible: bool = False
     status_message: str = "Waiting for data"
     rotation_degrees: int = 0
+    time_plot_pick_mode: bool = False
+    time_plot_x: Optional[float] = None
+    time_plot_y: Optional[float] = None
+    time_plot_points: list[dict[str, float | str]] = field(default_factory=list)
+    time_plot_points_visible: bool = True
 
     def to_dict(self) -> Dict[str, Any]:
         """Return JSON-serialisable dict."""

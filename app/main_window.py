@@ -2,10 +2,11 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QUrl
+from PySide6.QtCore import QEvent, QEventLoop, QSettings, QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QIcon
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QMainWindow,
@@ -20,12 +21,14 @@ from PySide6.QtWidgets import (
 from app.debug import debug_print
 from app.menu_bar import AppMenuBar
 from app.resources import APP_LOGO_PATH, DOCUMENTATION_PATH
+from app.title_bar import apply_dark_title_bar
 from graphs.tab_widget import CustomGraphTab
+from multi_property.multi_property_tab import MultiPropertyTab
 from multi_view.multi_view_tab import MultiViewTab
 from sidebar.sidebar_widget import SidebarWidget
 from single_view.tab_widget import SingleViewTab
-from utils.file_watcher import FileWatcherService
 from utils.project_scanner import scan_project_folders
+from utils.vtk_utils import clear_reader_cache
 
 
 class MainWindow(QMainWindow):
@@ -37,10 +40,10 @@ class MainWindow(QMainWindow):
         self.sidebar_widget: SidebarWidget | None = None
         self.single_view_tab: SingleViewTab | None = None
         self.multi_view_tab: MultiViewTab | None = None
+        self.multi_property_tab: MultiPropertyTab | None = None
         self.custom_graph_tab: CustomGraphTab | None = None
         self.content_tabs: dict[str, QWidget] = {}
         self.app_menu_bar: AppMenuBar | None = None
-        self.file_watcher: FileWatcherService | None = None
         self.sidebar_toggle_button: QPushButton | None = None
         self._settings = QSettings("OPview", "OPview")
         self._project_path = Path(project_path).expanduser() if project_path else None
@@ -60,9 +63,7 @@ class MainWindow(QMainWindow):
         self.app_menu_bar = AppMenuBar(self)
         self.setMenuBar(self.app_menu_bar)
         debug_print("MainWindow menu bar set")
-        self.file_watcher = FileWatcherService(self)
-        self.file_watcher.set_cwd(Path.cwd())
-        debug_print("MainWindow file watcher initialised")
+        debug_print("MainWindow filesystem autoscan disabled; use Reload to refresh projects")
         tabs = QTabBar()
         self.tab_widget = tabs
         debug_print("MainWindow created top-level tab bar")
@@ -78,6 +79,8 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow added Single View tab")
         tabs.addTab("Multi View")
         debug_print("MainWindow added Multi View tab")
+        tabs.addTab("Multi Property")
+        debug_print("MainWindow added Multi Property tab")
         tabs.addTab("Custom Graph")
         debug_print("MainWindow added Custom Graph tab")
         tabs.setCurrentIndex(0)
@@ -105,6 +108,8 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow created SingleViewTab")
         self.multi_view_tab = MultiViewTab()
         debug_print("MainWindow created MultiViewTab")
+        self.multi_property_tab = MultiPropertyTab()
+        debug_print("MainWindow created MultiPropertyTab")
         self.custom_graph_tab = CustomGraphTab()
         debug_print("MainWindow created CustomGraphTab")
         self.content_stack = QStackedWidget()
@@ -113,6 +118,8 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow added SingleViewTab to content stack")
         self.content_stack.addWidget(self.multi_view_tab)
         debug_print("MainWindow added MultiViewTab to content stack")
+        self.content_stack.addWidget(self.multi_property_tab)
+        debug_print("MainWindow added MultiPropertyTab to content stack")
         self.content_stack.addWidget(self.custom_graph_tab)
         debug_print("MainWindow added CustomGraphTab to content stack")
         self.content_stack.setCurrentIndex(0)
@@ -133,6 +140,7 @@ class MainWindow(QMainWindow):
         self.content_tabs = {
             "single_view": self.single_view_tab,
             "multi_view": self.multi_view_tab,
+            "multi_property": self.multi_property_tab,
             "custom_graph": self.custom_graph_tab,
         }
         content_layout.addWidget(self.content_scroll, 1)
@@ -192,10 +200,9 @@ class MainWindow(QMainWindow):
         debug_print("MainWindow._connect_signals called")
         assert self.sidebar_widget is not None
         assert self.single_view_tab is not None
+        assert self.multi_property_tab is not None
         assert self.custom_graph_tab is not None
         assert self.app_menu_bar is not None
-        assert self.file_watcher is not None
-        # Panel creation routed through slot so we can register the file with the watcher
         self.sidebar_widget.add_panel_requested.connect(self._on_add_panel_requested)
         debug_print("Connected sidebar add_panel_requested to _on_add_panel_requested")
         self.sidebar_widget.projects_changed.connect(self.single_view_tab.set_projects)
@@ -204,8 +211,6 @@ class MainWindow(QMainWindow):
         debug_print("Connected sidebar projects_changed to CustomGraphTab.set_projects")
         self.sidebar_widget.custom_graph_project_scope_changed.connect(self.custom_graph_tab.set_selected_project_names)
         debug_print("Connected sidebar custom_graph_project_scope_changed")
-        self.sidebar_widget.projects_changed.connect(self._on_projects_changed)
-        debug_print("Connected sidebar projects_changed to _on_projects_changed")
         self.tab_widget.currentChanged.connect(self._on_main_tab_changed)
         debug_print("Connected main tab bar currentChanged to _on_main_tab_changed")
         self.sidebar_widget.text_files_add_requested.connect(self._on_text_files_add_requested)
@@ -219,18 +224,10 @@ class MainWindow(QMainWindow):
         debug_print("Connected menu add_project_folder_requested")
         self.app_menu_bar.add_vtk_files_requested.connect(self._on_add_vtk_files)
         debug_print("Connected menu add_vtk_files_requested")
-        self.file_watcher.cwd_changed.connect(self._on_cwd_changed)
-        debug_print("Connected file_watcher.cwd_changed")
-        self.file_watcher.vtk_folder_changed.connect(self._on_vtk_folder_changed)
-        debug_print("Connected file_watcher.vtk_folder_changed")
-        self.file_watcher.loaded_file_changed.connect(self._on_loaded_file_changed)
-        debug_print("Connected file_watcher.loaded_file_changed")
         self.sidebar_widget.reload_requested.connect(self._force_full_rescan)
         debug_print("Connected sidebar reload_requested to _force_full_rescan")
         self.sidebar_widget.add_folder_requested.connect(self._on_add_project_folder)
         debug_print("Connected sidebar add_folder_requested to _on_add_project_folder")
-        self.single_view_tab.panel_ready.connect(self._on_panel_ready)
-        debug_print("Connected single_view_tab.panel_ready to _on_panel_ready")
         debug_print("Menu export_requested not yet connected (no export handler)")
 
     def _on_sidebar_toggle_button_clicked(self) -> None:
@@ -242,6 +239,13 @@ class MainWindow(QMainWindow):
         debug_print(f"MainWindow sidebar requested visible={requested_visible}")
         self._set_sidebar_visible(requested_visible)
         debug_print("MainWindow._on_sidebar_toggle_button_clicked complete")
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        # The native window exists once shown; the Windows DWM flag needs its handle.
+        if not getattr(self, "_dark_title_bar_applied", False):
+            self._dark_title_bar_applied = True
+            apply_dark_title_bar(self)
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -305,7 +309,7 @@ class MainWindow(QMainWindow):
         if viewport_width <= 0:
             debug_print("MainWindow._sync_content_width skipped: viewport width unavailable")
             return
-        custom_graph_active = getattr(self, "tab_widget", None) is not None and self.tab_widget.currentIndex() == 2
+        custom_graph_active = getattr(self, "tab_widget", None) is not None and self.tab_widget.currentIndex() == 3
         debug_print(f"MainWindow custom graph active={custom_graph_active}")
         self.content_stack.setMinimumWidth(0)
         if custom_graph_active:
@@ -331,10 +335,14 @@ class MainWindow(QMainWindow):
     def _on_add_panel_requested(self, dataset_info: dict) -> None:
         assert self.single_view_tab is not None
         assert self.multi_view_tab is not None
+        assert self.multi_property_tab is not None
         active_index = self.tab_widget.currentIndex()
         if active_index == 1:
             # Multi View tab is active — load dataset into multi view
             self.multi_view_tab.set_dataset(dataset_info)
+        elif active_index == 2:
+            debug_print("MainWindow routing dataset to Multi Property")
+            self.multi_property_tab.set_dataset(dataset_info)
         else:
             # Single View (default)
             self.single_view_tab.add_panel(dataset_info)
@@ -345,7 +353,7 @@ class MainWindow(QMainWindow):
         self.content_stack.setCurrentIndex(index)
         self._sync_content_width()
         debug_print("MainWindow synced content width after tab change")
-        mode = "custom_graph" if index == 2 else "vtk"
+        mode = "custom_graph" if index == 3 else "vtk"
         self.sidebar_widget.set_mode(mode)
         debug_print(f"MainWindow._on_main_tab_changed sidebar_mode={mode}")
 
@@ -355,58 +363,31 @@ class MainWindow(QMainWindow):
         self.custom_graph_tab.add_files_to_active_panel(files)
         debug_print("MainWindow._on_text_files_add_requested complete")
 
-    def _on_panel_ready(self, panel) -> None:
-        assert self.file_watcher is not None
-        panel.file_loaded.connect(self.file_watcher.add_watched_file)
-        debug_print("MainWindow registered panel file_loaded with watcher")
-
     # ------------------------------------------------------------------ #
-    # File watcher handlers                                              #
+    # Manual refresh handlers                                            #
     # ------------------------------------------------------------------ #
 
     def _force_full_rescan(self) -> None:
-        """Manually trigger everything the watcher does automatically."""
+        """Refresh projects, datasets, and open panels after the Reload button is clicked."""
         debug_print("MainWindow._force_full_rescan called")
         assert self.sidebar_widget is not None
+        clear_reader_cache("reload-button")
+        debug_print("MainWindow cleared VTK reader cache for reload")
         if self.sidebar_widget.mode() == "custom_graph":
             self.sidebar_widget._emit_custom_graph_project_scope()
         else:
             self.sidebar_widget._refresh_dataset_combo()
         for panel in self._iter_panels():
+            debug_print(f"MainWindow invalidating panel before reload refresh={panel.dataset_info.get('label', '')}")
+            panel.controller.invalidate_cached_reader("reload-button")
+            debug_print(f"MainWindow pruning missing panel files before reload refresh={panel.dataset_info.get('label', '')}")
+            panel.controller.remove_missing_file_options("reload-button")
+            debug_print(f"MainWindow discovering new panel files before reload refresh={panel.dataset_info.get('label', '')}")
+            panel.controller.discover_new_file_options("reload-button")
             panel.controller.refresh_view()
+            # let the Reload spinner keep turning between (blocking) panel refreshes
+            QApplication.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
         debug_print("MainWindow._force_full_rescan complete")
-
-    def _on_cwd_changed(self) -> None:
-        debug_print("MainWindow._on_cwd_changed: rescanning projects")
-        assert self.sidebar_widget is not None
-        self.sidebar_widget.reload_from_cwd()
-
-    def _on_vtk_folder_changed(self, folder_path: str) -> None:
-        debug_print(f"MainWindow._on_vtk_folder_changed: {folder_path}")
-        assert self.sidebar_widget is not None
-        if self.sidebar_widget.mode() != "custom_graph":
-            self.sidebar_widget._refresh_dataset_combo()
-        for panel in self._iter_panels():
-            if panel.controller.state.file_path.startswith(folder_path):
-                debug_print(f"MainWindow refreshing panel for changed folder: {folder_path}")
-                panel.controller.refresh_view()
-
-    def _on_loaded_file_changed(self, file_path: str) -> None:
-        debug_print(f"MainWindow._on_loaded_file_changed: {file_path}")
-        for panel in self._iter_panels():
-            if panel.controller.state.file_path == file_path:
-                debug_print(f"MainWindow reloading panel for modified file: {file_path}")
-                panel.controller.refresh_view()
-
-    def _on_projects_changed(self, projects: dict) -> None:
-        assert self.file_watcher is not None
-        vtk_paths = [
-            Path(str(info["vtk_path"]))
-            for info in projects.values()
-            if info.get("vtk_path") and Path(str(info["vtk_path"])).exists()
-        ]
-        self.file_watcher.set_vtk_paths(vtk_paths)
-        debug_print(f"MainWindow updated watcher with {len(vtk_paths)} vtk paths")
 
     def _iter_panels(self):
         from viewer.panel_widget import PanelWidget
@@ -432,7 +413,8 @@ class MainWindow(QMainWindow):
                 return
             self._settings.setValue("last_text_folder", folder)
             text_folder = Path(folder)
-            project_name = f"[Folder] {text_folder.name}"
+            project_name = self._manual_folder_project_name(text_folder)
+            debug_print(f"MainWindow text folder project_name={project_name}")
             info = {
                 "path"               : text_folder,
                 "has_vtk"            : False,
@@ -452,8 +434,11 @@ class MainWindow(QMainWindow):
         if not folder:
             return
         self._settings.setValue("last_vtk_folder", folder)
+        clear_reader_cache("add-vtk-folder")
+        debug_print("MainWindow cleared VTK reader cache for added folder")
         vtk_folder = Path(folder)
-        project_name = f"[Folder] {vtk_folder.name}"
+        project_name = self._manual_folder_project_name(vtk_folder)
+        debug_print(f"MainWindow vtk folder project_name={project_name}")
         info = {
             "path"               : vtk_folder,
             "has_vtk"            : True,
@@ -467,6 +452,20 @@ class MainWindow(QMainWindow):
         }
         self.sidebar_widget.add_manual_project(project_name, info)
         debug_print(f"MainWindow added folder: {vtk_folder}")
+
+    def _manual_folder_project_name(self, folder: Path) -> str:
+        debug_print("MainWindow._manual_folder_project_name called")
+        debug_print(f"MainWindow manual folder path={folder}")
+        parent_name = folder.parent.name
+        debug_print(f"MainWindow manual folder parent_name={parent_name}")
+        folder_name = folder.name
+        debug_print(f"MainWindow manual folder folder_name={folder_name}")
+        if parent_name:
+            label = f"{parent_name}/{folder_name}"
+            debug_print(f"MainWindow manual folder label={label}")
+            return label
+        debug_print(f"MainWindow manual folder fallback label={folder_name}")
+        return folder_name
 
     def _on_add_vtk_files(self) -> None:
         """Open a file dialog and register selected VTK files as a custom project."""

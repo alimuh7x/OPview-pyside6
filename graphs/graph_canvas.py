@@ -13,6 +13,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from config import units
 from data.text_sources import GenericTextDataSource
 from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
@@ -20,6 +21,7 @@ from viewer.plot_style import PlotStyle
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 _GRAPH_WIDTH = 800
 _GRAPH_HEIGHT = 620
+_GREEK_FONT_FACE = PlotStyle.greek_font_face()
 
 
 class GraphCanvas(QWidget):
@@ -94,6 +96,7 @@ class GraphCanvas(QWidget):
         right_margin = 220 if legend_position == "right-outside" else 82
         figure = go.Figure()
         self._last_trace_count = 0
+        any_legend_visible = False
 
         if not files:
             debug_print("GraphCanvas._build_figure no files")
@@ -114,15 +117,15 @@ class GraphCanvas(QWidget):
             debug_print(f"GraphCanvas._build_figure fallback x column from={x_axis_column}")
             x_axis_column = available_x_columns[0]
         raw_x = np.asarray(x_source.series(x_axis_column), dtype=float)
-        x_conversion = state.get("x_axis_conversion", "as-is")
-        x_multiplier = self._x_conversion_multiplier(x_conversion)
-        x_data = raw_x * x_multiplier
+        x_columns = x_source.dataframe_dict()
+        x_data = self.x_transform(state, tuple(x_columns)).apply(raw_x, x_columns)
         debug_print(f"GraphCanvas._build_figure x_axis_column={x_axis_column} points={len(x_data)}")
-        debug_print(f"GraphCanvas._build_figure x_conversion={x_conversion} multiplier={x_multiplier}")
+        debug_print(f"GraphCanvas._build_figure x_conversion={state.get('x_axis_conversion', 'as-is')}")
         debug_print(f"GraphCanvas._build_figure raw_x_sample={raw_x[:3].tolist()}")
         debug_print(f"GraphCanvas._build_figure converted_x_sample={x_data[:3].tolist()}")
 
         color_index = 0
+        plotted_x_values: list[float] = []
         for file_path in files:
             debug_print(f"GraphCanvas._build_figure load y file={file_path}")
             source = GenericTextDataSource(file_path)
@@ -144,17 +147,18 @@ class GraphCanvas(QWidget):
                     continue
                 settings = column_settings.get(file_path, {}).get(column, {})
                 yaxis_side = settings.get("yaxis", "y1")
-                legend_label = settings.get("legend", column) or column
-                conversion = settings.get("conversion", "as-is")
-                multiplier = self._conversion_multiplier(conversion)
+                raw_legend = settings.get("legend", column)
+                legend_visible = bool(str(raw_legend).strip())
+                legend_label = str(raw_legend) if legend_visible else column
+                any_legend_visible = any_legend_visible or legend_visible
                 yaxis = "y2" if yaxis_side == "y2" else "y"
                 raw_y = np.asarray(y_data, dtype=float)
-                converted_y = raw_y * multiplier
-                debug_print(
-                    f"GraphCanvas._build_figure conversion column={column} conversion={conversion} multiplier={multiplier}"
-                )
+                y_columns = source.dataframe_dict()
+                converted_y = self.column_transform(settings, tuple(y_columns)).apply(raw_y, y_columns)
+                debug_print(f"GraphCanvas._build_figure conversion column={column} conversion={settings.get('conversion', 'as-is')}")
                 debug_print(f"GraphCanvas._build_figure raw_y_sample={raw_y[:3].tolist()}")
                 debug_print(f"GraphCanvas._build_figure converted_y_sample={converted_y[:3].tolist()}")
+                plotted_x_values.extend(float(value) for value in x_data if np.isfinite(value))
                 color = settings.get("color") or PlotStyle.series_color(color_index)
                 self._add_series_traces(
                     figure,
@@ -163,6 +167,7 @@ class GraphCanvas(QWidget):
                     trace_mode=trace_mode,
                     line_style=line_style,
                     legend_label=legend_label,
+                    legend_visible=legend_visible,
                     yaxis=yaxis,
                     color=color,
                     series_index=color_index,
@@ -174,11 +179,11 @@ class GraphCanvas(QWidget):
         figure.update_layout(
             height=_GRAPH_HEIGHT,
             width=self._graph_width,
-            margin=dict(l=82, r=right_margin, t=26, b=70),
+            margin=dict(l=82, r=right_margin, t=70, b=80),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
-            showlegend=show_legend,
+            showlegend=show_legend and any_legend_visible,
             legend=self._legend_config(legend_position),
             xaxis=dict(
                 title=dict(text=state.get("x_axis_title") or x_axis_column or "Time", font=PlotStyle.graph_axis_title_font()),
@@ -217,6 +222,11 @@ class GraphCanvas(QWidget):
             ),
         )
         self._apply_publication_axis_styling(figure, state)
+        if trace_mode == "lines":
+            x_range = self._padded_axis_range(plotted_x_values)
+            if x_range is not None:
+                figure.layout.xaxis.range = x_range
+                figure.layout.xaxis.autorange = False
         if self._last_trace_count == 0:
             debug_print("GraphCanvas._build_figure no traces after processing")
             figure.add_annotation(
@@ -230,6 +240,19 @@ class GraphCanvas(QWidget):
             )
         return figure
 
+    def _padded_axis_range(self, values: list[float]) -> list[float] | None:
+        finite_values = [float(value) for value in values if np.isfinite(value)]
+        if not finite_values:
+            return None
+        minimum = min(finite_values)
+        maximum = max(finite_values)
+        span = maximum - minimum
+        if span == 0:
+            padding = abs(minimum) * 0.05 or 1.0
+        else:
+            padding = span * 0.05
+        return [minimum - padding, maximum + padding]
+
     def _add_series_traces(
         self,
         figure: go.Figure,
@@ -239,6 +262,7 @@ class GraphCanvas(QWidget):
         trace_mode: str,
         line_style: str,
         legend_label: str,
+        legend_visible: bool,
         yaxis: str,
         color: str,
         series_index: int,
@@ -247,14 +271,26 @@ class GraphCanvas(QWidget):
         x_values = np.asarray(x_data).tolist()
         y_values = np.asarray(y_data).tolist()
         if trace_mode == "lines+markers":
+            marker_indices = PlotStyle.marker_sample_indices(len(x_values))
             figure.add_trace(
                 go.Scatter(
                     x=x_values,
                     y=y_values,
-                    mode="lines+markers",
+                    mode="lines",
                     name=legend_label,
+                    showlegend=legend_visible,
                     yaxis=yaxis,
                     line=PlotStyle.trace_line(color=color, dash=line_style),
+                )
+            )
+            figure.add_trace(
+                go.Scatter(
+                    x=[x_values[index] for index in marker_indices],
+                    y=[y_values[index] for index in marker_indices],
+                    mode="markers",
+                    name=legend_label,
+                    yaxis=yaxis,
+                    showlegend=False,
                     marker=PlotStyle.marker_style(series_index, color=color),
                 )
             )
@@ -270,6 +306,7 @@ class GraphCanvas(QWidget):
                 y=[y_values[index] for index in marker_indices],
                 mode=trace_mode,
                 name=legend_label,
+                showlegend=legend_visible,
                 yaxis=yaxis,
                 line=PlotStyle.trace_line(color=color, dash=line_style),
                 marker=PlotStyle.marker_style(series_index, color=color),
@@ -312,89 +349,69 @@ class GraphCanvas(QWidget):
         debug_print("GraphCanvas._publication_axis_config complete")
         return config
 
+    @staticmethod
+    def column_transform(settings: dict, column_names=()) -> units.Transform:
+        """The conversion of one Y column: its target (or custom factor/offset) from its source unit."""
+        return units.resolve_transform(
+            settings.get("conversion", "as-is"),
+            source_unit=settings.get("source_unit", ""),
+            factor=settings.get("factor"),
+            offset=settings.get("offset"),
+            custom_unit=settings.get("custom_unit", ""),
+            formula=settings.get("formula", ""),
+            column_names=column_names,
+        )
+
+    @staticmethod
+    def x_transform(state: dict, column_names=()) -> units.Transform:
+        """The conversion of the X axis column."""
+        return units.resolve_transform(
+            state.get("x_axis_conversion", "as-is"),
+            source_unit=state.get("x_axis_source_unit", ""),
+            factor=state.get("x_axis_factor"),
+            offset=state.get("x_axis_offset"),
+            custom_unit=state.get("x_axis_custom_unit", ""),
+            formula=state.get("x_axis_formula", ""),
+            column_names=column_names,
+        )
+
+    def _apply_conversion(self, values: np.ndarray, conversion: str | None) -> np.ndarray:
+        return units.resolve_transform(conversion).apply(values)
+
+    def _apply_x_conversion(self, values: np.ndarray, conversion: str | None) -> np.ndarray:
+        return units.resolve_transform(conversion).apply(values)
+
     def _conversion_multiplier(self, conversion: str) -> float:
-        debug_print(f"GraphCanvas._conversion_multiplier conversion={conversion}")
-        normalized = self._normalize_conversion(conversion)
-        debug_print(f"GraphCanvas._conversion_multiplier normalized={normalized}")
-        multipliers = {
-            "as-is": 1.0,
-            "percent": 100.0,
-            "mpa": 1e-6,
-            "gpa": 1e-9,
-        }
-        multiplier = multipliers.get(normalized, 1.0)
-        debug_print(f"GraphCanvas._conversion_multiplier multiplier={multiplier}")
-        return multiplier
+        """Factor of a conversion when no source unit is known (legacy keys assume Pa / fraction / s)."""
+        return units.resolve_transform(conversion).a
 
     def _x_conversion_multiplier(self, conversion: str) -> float:
-        debug_print(f"GraphCanvas._x_conversion_multiplier conversion={conversion}")
-        normalized = self._normalize_x_conversion(conversion)
-        debug_print(f"GraphCanvas._x_conversion_multiplier normalized={normalized}")
-        multipliers = {
-            "as-is": 1.0,
-            "sec-to-min": 1.0 / 60.0,
-            "sec-to-hour": 1.0 / 3600.0,
-        }
-        multiplier = multipliers.get(normalized, 1.0)
-        debug_print(f"GraphCanvas._x_conversion_multiplier multiplier={multiplier}")
-        return multiplier
-
-    def _normalize_x_conversion(self, conversion: str | None) -> str:
-        debug_print(f"GraphCanvas._normalize_x_conversion conversion={conversion}")
-        value = str(conversion or "as-is").strip().lower()
-        debug_print(f"GraphCanvas._normalize_x_conversion value={value}")
-        aliases = {
-            "": "as-is",
-            "as is": "as-is",
-            "as-is": "as-is",
-            "raw": "as-is",
-            "sec": "as-is",
-            "s": "as-is",
-            "seconds": "as-is",
-            "sec -> min": "sec-to-min",
-            "sec-to-min": "sec-to-min",
-            "seconds to minutes": "sec-to-min",
-            "min": "sec-to-min",
-            "minutes": "sec-to-min",
-            "sec -> hour": "sec-to-hour",
-            "sec-to-hour": "sec-to-hour",
-            "seconds to hours": "sec-to-hour",
-            "hour": "sec-to-hour",
-            "hours": "sec-to-hour",
-        }
-        normalized = aliases.get(value, "as-is")
-        debug_print(f"GraphCanvas._normalize_x_conversion normalized={normalized}")
-        return normalized
+        return units.resolve_transform(conversion).a
 
     def _normalize_conversion(self, conversion: str | None) -> str:
-        debug_print(f"GraphCanvas._normalize_conversion conversion={conversion}")
-        value = str(conversion or "as-is").strip().lower()
-        debug_print(f"GraphCanvas._normalize_conversion value={value}")
-        aliases = {
-            "": "as-is",
-            "as is": "as-is",
-            "as-is": "as-is",
-            "raw": "as-is",
-            "%": "percent",
-            "percent": "percent",
-            "percentage": "percent",
-            "mpa": "mpa",
-            "gpa": "gpa",
-        }
-        normalized = aliases.get(value, "as-is")
-        debug_print(f"GraphCanvas._normalize_conversion normalized={normalized}")
-        return normalized
+        return units.normalize_conversion(conversion)
+
+    def _normalize_x_conversion(self, conversion: str | None) -> str:
+        return units.normalize_conversion(conversion)
 
     def _legend_config(self, position: str) -> dict[str, Any]:
         debug_print(f"GraphCanvas._legend_config position={position}")
         configs = {
             "top-left": dict(x=0.02, y=0.98, xanchor="left", yanchor="top"),
+            "middle-top": dict(x=0.5, y=0.98, xanchor="center", yanchor="top"),
             "top-right": dict(x=0.98, y=0.98, xanchor="right", yanchor="top"),
+            "middle-left": dict(x=0.02, y=0.5, xanchor="left", yanchor="middle"),
+            "middle-right": dict(x=0.98, y=0.5, xanchor="right", yanchor="middle"),
             "bottom-left": dict(x=0.02, y=0.02, xanchor="left", yanchor="bottom"),
+            "middle-bottom": dict(x=0.5, y=0.02, xanchor="center", yanchor="bottom"),
             "bottom-right": dict(x=0.98, y=0.02, xanchor="right", yanchor="bottom"),
             "right-outside": dict(x=1.02, y=1.0, xanchor="left", yanchor="top"),
         }
-        return PlotStyle.graph_legend(**configs.get(position, configs["top-left"]))
+        selected = configs.get(position, configs["top-left"])
+        debug_print(f"GraphCanvas._legend_config selected={selected}")
+        legend = PlotStyle.graph_legend(**selected)
+        debug_print(f"GraphCanvas._legend_config resolved={legend}")
+        return legend
 
     def _empty_figure(self, message: str) -> go.Figure:
         debug_print(f"GraphCanvas._empty_figure message={message}")
@@ -411,7 +428,7 @@ class GraphCanvas(QWidget):
         figure.update_layout(
             width=self._graph_width,
             height=_GRAPH_HEIGHT,
-            margin=dict(l=82, r=82, t=26, b=70),
+            margin=dict(l=82, r=82, t=70, b=80),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
@@ -423,7 +440,7 @@ class GraphCanvas(QWidget):
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;display:flex;align-items:flex-start;justify-content:center;}}#graph{{width:{self._graph_width}px;height:{_GRAPH_HEIGHT}px;}}</style>
+<style>{_GREEK_FONT_FACE}html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;display:flex;align-items:flex-start;justify-content:center;}}#graph{{width:{self._graph_width}px;height:{_GRAPH_HEIGHT}px;}}</style>
 <script src="plotly.min.js"></script>
 </head><body>
 <div id="graph"></div>

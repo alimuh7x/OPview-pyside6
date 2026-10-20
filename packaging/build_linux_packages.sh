@@ -6,7 +6,7 @@
 #   docker run --rm -v "$PWD:/src" -w /src ubuntu:22.04 bash packaging/build_linux_packages.sh [build_dir] [version]
 #
 # Artifacts land in <build_dir>/packages/ (default build-linux/). The
-# optional version arg overrides OPVIEW_VERSION (default 2.1.0, see
+# optional version arg overrides OPVIEW_VERSION (default 2.0.0, see
 # CMakeLists.txt); leave empty to keep the default.
 set -e
 export DEBIAN_FRONTEND=noninteractive

@@ -54,6 +54,59 @@ class Heatmap2DOrientation:
             z=self._rotate_array(z_arr),
         )
 
+    def _display_index_map(self, shape) -> np.ndarray:
+        """Flat source-grid index shown at each displayed pixel (rotation is a pure permutation)."""
+        return self._rotate_array(np.arange(int(np.prod(shape))).reshape(shape))
+
+    def _display_axes(self, x_raw, y_raw):
+        """Ascending axis values the plot actually draws for the (rotated) view.
+
+        Plotly axes are always `plot_axes` (ascending linspace), NOT the rotated coordinate
+        arrays: after a 90/180/270 rotation those arrays can run descending along the axis.
+        Clicks arrive in axis values, so every pick/marker conversion must use these.
+        """
+        shown = self.apply_grid(x_raw, y_raw, np.zeros_like(x_raw))
+        x_axis, y_axis = self.plot_axes(shown.x, shown.y, shown.x)
+        return x_axis, y_axis
+
+    @staticmethod
+    def snap_to_pixel(x_axis, y_axis, z_display, x_value: float, y_value: float):
+        """Nearest finite pixel to an axis position: (x_axis[col], y_axis[row], z, row, col)."""
+        z_arr = np.asarray(z_display, dtype=float)
+        valid = ~np.isnan(z_arr)
+        if not np.any(valid):
+            raise ValueError("No valid z values in grid")
+        distance = (np.asarray(x_axis)[None, :] - float(x_value)) ** 2 + (
+            np.asarray(y_axis)[:, None] - float(y_value)
+        ) ** 2
+        distance = np.where(valid, distance, np.inf)
+        row, col = np.unravel_index(int(np.argmin(distance)), distance.shape)
+        return float(x_axis[col]), float(y_axis[row]), float(z_arr[row, col]), int(row), int(col)
+
+    def display_to_data_point(self, x_raw, y_raw, x_display: float, y_display: float) -> tuple[float, float]:
+        """Map a position picked on the rotated heatmap (axis values) to source-grid coordinates.
+
+        VTK sampling (Plot Over Time) works in the source grid's coordinates, so a point
+        picked while the view is rotated must be converted before it is stored.
+        """
+        x_raw = np.asarray(x_raw, dtype=float)
+        y_raw = np.asarray(y_raw, dtype=float)
+        x_axis, y_axis = self._display_axes(x_raw, y_raw)
+        col = int(np.argmin(np.abs(x_axis - float(x_display))))
+        row = int(np.argmin(np.abs(y_axis - float(y_display))))
+        source = int(self._display_index_map(x_raw.shape)[row, col])
+        return float(x_raw.flat[source]), float(y_raw.flat[source])
+
+    def data_to_display_point(self, x_raw, y_raw, x_data: float, y_data: float) -> tuple[float, float]:
+        """Axis position where a source-grid point appears on the rotated heatmap."""
+        x_raw = np.asarray(x_raw, dtype=float)
+        y_raw = np.asarray(y_raw, dtype=float)
+        distance = (x_raw - float(x_data)) ** 2 + (y_raw - float(y_data)) ** 2
+        source = int(np.argmin(distance))
+        row, col = np.argwhere(self._display_index_map(x_raw.shape) == source)[0]
+        x_axis, y_axis = self._display_axes(x_raw, y_raw)
+        return float(x_axis[col]), float(y_axis[row])
+
     def apply_overlay(self, overlay_grid):
         if overlay_grid is None:
             return None
@@ -85,14 +138,21 @@ class Heatmap2DOrientation:
 
     @staticmethod
     def nearest_value(x_grid, y_grid, z_grid, x_value: float, y_value: float) -> float:
+        _, _, value = Heatmap2DOrientation.nearest_point(x_grid, y_grid, z_grid, x_value, y_value)
+        return value
+
+    @staticmethod
+    def nearest_point(x_grid, y_grid, z_grid, x_value: float, y_value: float) -> tuple[float, float, float]:
         z_arr = np.asarray(z_grid, dtype=float)
         valid = ~np.isnan(z_arr)
         if not np.any(valid):
             raise ValueError("No valid z values in grid")
-        distance = (np.asarray(x_grid) - float(x_value)) ** 2 + (np.asarray(y_grid) - float(y_value)) ** 2
+        x_arr = np.asarray(x_grid, dtype=float)
+        y_arr = np.asarray(y_grid, dtype=float)
+        distance = (x_arr - float(x_value)) ** 2 + (y_arr - float(y_value)) ** 2
         distance = np.where(valid, distance, np.inf)
         idx = np.unravel_index(np.argmin(distance), distance.shape)
-        return float(z_arr[idx])
+        return float(x_arr[idx]), float(y_arr[idx]), float(z_arr[idx])
 
     @staticmethod
     def line_overlay(direction: str, x_position: float | None, y_position: float | None):
@@ -103,6 +163,16 @@ class Heatmap2DOrientation:
         if x_position is None:
             return None
         return ("vertical", x_position)
+
+    @staticmethod
+    def default_line_position(direction: str, x_grid, y_grid, z_grid) -> float:
+        """Coordinate of the middle row/column, the one extract_line_scan samples without a click."""
+        x_values, y_values = Heatmap2DOrientation.plot_axes(
+            np.asarray(x_grid), np.asarray(y_grid), np.asarray(z_grid)
+        )
+        if direction == "horizontal":
+            return float(y_values[np.asarray(z_grid).shape[0] // 2])
+        return float(x_values[np.asarray(z_grid).shape[1] // 2])
 
     @staticmethod
     def extract_line_scan(x_grid, y_grid, z_grid, direction: str, position):

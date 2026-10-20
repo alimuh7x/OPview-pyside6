@@ -18,7 +18,9 @@ from PySide6.QtWidgets import (
 )
 
 from utils.panel_load_worker import PanelLoadWorker
+from utils.time_series import timestep_from_path
 from viewer.panel_widget import PanelWidget
+from app.debug import debug_print
 
 _REMOVE_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "remove.png"
 
@@ -31,6 +33,18 @@ class SingleViewTab(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._projects: dict[str, dict] = {}
+        self._shared_time_plot_points: list[dict] = []
+        self._shared_time_plot_source_panel: PanelWidget | None = None
+        self._updating_shared_time_plot_points = False
+        self._time_plot_shared_panels: list[PanelWidget] = []
+        self._shared_file_number: int | None = None
+        self._updating_shared_file_number = False
+        self._file_number_shared_panels: list[PanelWidget] = []
+        debug_print("SingleViewTab file-number sharing initialized")
+        self._shared_rotation_degrees: int | None = None
+        self._updating_shared_rotation = False
+        self._rotation_shared_panels: list[PanelWidget] = []
+        debug_print("SingleViewTab rotation sharing initialized")
         self._panel_tabs = QTabWidget()
         self._panel_tabs.setObjectName("panelTabs")
         self._panel_tabs.setTabsClosable(False)
@@ -84,6 +98,9 @@ class SingleViewTab(QWidget):
     def _finish_panel(self, load_index: int, label: str, dataset_info: dict, worker) -> None:
         """Called on main thread after worker warms the cache. Creates and installs the panel."""
         panel = PanelWidget(dataset_info=dataset_info, projects=self._projects)
+        self._attach_time_plot_point_sharing(panel)
+        self._attach_file_number_sharing(panel)
+        self._attach_rotation_sharing(panel)
 
         self._panel_tabs.removeTab(load_index)
         index = self._panel_tabs.insertTab(load_index, panel, label)
@@ -197,4 +214,223 @@ class SingleViewTab(QWidget):
         self._panel_tabs.removeTab(index)
         self._refresh_tab_header_states()
         if widget is not None:
+            if widget in self._file_number_shared_panels:
+                self._file_number_shared_panels.remove(widget)
+                debug_print("SingleViewTab removed panel from file-number sharing")
+            if widget in self._rotation_shared_panels:
+                self._rotation_shared_panels.remove(widget)
+                debug_print("SingleViewTab removed panel from rotation sharing")
             widget.deleteLater()
+
+    def _attach_rotation_sharing(self, panel: PanelWidget) -> None:
+        """Wire one panel into shared Single View rotation selection."""
+        debug_print("SingleViewTab._attach_rotation_sharing called")
+        debug_print(f"SingleViewTab rotation attach label={panel.dataset_info.get('label', '')}")
+        if panel in self._rotation_shared_panels:
+            debug_print("SingleViewTab rotation panel already attached")
+            return
+        self._rotation_shared_panels.append(panel)
+        debug_print(f"SingleViewTab rotation shared panel count={len(self._rotation_shared_panels)}")
+        panel.controls_widget.rotation_changed.connect(
+            lambda degrees, source_panel=panel: self._on_panel_rotation_changed(source_panel, degrees)
+        )
+        debug_print("SingleViewTab rotation signal attached")
+        if self._shared_rotation_degrees is None:
+            self._shared_rotation_degrees = panel.controls_widget.selected_rotation_degrees()
+            debug_print(f"SingleViewTab seeded shared rotation={self._shared_rotation_degrees}")
+            return
+        self._apply_shared_rotation(panel, self._shared_rotation_degrees)
+        debug_print("SingleViewTab applied existing rotation to attached panel")
+
+    def _on_panel_rotation_changed(self, source_panel: PanelWidget, degrees: int) -> None:
+        """Broadcast one panel's clockwise rotation to sibling panels."""
+        debug_print("SingleViewTab._on_panel_rotation_changed called")
+        debug_print(f"SingleViewTab rotation source label={source_panel.dataset_info.get('label', '')}")
+        if self._updating_shared_rotation:
+            debug_print("SingleViewTab rotation change ignored during shared update")
+            return
+        self._shared_rotation_degrees = int(degrees) % 360
+        debug_print(f"SingleViewTab shared rotation={self._shared_rotation_degrees}")
+        self._updating_shared_rotation = True
+        debug_print("SingleViewTab shared rotation guard enabled")
+        try:
+            for index, panel in enumerate(list(self._rotation_shared_panels)):
+                if panel is source_panel:
+                    debug_print(f"SingleViewTab rotation sync skipped source index={index}")
+                    continue
+                self._apply_shared_rotation(panel, self._shared_rotation_degrees)
+        finally:
+            self._updating_shared_rotation = False
+            debug_print("SingleViewTab shared rotation guard disabled")
+
+    def _apply_shared_rotation(self, panel: PanelWidget, degrees: int) -> None:
+        """Apply the shared clockwise rotation to one panel."""
+        debug_print("SingleViewTab._apply_shared_rotation called")
+        debug_print(f"SingleViewTab rotation target label={panel.dataset_info.get('label', '')}")
+        panel.controls_widget.set_rotation_degrees(degrees)
+        debug_print(f"SingleViewTab rotation target degrees={degrees}")
+
+    def _attach_file_number_sharing(self, panel: PanelWidget) -> None:
+        """Wire one panel into shared Single View timestep selection."""
+        debug_print("SingleViewTab._attach_file_number_sharing called")
+        debug_print(f"SingleViewTab file attach label={panel.dataset_info.get('label', '')}")
+        if panel in self._file_number_shared_panels:
+            debug_print("SingleViewTab file panel already attached")
+            return
+        self._file_number_shared_panels.append(panel)
+        debug_print(f"SingleViewTab file shared panel count={len(self._file_number_shared_panels)}")
+        panel.controls_widget.file_combo.currentIndexChanged.connect(
+            lambda _index, source_panel=panel: self._on_panel_file_number_changed(source_panel)
+        )
+        debug_print("SingleViewTab file combo signal attached")
+        panel.controls_widget.file_options_changed.connect(
+            lambda source_panel=panel: self._on_panel_file_options_changed(source_panel)
+        )
+        debug_print("SingleViewTab file options signal attached")
+        if self._shared_file_number is None:
+            initial_number = timestep_from_path(panel.controls_widget.current_file_path())
+            self._shared_file_number = initial_number
+            debug_print(f"SingleViewTab seeded shared file number={initial_number}")
+            return
+        self._apply_shared_file_number(panel, self._shared_file_number)
+        debug_print("SingleViewTab applied existing file number to attached panel")
+
+    def _on_panel_file_options_changed(self, panel: PanelWidget) -> None:
+        """Restore the shared timestep after a project replaces its file list."""
+        debug_print("SingleViewTab._on_panel_file_options_changed called")
+        if self._shared_file_number is None:
+            self._on_panel_file_number_changed(panel)
+            debug_print("SingleViewTab attempted to seed timestep from new file list")
+            return
+        previous_guard = self._updating_shared_file_number
+        debug_print(f"SingleViewTab file options previous guard={previous_guard}")
+        self._updating_shared_file_number = True
+        debug_print(f"SingleViewTab restoring shared timestep={self._shared_file_number}")
+        try:
+            self._apply_shared_file_number(panel, self._shared_file_number)
+        finally:
+            self._updating_shared_file_number = previous_guard
+            debug_print("SingleViewTab restored file update guard")
+
+    def _on_panel_file_number_changed(self, source_panel: PanelWidget) -> None:
+        """Broadcast one panel's selected timestep number to sibling panels."""
+        debug_print("SingleViewTab._on_panel_file_number_changed called")
+        debug_print(f"SingleViewTab file source label={source_panel.dataset_info.get('label', '')}")
+        if self._updating_shared_file_number:
+            debug_print("SingleViewTab file change ignored during shared update")
+            return
+        selected_path = source_panel.controls_widget.current_file_path()
+        debug_print(f"SingleViewTab file source path={selected_path}")
+        selected_number = timestep_from_path(selected_path)
+        if selected_number is None:
+            debug_print("SingleViewTab file change skipped no timestep number")
+            return
+        self._shared_file_number = selected_number
+        debug_print(f"SingleViewTab shared file number={selected_number}")
+        self._updating_shared_file_number = True
+        debug_print("SingleViewTab shared file update guard enabled")
+        try:
+            for index, panel in enumerate(list(self._file_number_shared_panels)):
+                if panel is source_panel:
+                    debug_print(f"SingleViewTab file sync skipped source index={index}")
+                    continue
+                self._apply_shared_file_number(panel, selected_number)
+        finally:
+            self._updating_shared_file_number = False
+            debug_print("SingleViewTab shared file update guard disabled")
+
+    def _apply_shared_file_number(self, panel: PanelWidget, file_number: int) -> bool:
+        """Select the matching timestep in one panel, leaving it unchanged if absent."""
+        debug_print("SingleViewTab._apply_shared_file_number called")
+        debug_print(f"SingleViewTab target label={panel.dataset_info.get('label', '')}")
+        debug_print(f"SingleViewTab target file number={file_number}")
+        combo = panel.controls_widget.file_combo
+        for index in range(combo.count()):
+            candidate_path = combo.itemData(index) or ""
+            candidate_number = timestep_from_path(candidate_path)
+            debug_print(f"SingleViewTab candidate index={index}")
+            debug_print(f"SingleViewTab candidate number={candidate_number}")
+            if candidate_number != file_number:
+                continue
+            if combo.currentIndex() != index:
+                debug_print(f"SingleViewTab selecting target index={index}")
+                combo.setCurrentIndex(index)
+            else:
+                debug_print("SingleViewTab target already selected")
+            return True
+        debug_print("SingleViewTab target has no matching file number")
+        return False
+
+    def _attach_time_plot_point_sharing(self, panel: PanelWidget) -> None:
+        """Wire one panel into the Single View shared Plot Over Time point store."""
+        debug_print("SingleViewTab._attach_time_plot_point_sharing called")
+        debug_print(f"SingleViewTab attach panel label={panel.dataset_info.get('label', '')}")
+        if panel in self._time_plot_shared_panels:
+            debug_print("SingleViewTab panel already attached for sharing")
+            return
+        self._time_plot_shared_panels.append(panel)
+        debug_print(f"SingleViewTab shared panel count={len(self._time_plot_shared_panels)}")
+        panel.time_plot_points_changed.connect(self._on_panel_time_plot_points_changed)
+        panel.time_plot_use_same_points_toggled.connect(self._on_panel_use_same_points_toggled)
+        debug_print("SingleViewTab attached time plot point sharing")
+
+    def _on_panel_time_plot_points_changed(self, panel: PanelWidget, points: list[dict]) -> None:
+        """Store latest shared points and push them to panels following shared points."""
+        debug_print("SingleViewTab._on_panel_time_plot_points_changed called")
+        debug_print(f"SingleViewTab point source label={panel.dataset_info.get('label', '')}")
+        debug_print(f"SingleViewTab point count={len(points)}")
+        if self._updating_shared_time_plot_points:
+            debug_print("SingleViewTab point change ignored during shared update")
+            return
+        self._shared_time_plot_points = [dict(point) for point in points]
+        self._shared_time_plot_source_panel = panel
+        debug_print("SingleViewTab stored shared time plot points")
+        self._push_shared_time_plot_points(exclude_panel=panel)
+
+    def _on_panel_use_same_points_toggled(self, panel: PanelWidget, checked: bool) -> None:
+        """Apply current shared points when a panel starts following them."""
+        debug_print("SingleViewTab._on_panel_use_same_points_toggled called")
+        debug_print(f"SingleViewTab use same panel label={panel.dataset_info.get('label', '')}")
+        debug_print(f"SingleViewTab use same checked={checked}")
+        if not checked:
+            debug_print("SingleViewTab use same disabled")
+            return
+        if not self._shared_time_plot_points:
+            current_points = panel.controller.time_plot_points_snapshot()
+            debug_print(f"SingleViewTab no shared points current panel count={len(current_points)}")
+            if current_points:
+                self._shared_time_plot_points = current_points
+                self._shared_time_plot_source_panel = panel
+                debug_print("SingleViewTab seeded shared points from toggled panel")
+                self._push_shared_time_plot_points(exclude_panel=panel)
+            return
+        self._apply_shared_time_plot_points(panel)
+
+    def _push_shared_time_plot_points(self, *, exclude_panel: PanelWidget | None = None) -> None:
+        """Push the current shared points to every panel with Use Same Points enabled."""
+        debug_print("SingleViewTab._push_shared_time_plot_points called")
+        debug_print(f"SingleViewTab shared point count={len(self._shared_time_plot_points)}")
+        for index, widget in enumerate(list(self._time_plot_shared_panels)):
+            if widget is exclude_panel:
+                debug_print(f"SingleViewTab shared push skipped source index={index}")
+                continue
+            if not widget.time_plot_use_same_points_check.isChecked():
+                debug_print(f"SingleViewTab shared push skipped unchecked index={index}")
+                continue
+            self._apply_shared_time_plot_points(widget)
+        debug_print("SingleViewTab shared push complete")
+
+    def _apply_shared_time_plot_points(self, panel: PanelWidget) -> None:
+        """Apply shared points to one following panel without re-publishing them."""
+        debug_print("SingleViewTab._apply_shared_time_plot_points called")
+        debug_print(f"SingleViewTab applying to label={panel.dataset_info.get('label', '')}")
+        self._updating_shared_time_plot_points = True
+        try:
+            panel.controller.set_time_plot_points(
+                self._shared_time_plot_points,
+                source="shared",
+                notify=False,
+            )
+        finally:
+            self._updating_shared_time_plot_points = False
+        debug_print("SingleViewTab shared points applied")

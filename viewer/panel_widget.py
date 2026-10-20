@@ -2,111 +2,150 @@
 
 from pathlib import Path
 
-from PySide6.QtGui import QIcon, QPixmap, QResizeEvent
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPaintEvent, QPainter, QPen, QPixmap, QResizeEvent
+from PySide6.QtCore import QEvent, QObject, Qt, QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSlider,
     QSplitter,
     QVBoxLayout,
+    QToolTip,
     QWidget,
 )
 
 from viewer.animation_player import AnimationPlayer
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from utils.combo_box_utils import update_combo_popup_width
+from utils.unit_conversion_control import UnitConversionControl
 from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.heatmap_controller import HeatmapController
 from viewer.histogram_canvas import HistogramCanvas
 from viewer.line_scan_canvas import LineScanCanvas
 from viewer.panel_controls_widget import PanelControlsWidget
+from viewer.phase_fraction_history_canvas import PhaseFractionHistoryCanvas
+from viewer.time_plot_canvas import TimePlotCanvas
 from viewer.toggle_switch_widget import ToggleSwitchWidget
+from viewer.phase_overlay_button import PhaseOverlayButton
+from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
+
+_LABEL_EDIT_MIN_WIDTH = 320
+# Same values as multi_view/multi_view_panel.py (_LOGO_W and the row spacing).
+_HEATMAP_LOGO_BAND_W = 58
+_HEATMAP_LOGO_PIXMAP_W = _HEATMAP_LOGO_BAND_W - 8
+_HEATMAP_LOGO_GAP = 8
 
 
 class HeatmapAlignmentRow(QWidget):
-    """Position logo and heatmap from the heatmap center."""
+    """Centred [logo] [heatmap] row; spacing and logo band match the Multi View heatmap row."""
 
     def __init__(
         self,
         logo_widget: QWidget,
         heatmap_widget: QWidget,
         *,
-        gap: int = 8,
+        gap: int = _HEATMAP_LOGO_GAP,
     ) -> None:
         debug_print("HeatmapAlignmentRow.__init__ start")
         super().__init__()
         self._logo_widget = logo_widget
         self._heatmap_widget = heatmap_widget
-        self._gap = gap
-        self._logo_widget.setParent(self)
-        self._heatmap_widget.setParent(self)
-        self._heatmap_widget.geometry_changed.connect(self._refresh_layout)
-        self.setMinimumHeight(self._row_height())
-        self._refresh_layout()
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(gap)
+        layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)  # whole [logo][heatmap][colorbar] block centred
+        layout.addWidget(self._logo_widget)
+        layout.addWidget(self._heatmap_widget)
+        debug_print(f"HeatmapAlignmentRow layout gap={gap}")
         debug_print("HeatmapAlignmentRow.__init__ complete")
 
-    def _row_height(self) -> int:
-        debug_print("HeatmapAlignmentRow._row_height called")
-        return max(
-            self._logo_widget.sizeHint().height(),
-            self._heatmap_widget.height(),
-        )
 
-    def _refresh_layout(self) -> None:
-        debug_print("HeatmapAlignmentRow._refresh_layout called")
-        row_height = self._row_height()
-        self.setMinimumHeight(row_height)
-        self.setMaximumHeight(row_height)
-        self.updateGeometry()
-        self._position_children()
-        debug_print("HeatmapAlignmentRow layout refresh complete")
+class PlaybackTickMarksWidget(QWidget):
+    """Small visible divider marks below the file playback slider."""
 
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        debug_print("HeatmapAlignmentRow.resizeEvent called")
-        super().resizeEvent(event)
-        self._position_children()
-        debug_print("HeatmapAlignmentRow resize handled")
+    def __init__(self, parent: QWidget | None = None) -> None:
+        debug_print("PlaybackTickMarksWidget.__init__ start")
+        super().__init__(parent)
+        self._maximum = 0
+        self._hovered_index: int | None = None
+        self._track_margin = 9
+        self.setMinimumHeight(10)
+        self.setMaximumHeight(10)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        debug_print("PlaybackTickMarksWidget mouse events disabled")
+        debug_print("PlaybackTickMarksWidget.__init__ complete")
 
-    def _position_children(self) -> None:
-        debug_print("HeatmapAlignmentRow._position_children called")
-        row_height = self._row_height()
-        heatmap_width = self._heatmap_widget.width()
-        heatmap_height = self._heatmap_widget.height()
-        logo_width = self._logo_widget.width()
-        logo_height = self._logo_widget.height()
-        required_width = logo_width + self._gap + heatmap_width
-        centered_heatmap_x = int((self.width() - heatmap_width) / 2)
-        min_heatmap_x = logo_width + self._gap
-        heatmap_x = max(min_heatmap_x, centered_heatmap_x)
-        heatmap_y = row_height - heatmap_height
-        logo_x = heatmap_x - self._gap - logo_width
-        logo_y = max(0, row_height - logo_height - 12)
-        debug_print(f"HeatmapAlignmentRow row_height={row_height}")
-        debug_print(f"HeatmapAlignmentRow available_width={self.width()}")
-        debug_print(f"HeatmapAlignmentRow required_width={required_width}")
-        debug_print(f"HeatmapAlignmentRow centered_heatmap_x={centered_heatmap_x}")
-        debug_print(f"HeatmapAlignmentRow min_heatmap_x={min_heatmap_x}")
-        debug_print(f"HeatmapAlignmentRow heatmap_x={heatmap_x}")
-        debug_print(f"HeatmapAlignmentRow logo_x={logo_x}")
-        debug_print(f"HeatmapAlignmentRow logo_visible={logo_x >= 0}")
-        self._heatmap_widget.setGeometry(heatmap_x, heatmap_y, heatmap_width, heatmap_height)
-        self._logo_widget.setGeometry(logo_x, logo_y, logo_width, logo_height)
-        self.setMinimumHeight(row_height)
-        self.setMaximumHeight(row_height)
-        debug_print("HeatmapAlignmentRow child geometry applied")
+    def setMaximum(self, maximum: int) -> None:
+        debug_print("PlaybackTickMarksWidget.setMaximum called")
+        self._maximum = max(0, int(maximum))
+        debug_print(f"PlaybackTickMarksWidget maximum={self._maximum}")
+        self.update()
+        debug_print("PlaybackTickMarksWidget update requested")
+
+    def maximum(self) -> int:
+        debug_print("PlaybackTickMarksWidget.maximum called")
+        debug_print(f"PlaybackTickMarksWidget current maximum={self._maximum}")
+        return self._maximum
+
+    def frame_index_at_position(self, position_x: float, width: int | None = None) -> int:
+        if self._maximum <= 0:
+            return 0
+        left = float(self._track_margin)
+        target_width = self.width() if width is None else width
+        right = max(left + 1.0, float(target_width - self._track_margin))
+        clamped_x = max(left, min(right, float(position_x)))
+        ratio = (clamped_x - left) / (right - left)
+        frame_index = int(round(ratio * self._maximum))
+        return max(0, min(self._maximum, frame_index))
+
+    def hover_text_for_position(self, position_x: float) -> str:
+        frame_index = self.frame_index_at_position(position_x)
+        return self._hover_text_for_index(frame_index)
+
+    def _hover_text_for_index(self, frame_index: int) -> str:
+        return str(frame_index)
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        debug_print("PlaybackTickMarksWidget.paintEvent called")
+        del event
+        if self._maximum <= 0:
+            debug_print("PlaybackTickMarksWidget no tick marks for single frame")
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QColor("#586879"), 2))
+        left = float(self._track_margin)
+        right = max(left + 1.0, float(self.width() - self._track_margin))
+        tick_count = min(self._maximum + 1, 5)
+        debug_print(f"PlaybackTickMarksWidget tick_count={tick_count}")
+        y_top = 1.0
+        y_bottom = float(self.height() - 2)
+        for tick_index in range(tick_count):
+            ratio = 0.0 if tick_count == 1 else tick_index / float(tick_count - 1)
+            x = left + ((right - left) * ratio)
+            debug_print(f"PlaybackTickMarksWidget drawing tick index={tick_index} x={x:.1f}")
+            painter.drawLine(int(round(x)), int(y_top), int(round(x)), int(y_bottom))
+        painter.end()
+        debug_print("PlaybackTickMarksWidget.paintEvent complete")
 
 
 class PanelWidget(QWidget):
     """Compose controls, canvas, and controller into one panel."""
 
     file_loaded = Signal(str)  # emitted with file_path whenever a VTK file is loaded
+    time_plot_points_changed = Signal(object, object)  # emits panel, point list
+    time_plot_use_same_points_toggled = Signal(object, bool)  # emits panel, checked
+    line_scan_direction_changed = Signal()
 
     _ASSETS = Path(__file__).parent.parent / "assets"
 
@@ -117,31 +156,67 @@ class PanelWidget(QWidget):
         self.projects = projects or {}
         self.controls_widget = PanelControlsWidget(dataset_info)
         self.heatmap_canvas  = HeatmapCanvas()
-        self.line_scan_canvas = LineScanCanvas()
-        self.histogram_canvas = HistogramCanvas()
+        self.line_scan_canvas = LineScanCanvas(show_legend=False)
+        debug_print("PanelWidget single line graph max width=600")
+        debug_print("PanelWidget single line graph legend hidden")
+        self.histogram_canvas = HistogramCanvas(show_legend=False)
+        debug_print("PanelWidget single histogram graph max width=600")
+        debug_print("PanelWidget single histogram graph legend hidden")
+        self.time_plot_canvas = TimePlotCanvas()
+        debug_print("PanelWidget plot over time graph max width=600")
+        self.phase_fraction_history_canvas = PhaseFractionHistoryCanvas()
+        self.phase_fraction_history_canvas.hide()
+        debug_print("PanelWidget phase fraction history canvas initialized hidden")
+        self.phase_fraction_history_separator = QFrame()
+        self.phase_fraction_history_separator.setObjectName("phaseFractionHistorySeparator")
+        self.phase_fraction_history_separator.setFrameShape(QFrame.Shape.HLine)
+        self.phase_fraction_history_separator.setFrameShadow(QFrame.Shadow.Plain)
+        self.phase_fraction_history_separator.setFixedHeight(18)
+        self.phase_fraction_history_separator.hide()
+        debug_print("PanelWidget phase fraction history separator initialized hidden")
         self.line_mode_check = ToggleSwitchWidget("Line Scan", checked=False)
         self.show_line_check = ToggleSwitchWidget("Show Line", checked=False)
-        self.direction_combo = QComboBox()
-        self.direction_combo.setObjectName("viewerCombo")
-        self.direction_combo.addItem(
-            QIcon(str(self._ASSETS / "Horizontal.png")), "Horizontal", "horizontal"
-        )
-        self.direction_combo.addItem(
-            QIcon(str(self._ASSETS / "Vertical.png")), "Vertical", "vertical"
-        )
-        self.direction_combo.setIconSize(QSize(18, 18))
-        update_combo_popup_width(self.direction_combo)
+        self._line_scan_direction = "horizontal"
+        self.line_direction_button_row = QWidget()
+        self.line_direction_button_row.setObjectName("lineDirectionButtonRow")
+        line_direction_layout = QHBoxLayout(self.line_direction_button_row)
+        line_direction_layout.setContentsMargins(0, 0, 0, 0)
+        line_direction_layout.setSpacing(2)
+        debug_print("PanelWidget line direction button row created")
+        self.line_direction_buttons: dict[str, QPushButton] = {}
+        for direction, icon_name, tooltip in (
+            ("horizontal", "Horizontal.png", "Horizontal line scan"),
+            ("vertical", "Vertical.png", "Vertical line scan"),
+        ):
+            button = self._make_line_direction_button(direction, icon_name, tooltip)
+            self.line_direction_buttons[direction] = button
+            line_direction_layout.addWidget(button)
+            debug_print(f"PanelWidget line direction button added direction={direction}")
+        self._sync_line_direction_buttons()
+        debug_print("PanelWidget line direction buttons initialized")
         self.histogram_bins_slider = QSlider()
         self.histogram_bins_slider.setOrientation(self.controls_widget.slice_slider.orientation())
         self.histogram_bins_slider.setRange(10, 200)
         self.histogram_bins_slider.setValue(30)
 
         self.interfaces_check = ToggleSwitchWidget("Interfaces Overlay", checked=False)
+        self.phase_overlay_button = PhaseOverlayButton()
+        self.phase_overlay_button.interfaces_toggled.connect(self.interfaces_check.setChecked)
+        self.vector_overlay_check = ToggleSwitchWidget("Vectors", checked=False)
+        self.vector_overlay_check.setToolTip("Show fixed-size vector arrows colored by magnitude")
+        debug_print("PanelWidget vector overlay toggle initialized")
         self.colorbar_label_edit = QLineEdit()
+        attach_symbol_picker(self.colorbar_label_edit)
+        debug_print("PanelWidget colorbar label symbol picker attached")
         self.colorbar_label_edit.setPlaceholderText("Colorbar label…")
         self.colorbar_label_edit.setObjectName("viewerLineEdit")
-        self.colorbar_label_edit.setMinimumWidth(72)
-        debug_print("PanelWidget colorbar label min width set to 72")
+        # The app stylesheet's `min-width: 72px` beats setMinimumWidth(), so the width has to
+        # be requested through a widget-level stylesheet (CSS min-width excludes 18px of padding/border).
+        self.colorbar_label_edit.setMinimumWidth(_LABEL_EDIT_MIN_WIDTH)
+        self.colorbar_label_edit.setStyleSheet(
+            f"QLineEdit#viewerLineEdit {{ min-width: {_LABEL_EDIT_MIN_WIDTH - 18}px; }}"
+        )
+        debug_print("PanelWidget colorbar label min width set to 300")
 
         # Timeline row widgets
         self.first_frame_btn = self._make_playback_button("black_first.png", "First frame")
@@ -150,24 +225,102 @@ class PanelWidget(QWidget):
         self.last_frame_btn = self._make_playback_button("black_last.png", "Last frame")
         self.playback_slider = QSlider(Qt.Orientation.Horizontal)
         self.playback_slider.setRange(0, 0)
+        self.playback_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        debug_print("PanelWidget playback slider tick position set below")
+        self.playback_slider.setTickInterval(1)
+        debug_print("PanelWidget playback slider initial tick interval=1")
+        self.playback_slider.setMouseTracking(True)
+        debug_print("PanelWidget playback slider mouse tracking enabled")
+        self.playback_slider.installEventFilter(self)
+        debug_print("PanelWidget playback slider event filter installed")
+        self.playback_tick_marks = PlaybackTickMarksWidget()
+        debug_print("PanelWidget playback tick marks widget created")
+        self.playback_slider_stack = QWidget()
+        debug_print("PanelWidget playback slider stack created")
+        playback_slider_stack_layout = QVBoxLayout(self.playback_slider_stack)
+        playback_slider_stack_layout.setContentsMargins(0, 0, 0, 0)
+        playback_slider_stack_layout.setSpacing(0)
+        playback_slider_stack_layout.addWidget(self.playback_slider)
+        playback_slider_stack_layout.addWidget(self.playback_tick_marks)
+        debug_print("PanelWidget playback slider stack layout populated")
         self.frame_label = QLabel("– / –")
         self.frame_label.setObjectName("mutedInfo")
         self.frame_label.setMinimumWidth(52)
         self.animate_btn = QPushButton("▶  Animate")
         self.animate_btn.setFixedHeight(28)
         self.animate_btn.setObjectName("playbackBtn")
-        self.unit_scale_combo = QComboBox()
-        self.unit_scale_combo.setObjectName("viewerCombo")
-        self.unit_scale_combo.addItem("Raw",     (1.0,   ""))
-        self.unit_scale_combo.addItem("% ×100",  (100.0, ""))
-        self.unit_scale_combo.addItem("M ÷1e6",  (1e-6,  ""))
-        self.unit_scale_combo.addItem("G ÷1e9",  (1e-9,  ""))
-        update_combo_popup_width(self.unit_scale_combo)
+        self.phase_history_dt_label = QLabel("dt:")
+        self.phase_history_dt_label.setObjectName("mutedInfo")
+        self.phase_history_dt_spin = TrimmedDoubleSpinBox()
+        self.phase_history_dt_spin.setObjectName("viewerSpin")
+        self.phase_history_dt_spin.setDecimals(6)
+        self.phase_history_dt_spin.setRange(0.000001, 1_000_000_000.0)
+        self.phase_history_dt_spin.setValue(1.0)
+        self.phase_history_dt_spin.setSingleStep(0.1)
+        self.phase_history_dt_spin.setFixedWidth(120)
+        self.phase_history_dt_spin.setKeyboardTracking(False)
+        debug_print("PanelWidget phase history dt spin initialized width=120")
+        self.phase_history_time_unit_combo = QComboBox()
+        self.phase_history_time_unit_combo.setObjectName("viewerCombo")
+        self.phase_history_time_unit_combo.addItems(["timestep", "s", "min", "hr"])
+        self.phase_history_time_unit_combo.setFixedWidth(120)
+        update_combo_popup_width(self.phase_history_time_unit_combo)
+        debug_print("PanelWidget phase history time unit combo initialized width=120")
+        self.unit_scale_combo = UnitConversionControl()
+        debug_print("PanelWidget unit conversion control initialized (from -> to)")
         self.export_button = QPushButton(
             QIcon(str(self._ASSETS / "download.png")), "Export"
         )
         self.export_button.setIconSize(QSize(16, 16))
         self.export_button.setProperty("subtle", True)
+        self.time_plot_add_point_btn = QPushButton("Add Point")
+        self.time_plot_add_point_btn.setObjectName("timePlotAddPointButton")
+        self.time_plot_add_point_btn.setCheckable(True)
+        self.time_plot_add_point_btn.setToolTip("Toggle heatmap point selection for Plot Over Time")
+        self.time_plot_add_point_btn.setMinimumWidth(112)
+        debug_print("PlotOverTime Add Point button set checkable")
+        self.time_plot_manual_btn = QPushButton("Manual")
+        self.time_plot_manual_btn.setObjectName("timePlotManualButton")
+        self.time_plot_calculate_btn = QPushButton("Calculate")
+        self.time_plot_calculate_btn.setObjectName("timePlotCalculateButton")
+        self.time_plot_cancel_btn = QPushButton("Cancel")
+        self.time_plot_cancel_btn.setObjectName("timePlotCancelButton")
+        self.time_plot_clear_btn = QPushButton("Clear")
+        self.time_plot_clear_btn.setObjectName("timePlotClearButton")
+        for button in (
+            self.time_plot_add_point_btn,
+            self.time_plot_manual_btn,
+            self.time_plot_calculate_btn,
+            self.time_plot_cancel_btn,
+            self.time_plot_clear_btn,
+        ):
+            button.setFixedHeight(28)
+            debug_print(f"PlotOverTime formatted button={button.objectName()}")
+        self.time_plot_cancel_btn.setEnabled(False)
+        self.time_plot_use_same_points_check = ToggleSwitchWidget("Use Same Points", checked=False)
+        self.time_plot_use_same_points_check.setObjectName("timePlotUseSamePointsToggle")
+        self.time_plot_use_same_points_check.toggled.connect(self._on_use_same_points_toggled)
+        debug_print("PlotOverTime Use Same Points toggle initialized")
+        self.time_plot_show_points_check = ToggleSwitchWidget("Show Points", checked=True)
+        self.time_plot_show_points_check.setToolTip("Show or hide Plot Over Time points on the heatmap")
+        debug_print("PlotOverTime Show Points toggle default on")
+        debug_print("PlotOverTime Show Points toggle user controllable")
+        self.time_plot_selected_label = QLabel("No point selected")
+        self.time_plot_selected_label.setObjectName("mutedInfo")
+        self.time_plot_points_container = QWidget()
+        self.time_plot_points_container.setObjectName("timePlotPointsContainer")
+        self.time_plot_points_container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.time_plot_points_layout = QVBoxLayout(self.time_plot_points_container)
+        self.time_plot_points_layout.setContentsMargins(0, 0, 0, 0)
+        self.time_plot_points_layout.setSpacing(4)
+        self.time_plot_points_container.setVisible(False)
+        debug_print("PlotOverTime point list container initialized")
+        self.time_plot_progress = QProgressBar()
+        self.time_plot_progress.setRange(0, 100)
+        self.time_plot_progress.setValue(0)
+        self.time_plot_progress.setFormat("Ready")
+        self.time_plot_progress.setFixedHeight(18)
+        debug_print("PlotOverTime card widgets initialized")
         self.logo_label = QLabel()
         self.heatmap_status_label = QLabel("Heatmap waiting for controller")
         self.heatmap_status_label.setObjectName("mutedInfo")
@@ -182,16 +335,35 @@ class PanelWidget(QWidget):
             histogram_canvas=self.histogram_canvas,
             line_mode_check=self.line_mode_check,
             show_line_check=self.show_line_check,
-            direction_combo=self.direction_combo,
+            direction_selector=self,
             histogram_bins_slider=self.histogram_bins_slider,
             interfaces_check=self.interfaces_check,
+            vector_overlay_check=self.vector_overlay_check,
+            phase_overlay_button=self.phase_overlay_button,
             export_button=self.export_button,
             colorbar_label_edit=self.colorbar_label_edit,
             unit_scale_combo=self.unit_scale_combo,
+            time_plot_canvas=self.time_plot_canvas,
+            time_plot_add_point_btn=self.time_plot_add_point_btn,
+            time_plot_manual_btn=self.time_plot_manual_btn,
+            time_plot_calculate_btn=self.time_plot_calculate_btn,
+            time_plot_cancel_btn=self.time_plot_cancel_btn,
+            time_plot_clear_btn=self.time_plot_clear_btn,
+            time_plot_show_points_check=self.time_plot_show_points_check,
+            time_plot_selected_label=self.time_plot_selected_label,
+            time_plot_points_container=self.time_plot_points_container,
+            time_plot_points_layout=self.time_plot_points_layout,
+            time_plot_progress=self.time_plot_progress,
+            phase_fraction_history_canvas=self.phase_fraction_history_canvas,
+            phase_fraction_history_separator=self.phase_fraction_history_separator,
+            phase_history_dt_spin=self.phase_history_dt_spin,
+            phase_history_time_unit_combo=self.phase_history_time_unit_combo,
             dataset_info=dataset_info,
             export_widget=self.heatmap_row,
         )
         self.controller._file_loaded_callback = self.file_loaded.emit
+        self.controller._file_options_changed_callback = self._sync_playback_frame_count
+        self.controller._time_plot_points_changed_callback = self._emit_time_plot_points_changed
         self.controller.connect_signals()
         self.controller.refresh_view()
 
@@ -223,38 +395,147 @@ class PanelWidget(QWidget):
         button.setIconSize(QSize(20, 20))
         return button
 
+    def _make_line_direction_button(self, direction: str, icon_name: str, tooltip: str) -> QPushButton:
+        debug_print("PanelWidget._make_line_direction_button called")
+        button = QPushButton()
+        button.setObjectName("lineScanDirectionButton")
+        button.setCheckable(True)
+        button.setProperty("subtle", True)
+        button.setFixedSize(32, 32)
+        button.setIcon(QIcon(str(self._ASSETS / icon_name)))
+        button.setIconSize(QSize(22, 22))
+        button.setToolTip(tooltip)
+        button.clicked.connect(lambda _checked=False, value=direction: self._set_line_scan_direction(value))
+        debug_print(f"PanelWidget line direction button configured direction={direction}")
+        return button
+
+    def _sync_line_direction_buttons(self) -> None:
+        debug_print("PanelWidget._sync_line_direction_buttons called")
+        for direction, button in self.line_direction_buttons.items():
+            button.setChecked(direction == self._line_scan_direction)
+            debug_print(f"PanelWidget line direction checked direction={direction} checked={button.isChecked()}")
+
+    def _set_line_scan_direction(self, direction: str) -> None:
+        debug_print("PanelWidget._set_line_scan_direction called")
+        self._line_scan_direction = direction
+        debug_print(f"PanelWidget selected line direction={self._line_scan_direction}")
+        self._sync_line_direction_buttons()
+        self.line_scan_direction_changed.emit()
+        debug_print("PanelWidget emitted line_scan_direction_changed")
+
+    def current_line_scan_direction(self) -> str:
+        debug_print("PanelWidget.current_line_scan_direction called")
+        debug_print(f"PanelWidget current line direction={self._line_scan_direction}")
+        return self._line_scan_direction
+
     def _sync_playback_frame_count(self) -> None:
+        debug_print("PanelWidget._sync_playback_frame_count called")
         n = self.controller.get_file_count()
+        debug_print(f"PanelWidget playback file count={n}")
         self.playback_slider.setRange(0, max(0, n - 1))
-        self.frame_label.setText(f"1 / {n}" if n > 0 else "– / –")
+        debug_print(f"PanelWidget playback slider maximum={self.playback_slider.maximum()}")
+        self._sync_playback_slider_ticks()
+        current_index = self.controls_widget.file_combo.currentIndex()
+        debug_print(f"PanelWidget file combo current index={current_index}")
+        slider_index = max(0, min(current_index, self.playback_slider.maximum()))
+        debug_print(f"PanelWidget syncing playback slider index={slider_index}")
+        self.playback_slider.blockSignals(True)
+        self.playback_slider.setValue(slider_index)
+        self.playback_slider.blockSignals(False)
+        debug_print(f"PanelWidget playback slider value={self.playback_slider.value()}")
+        self.frame_label.setText(self._playback_frame_label_text(slider_index, n))
+        debug_print(f"PanelWidget playback frame label={self.frame_label.text()}")
         self._update_playback_buttons()
 
+    def _sync_playback_slider_ticks(self) -> None:
+        debug_print("PanelWidget._sync_playback_slider_ticks called")
+        maximum = self.playback_slider.maximum()
+        debug_print(f"PanelWidget playback tick maximum={maximum}")
+        tick_interval = max(1, maximum // 4) if maximum > 0 else 1
+        debug_print(f"PanelWidget playback tick interval={tick_interval}")
+        self.playback_slider.setTickInterval(tick_interval)
+        debug_print("PanelWidget playback slider tick interval applied")
+        self.playback_tick_marks.setMaximum(maximum)
+        debug_print("PanelWidget playback visible tick marks synced")
+
+    def playback_hover_text_for_slider_position(self, position_x: float) -> str:
+        debug_print("PanelWidget.playback_hover_text_for_slider_position called")
+        index = self.playback_tick_marks.frame_index_at_position(position_x, self.playback_slider.width())
+        text = self.playback_tick_marks._hover_text_for_index(index)
+        debug_print(f"PanelWidget playback slider hover text={text}")
+        return text
+
+    def _playback_frame_label_text(self, index: int, count: int) -> str:
+        debug_print("PanelWidget._playback_frame_label_text called")
+        if count <= 0:
+            debug_print("PanelWidget playback label has no frames")
+            return "– / –"
+        maximum = max(0, count - 1)
+        clamped_index = max(0, min(index, maximum))
+        text = f"{clamped_index} / {maximum}"
+        debug_print(f"PanelWidget playback label text={text}")
+        return text
+
+    def eventFilter(self, source: QObject, event: QEvent) -> bool:  # noqa: N802
+        if source is getattr(self, "heatmap_toolbar", None) and event.type() == QEvent.Type.Resize:
+            self._update_heatmap_toolbar_mode(self.width())
+        if source is self.playback_slider and event.type() == QEvent.Type.MouseMove:
+            index = self.playback_tick_marks.frame_index_at_position(
+                event.position().x(),
+                self.playback_slider.width(),
+            )
+            if index != self.playback_tick_marks._hovered_index:
+                self.playback_tick_marks._hovered_index = index
+                debug_print(f"PanelWidget playback slider hovered frame changed={index}")
+            QToolTip.showText(event.globalPosition().toPoint(), self.playback_tick_marks._hover_text_for_index(index), self.playback_slider)
+        elif source is self.playback_slider and event.type() == QEvent.Type.Leave:
+            debug_print("PanelWidget playback slider leave event")
+            self.playback_tick_marks._hovered_index = None
+            QToolTip.hideText()
+        return super().eventFilter(source, event)
+
     def _on_slider_value_changed(self, index: int) -> None:
+        debug_print("PanelWidget._on_slider_value_changed called")
+        debug_print(f"PanelWidget slider index={index}")
         n = self.playback_slider.maximum() + 1
-        self.frame_label.setText(f"{index + 1} / {n}")
+        self.frame_label.setText(self._playback_frame_label_text(index, n))
+        debug_print(f"PanelWidget slider frame label={self.frame_label.text()}")
         if self.controls_widget.file_combo.currentIndex() != index:
+            debug_print("PanelWidget slider updating file combo index")
             self.controls_widget.file_combo.setCurrentIndex(index)
         self._update_playback_buttons()
 
     def _on_file_combo_changed(self, index: int) -> None:
+        debug_print("PanelWidget._on_file_combo_changed called")
+        debug_print(f"PanelWidget file combo index={index}")
         self.playback_slider.blockSignals(True)
         self.playback_slider.setValue(index)
         self.playback_slider.blockSignals(False)
+        debug_print(f"PanelWidget synced slider value={self.playback_slider.value()}")
         n = self.playback_slider.maximum() + 1
-        self.frame_label.setText(f"{index + 1} / {n}" if n > 0 else "– / –")
+        self.frame_label.setText(self._playback_frame_label_text(index, n))
+        debug_print(f"PanelWidget combo frame label={self.frame_label.text()}")
         self._update_playback_buttons()
 
     def _jump_to_frame(self, index: int) -> None:
+        debug_print("PanelWidget._jump_to_frame called")
+        debug_print(f"PanelWidget requested frame index={index}")
         maximum = self.playback_slider.maximum()
+        debug_print(f"PanelWidget current slider maximum={maximum}")
         if maximum < 0:
             return
         target = max(0, min(index, maximum))
+        debug_print(f"PanelWidget target frame index={target}")
         self.controls_widget.file_combo.setCurrentIndex(target)
 
     def _update_playback_buttons(self) -> None:
+        debug_print("PanelWidget._update_playback_buttons called")
         maximum = self.playback_slider.maximum()
         current = self.playback_slider.value()
         has_frames = maximum >= 0 and self.controller.get_file_count() > 0
+        debug_print(f"PanelWidget playback current={current}")
+        debug_print(f"PanelWidget playback maximum={maximum}")
+        debug_print(f"PanelWidget playback has_frames={has_frames}")
         for button in (
             self.first_frame_btn,
             self.previous_frame_btn,
@@ -282,6 +563,18 @@ class PanelWidget(QWidget):
         _, colorbar_label = self.controller._get_display_params(
             self.controls_widget.current_scalar_label()
         )
+        plot_type = self.controls_widget.current_plot_type()
+        debug_print(f"PanelWidget animation plot_type={plot_type}")
+        debug_print(f"PanelWidget animation rotation degrees={state.rotation_degrees}")
+        phase_fraction_specs = (
+            self.controller.phase_fraction_animation_specs()
+            + self.controller.phase_overlay_animation_specs()
+        )
+        debug_print(f"PanelWidget animation phase spec count={len(phase_fraction_specs)}")
+        for spec in phase_fraction_specs:
+            debug_print(f"PanelWidget animation phase spec label={spec.get('label')}")
+            debug_print(f"PanelWidget animation phase spec range={spec.get('range')}")
+            debug_print(f"PanelWidget animation phase spec color={spec.get('color')}")
         dlg = AnimationPlayer(
             file_paths=file_paths,
             scalar_def=scalar_def,
@@ -292,6 +585,9 @@ class PanelWidget(QWidget):
             vmax=state.range_max,
             colorbar_label=colorbar_label,
             interfaces_overlay=self.interfaces_check.isChecked(),
+            plot_type=plot_type,
+            rotation_degrees=state.rotation_degrees,
+            phase_fraction_specs=phase_fraction_specs,
             parent=self,
         )
         dlg.show()
@@ -345,6 +641,8 @@ class PanelWidget(QWidget):
         self._update_heatmap_toolbar_mode(max(0, bounded_width - 56))
         self.line_scan_canvas.set_available_width(max(240, bounded_width - 72))
         self.histogram_canvas.set_available_width(max(240, bounded_width - 72))
+        self.time_plot_canvas.set_available_width(max(240, bounded_width - 72))
+        self.phase_fraction_history_canvas.set_available_width(max(240, bounded_width - 28))
         self._splitter.setMaximumWidth(bounded_width)
         debug_print(f"PanelWidget max width applied={bounded_width}")
 
@@ -387,6 +685,7 @@ class PanelWidget(QWidget):
         self.colorbar_label_caption = QLabel("Label:")
         self.colorbar_label_caption.setObjectName("mutedInfo")
         self._apply_heatmap_toolbar_mode("wide", force=True)
+        self.heatmap_toolbar.installEventFilter(self)
         layout.addWidget(self.heatmap_toolbar)
 
         # Timeline row: transport buttons, slider, frame label, Animate
@@ -401,19 +700,23 @@ class PanelWidget(QWidget):
         ):
             playback_row.addWidget(button)
         playback_row.addSpacing(4)
-        playback_row.addWidget(self.playback_slider, 1)
+        playback_row.addWidget(self.playback_slider_stack, 1)
         playback_row.addWidget(self.frame_label)
         playback_row.addWidget(self.animate_btn)
         layout.addLayout(playback_row)
 
         # heatmap-row: [logo] [centered heatmap], bottom aligned by canvas height
         logo_card = QWidget()
+        logo_card.setObjectName("heatmapLogoExportBand")
+        logo_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        logo_card.setStyleSheet("QWidget#heatmapLogoExportBand { background: #ffffff; }")
+        debug_print("PanelWidget heatmap logo export band background set white")
         logo_path = HEATMAP_LOGO_PATH
         debug_print(f"PanelWidget heatmap logo path={logo_path}")
         debug_print(f"PanelWidget heatmap logo exists={logo_path.exists()}")
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path)).scaledToWidth(
-                52, Qt.TransformationMode.SmoothTransformation
+                _HEATMAP_LOGO_PIXMAP_W, Qt.TransformationMode.SmoothTransformation
             )
             debug_print(f"PanelWidget heatmap logo pixmap isNull={pixmap.isNull()}")
             self.logo_label.setPixmap(pixmap)
@@ -422,24 +725,25 @@ class PanelWidget(QWidget):
             debug_print("PanelWidget heatmap logo missing; pixmap not applied")
         self.logo_label.setAlignment(Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
         self.logo_label.setParent(logo_card)
-        logo_card.setFixedWidth(58)
-        logo_card.setFixedHeight(self.heatmap_canvas.canvas_height())
-        logo_width = logo_card.width()
-        logo_height = self.logo_label.sizeHint().height()
-        logo_y = max(0, logo_card.height() - logo_height - 12)
-        debug_print(f"PanelWidget heatmap logo card width={logo_width}")
-        debug_print(f"PanelWidget heatmap logo label height={logo_height}")
-        debug_print(f"PanelWidget heatmap logo label y={logo_y}")
-        self.logo_label.setGeometry(0, logo_y, logo_width, logo_height)
-        self.logo_label.setFixedWidth(logo_width)
+        logo_card.setFixedSize(_HEATMAP_LOGO_BAND_W, self.heatmap_canvas.canvas_height())
+        # Label fills the band and bottom-aligns the pixmap, exactly like Multi View.
+        self.logo_label.setGeometry(0, 0, logo_card.width(), logo_card.height())
+        debug_print(f"PanelWidget heatmap logo card size={logo_card.width()}x{logo_card.height()}")
         self.heatmap_row = HeatmapAlignmentRow(
             logo_card,
             self.heatmap_canvas,
         )
+        self.heatmap_row.setObjectName("heatmapExportRow")
+        self.heatmap_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.heatmap_row.setStyleSheet("QWidget#heatmapExportRow { background: #ffffff; }")
+        debug_print("PanelWidget heatmap export row background set white")
         self.heatmap_row.setMinimumHeight(self.heatmap_canvas.canvas_height())
         self.heatmap_row.setMaximumHeight(self.heatmap_canvas.canvas_height())
-        layout.addSpacing(24)
+        # The canvas carries its own 40 px toolbar strip above the image, so no extra gap here.
         layout.addWidget(self.heatmap_row)
+        layout.addWidget(self.phase_fraction_history_separator)
+        debug_print("PanelWidget added phase fraction history separator below heatmap")
+        layout.addWidget(self.phase_fraction_history_canvas, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.heatmap_status_label)
         return card
 
@@ -468,18 +772,25 @@ class PanelWidget(QWidget):
         self._clear_toolbar_layout(self.heatmap_toolbar_secondary_layout)
         self.heatmap_toolbar_primary_layout.addWidget(self.colorbar_label_caption)
         self.heatmap_toolbar_primary_layout.addWidget(self.colorbar_label_edit, 1)
-        self.heatmap_toolbar_primary_layout.addWidget(self.unit_scale_combo)
+        self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_dt_label)
+        self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_dt_spin)
+        self.heatmap_toolbar_primary_layout.addWidget(self.phase_history_time_unit_combo)
         if mode == "compact":
             debug_print("PanelWidget applying compact heatmap toolbar")
             self.heatmap_toolbar_secondary_layout.addStretch(1)
-            self.heatmap_toolbar_secondary_layout.addWidget(self.interfaces_check)
+            # The from -> to pair is wide, so it moves to the second row instead of squeezing the label field.
+            self.heatmap_toolbar_secondary_layout.addWidget(self.unit_scale_combo)
+            self.heatmap_toolbar_secondary_layout.addWidget(self.phase_overlay_button)
+            self.heatmap_toolbar_secondary_layout.addWidget(self.vector_overlay_check)
             self.heatmap_toolbar_secondary_layout.addWidget(self.export_button)
             self.heatmap_toolbar.setFixedHeight(82)
             self.heatmap_toolbar_secondary_row.show()
         else:
             debug_print("PanelWidget applying wide heatmap toolbar")
+            self.heatmap_toolbar_primary_layout.addWidget(self.unit_scale_combo)
             self.heatmap_toolbar_primary_layout.addStretch(1)
-            self.heatmap_toolbar_primary_layout.addWidget(self.interfaces_check)
+            self.heatmap_toolbar_primary_layout.addWidget(self.phase_overlay_button)
+            self.heatmap_toolbar_primary_layout.addWidget(self.vector_overlay_check)
             self.heatmap_toolbar_primary_layout.addWidget(self.export_button)
             self.heatmap_toolbar.setFixedHeight(44)
             self.heatmap_toolbar_secondary_row.hide()
@@ -490,10 +801,37 @@ class PanelWidget(QWidget):
     def _update_heatmap_toolbar_mode(self, width: int) -> None:
         debug_print("PanelWidget._update_heatmap_toolbar_mode called")
         bounded_width = max(0, int(width))
-        mode = "compact" if bounded_width and bounded_width < 620 else "wide"
+        toolbar_width = self.heatmap_toolbar.width()
+        if toolbar_width > 1:
+            bounded_width = min(bounded_width, toolbar_width)
+        too_narrow = bool(bounded_width) and (
+            bounded_width < 620 or bounded_width < self._wide_toolbar_required_width()
+        )
+        mode = "compact" if too_narrow else "wide"
         debug_print(f"PanelWidget heatmap toolbar width={bounded_width}")
         debug_print(f"PanelWidget heatmap toolbar selected mode={mode}")
         self._apply_heatmap_toolbar_mode(mode)
+
+    def _wide_toolbar_required_width(self) -> int:
+        """Width the single-row toolbar needs so no control overlaps its neighbour."""
+        widgets = [
+            self.colorbar_label_caption,
+            self.colorbar_label_edit,
+            self.phase_history_dt_label,
+            self.phase_history_dt_spin,
+            self.phase_history_time_unit_combo,
+            self.unit_scale_combo,
+            self.phase_overlay_button,
+            self.vector_overlay_check,
+            self.export_button,
+        ]
+        shown = [w for w in widgets if not w.isHidden()]
+        spacing = self.heatmap_toolbar_primary_layout.spacing()
+        total = sum(
+            _LABEL_EDIT_MIN_WIDTH if w is self.colorbar_label_edit else max(w.minimumWidth(), w.sizeHint().width())
+            for w in shown
+        )
+        return total + spacing * max(0, len(shown) - 1)
 
     def _debug_heatmap_toolbar(self, reason: str) -> None:
         debug_print(f"PanelWidget._debug_heatmap_toolbar reason={reason}")
@@ -546,7 +884,7 @@ class PanelWidget(QWidget):
         self.line_toolbar = QWidget()
         self.line_toolbar.setObjectName("toolbarStrip")
         self.line_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.line_toolbar.setFixedHeight(44)
+        debug_print("PanelWidget line toolbar using natural compact height")
         line_toolbar_layout = QHBoxLayout(self.line_toolbar)
         line_toolbar_layout.setContentsMargins(0, 0, 0, 0)
         line_toolbar_layout.setSpacing(12)
@@ -555,8 +893,9 @@ class PanelWidget(QWidget):
         scan_dir_label = QLabel("Direction:")
         scan_dir_label.setObjectName("mutedInfo")
         line_toolbar_layout.addWidget(scan_dir_label)
-        line_toolbar_layout.addWidget(self.direction_combo)
+        line_toolbar_layout.addWidget(self.line_direction_button_row)
         line_toolbar_layout.addStretch(1)
+        debug_print(f"PanelWidget line toolbar size hint height={self.line_toolbar.sizeHint().height()}")
         line_layout.addWidget(self.line_toolbar)
         line_layout.addWidget(self.line_scan_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.line_card)
@@ -581,6 +920,69 @@ class PanelWidget(QWidget):
         histogram_layout.addLayout(bins_row)
         histogram_layout.addWidget(self.histogram_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.histogram_card)
+
+        self.time_plot_card = QWidget()
+        self.time_plot_card.setObjectName("innerCard")
+        self.time_plot_card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.time_plot_card.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        time_plot_layout = QVBoxLayout(self.time_plot_card)
+        time_plot_layout.setContentsMargins(10, 8, 10, 10)
+        time_plot_layout.setSpacing(8)
+        time_plot_title = QLabel("Plot Over Time")
+        time_plot_title.setObjectName("sectionTitle")
+        time_plot_layout.addWidget(time_plot_title)
+
+        time_plot_toolbar = QWidget()
+        time_plot_toolbar.setObjectName("timePlotToolbar")
+        time_plot_toolbar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        time_plot_toolbar_layout = QVBoxLayout(time_plot_toolbar)
+        time_plot_toolbar_layout.setContentsMargins(8, 8, 8, 8)
+        time_plot_toolbar_layout.setSpacing(6)
+
+        time_plot_action_row = QWidget()
+        time_plot_action_row.setObjectName("timePlotActionRow")
+        time_plot_action_layout = QHBoxLayout(time_plot_action_row)
+        time_plot_action_layout.setContentsMargins(0, 0, 0, 0)
+        time_plot_action_layout.setSpacing(6)
+        time_plot_action_layout.addWidget(self.time_plot_add_point_btn)
+        time_plot_action_layout.addWidget(self.time_plot_manual_btn)
+        time_plot_action_layout.addStretch(1)
+        time_plot_action_layout.addWidget(self.time_plot_calculate_btn)
+        time_plot_action_layout.addWidget(self.time_plot_cancel_btn)
+        time_plot_action_layout.addWidget(self.time_plot_clear_btn)
+
+        time_plot_status_row = QWidget()
+        time_plot_status_row.setObjectName("timePlotStatusRow")
+        time_plot_status_layout = QHBoxLayout(time_plot_status_row)
+        time_plot_status_layout.setContentsMargins(0, 0, 0, 0)
+        time_plot_status_layout.setSpacing(8)
+        time_plot_status_layout.addWidget(self.time_plot_selected_label, 1)
+        time_plot_status_layout.addWidget(self.time_plot_use_same_points_check)
+        time_plot_status_layout.addWidget(self.time_plot_show_points_check)
+
+        time_plot_toolbar_layout.addWidget(time_plot_action_row)
+        time_plot_toolbar_layout.addWidget(time_plot_status_row)
+        time_plot_layout.addWidget(time_plot_toolbar)
+        time_plot_layout.addWidget(self.time_plot_points_container)
+        time_plot_layout.addWidget(self.time_plot_progress)
+        time_plot_layout.addWidget(self.time_plot_canvas, 0, Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.time_plot_card)
+        debug_print("PlotOverTime card initialized")
         layout.addStretch(1)
 
         return card
+
+    def _on_use_same_points_toggled(self, checked: bool) -> None:
+        """Emit when this panel wants to follow shared Plot Over Time points."""
+        debug_print("PanelWidget._on_use_same_points_toggled called")
+        debug_print(f"PanelWidget Use Same Points checked={checked}")
+        self.time_plot_use_same_points_toggled.emit(self, bool(checked))
+        debug_print("PanelWidget emitted use same points toggle")
+
+    def _emit_time_plot_points_changed(self, points: list[dict]) -> None:
+        """Emit a copy of this panel's Plot Over Time points."""
+        debug_print("PanelWidget._emit_time_plot_points_changed called")
+        snapshot = [dict(point) for point in points]
+        debug_print(f"PanelWidget time plot point count={len(snapshot)}")
+        self.time_plot_points_changed.emit(self, snapshot)
+        debug_print("PanelWidget emitted time plot points changed")

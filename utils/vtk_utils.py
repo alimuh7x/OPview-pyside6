@@ -14,7 +14,9 @@ class ReaderCache:
 
     def clear(self) -> None:
         debug_print("ReaderCache.clear called")
+        debug_print(f"ReaderCache clearing entries={len(self._cache)}")
         self._cache.clear()
+        debug_print("ReaderCache clear complete")
 
     def get(self, key: str, default=None):
         return self._cache.get(key, default)
@@ -30,6 +32,14 @@ class ReaderCache:
 
 
 reader_cache = ReaderCache()
+
+
+def clear_reader_cache(reason: str = "") -> None:
+    """Clear cached VTK readers after an explicit user reload action."""
+    debug_print("clear_reader_cache called")
+    debug_print(f"clear_reader_cache reason={reason}")
+    reader_cache.clear()
+    debug_print("clear_reader_cache complete")
 
 
 def get_reader(file_path: str):

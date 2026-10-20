@@ -23,9 +23,20 @@ build-*/
 # Generated images / exports
 *.png
 *.jpg
-!assets/Single_View.png
-!assets/Multi-View.png
-!assets/Custom-Graph.png
+!assets/*.png
+!doc/images/*.png
+
+# Documentation image sources (full-size slides)
+doc/images/Images/
+doc/images/*.pptx
+doc/images/~$*
+
+# VTK simulation outputs
+*.vtk
+*.vts
+
+# Local sample/simulation project data
+Project1/
 
 # OS
 .DS_Store

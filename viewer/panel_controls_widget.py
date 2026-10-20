@@ -2,28 +2,87 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSize, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QEvent, Qt, QSize, QRect, Signal
+from PySide6.QtGui import QIcon, QPen
 from PySide6.QtWidgets import (
+    QDialog,
     QComboBox,
     QDoubleSpinBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QSlider,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
 
 from app.debug import debug_print
+from graphs.symbol_picker import attach_symbol_picker
 from config.constants import PALETTES
-from utils.combo_box_utils import update_combo_popup_width
+from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
+from viewer.trimmed_spin_box import TrimmedDoubleSpinBox
 from viewer.plot_types import PLOT_TYPE_REGISTRY
 from viewer.range_slider_widget import RangeSliderWidget
 from viewer.toggle_switch_widget import ToggleSwitchWidget
 
 _ASSETS = Path(__file__).parent.parent / "assets"
+
+
+_DROPDOWN_TRIM_PX = 10  # the shared plot-type/palette width is this much narrower than the longest entry
+
+
+class _PhaseFractionRenameDelegate(QStyledItemDelegate):
+    """Draw the phase rename icon in a fixed right-side popup slot."""
+
+    def __init__(self, controls: "PanelControlsWidget") -> None:
+        debug_print("_PhaseFractionRenameDelegate.__init__ called")
+        super().__init__(controls.scalar_combo)
+        self._controls = controls
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802
+        super().paint(painter, option, index)
+        key = index.data(Qt.ItemDataRole.UserRole)
+        if not self._controls.is_phase_fraction_key(key):
+            return
+        debug_print("_PhaseFractionRenameDelegate.paint phase fraction")
+        debug_print(f"_PhaseFractionRenameDelegate key={key}")
+        icon_rect = self._rename_icon_rect(option.rect)
+        debug_print(f"_PhaseFractionRenameDelegate icon_rect={icon_rect}")
+        icon_color = self._rename_icon_color(option)
+        debug_print(f"_PhaseFractionRenameDelegate icon_color={icon_color.name()}")
+        painter.save()
+        painter.setPen(QPen(icon_color))
+        painter.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, "✎")
+        painter.restore()
+
+    @staticmethod
+    def _rename_icon_rect(row_rect: QRect) -> QRect:
+        width = 28
+        return QRect(row_rect.right() - width + 1, row_rect.top(), width, row_rect.height())
+
+    @staticmethod
+    def _rename_icon_color(option):
+        debug_print("_PhaseFractionRenameDelegate._rename_icon_color called")
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        debug_print(f"_PhaseFractionRenameDelegate hovered={hovered}")
+        selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        debug_print(f"_PhaseFractionRenameDelegate selected={selected}")
+        if hovered or selected:
+            debug_print("_PhaseFractionRenameDelegate using highlighted text color")
+            return option.palette.highlightedText().color()
+        debug_print("_PhaseFractionRenameDelegate using normal text color")
+        return option.palette.text().color()
+
+
+_COLOR_SCALING_TOOLTIP = (
+    "Colors follow the min/max of the selected region, or of the visible (zoomed) region, automatically.\n"
+    "A range you type or pick with two points is held until you zoom, pan, select a region or press Reset."
+)
 
 
 class PanelControlsWidget(QWidget):
@@ -32,6 +91,9 @@ class PanelControlsWidget(QWidget):
     refresh_requested = Signal()
     export_requested = Signal()
     range_slider_changed = Signal(float, float)
+    phase_fraction_selection_changed = Signal()
+    rotation_changed = Signal(int)
+    file_options_changed = Signal()
 
     def __init__(self, dataset_info: dict) -> None:
         debug_print("PanelControlsWidget.__init__ start")
@@ -39,8 +101,14 @@ class PanelControlsWidget(QWidget):
         self.dataset_info = dataset_info
         self._last_trigger = "init"
         self._layout_mode = ""
+        self._region_last_key: tuple[str, int] | None = None  # (mode, width) of the last placement decision
+        self._rotation_degrees = 0
+        self._selected_rotation_degrees = 0
+        self._phase_fraction_keys: list[str] = []
+        self._phase_fraction_aliases: dict[str, str] = {}
         self._build_ui()
         self._connect_signals()
+        self.scalar_combo.view().viewport().installEventFilter(self)
         debug_print("PanelControlsWidget.__init__ complete")
 
     def _build_ui(self) -> None:
@@ -69,6 +137,8 @@ class PanelControlsWidget(QWidget):
         self.scalar_combo = QComboBox()
         self.scalar_combo.setObjectName("viewerCombo")
         self._configure_compact_combo(self.scalar_combo, 10)
+        self.scalar_combo.setItemDelegate(_PhaseFractionRenameDelegate(self))
+        debug_print("PanelControlsWidget scalar phase rename delegate installed")
         self.scalar_combo.addItem("Select scalar", "")
         update_combo_popup_width(self.scalar_combo)
         row1_layout.addWidget(self.project_combo, 2)
@@ -92,23 +162,32 @@ class PanelControlsWidget(QWidget):
         for renderer in PLOT_TYPE_REGISTRY:
             self.plot_type_combo.addItem(renderer.label, renderer.key)
         update_combo_popup_width(self.plot_type_combo)
+        fit_combo_to_longest_item(self.plot_type_combo)
         self.range_label = QLabel("Range")
+        self.range_label.setToolTip(_COLOR_SCALING_TOOLTIP)
         self.range_label.setObjectName("mutedInfo")
 
-        self.range_min_spin = QDoubleSpinBox()
+        self.range_min_spin = TrimmedDoubleSpinBox()
         self.range_min_spin.setObjectName("viewerSpin")
         self.range_min_spin.setProperty("rangeSpin", True)
-        self.range_min_spin.setDecimals(6)
+        self.range_min_spin.setDecimals(12)
         self.range_min_spin.setRange(-1e12, 1e12)
+        self.range_min_spin.setKeyboardTracking(False)
+        debug_print("PanelControlsWidget range_min_spin keyboard tracking disabled")
+        debug_print("PanelControlsWidget range_min_spin decimals set to 12")
         self.range_min_spin.setMinimumWidth(120)
         self.range_min_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_min_spin min width set to 120")
-        self.range_max_spin = QDoubleSpinBox()
+        self.range_max_spin = TrimmedDoubleSpinBox()
         self.range_max_spin.setObjectName("viewerSpin")
         self.range_max_spin.setProperty("rangeSpin", True)
-        self.range_max_spin.setDecimals(6)
+        self.range_max_spin.setDecimals(12)
         self.range_max_spin.setRange(-1e12, 1e12)
+        self.range_max_spin.setKeyboardTracking(False)
+        debug_print("PanelControlsWidget range_max_spin keyboard tracking disabled")
+        debug_print("PanelControlsWidget range_max_spin decimals set to 12")
         self.range_max_spin.setMinimumWidth(120)
+        self.range_min_spin.link_peer(self.range_max_spin)
         self.range_max_spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         debug_print("PanelControlsWidget range_max_spin min width set to 120")
 
@@ -119,7 +198,8 @@ class PanelControlsWidget(QWidget):
         self.reset_button.setFixedSize(32, 32)
         self.reset_button.setToolTip("Reset range to data min/max")
 
-        self.click_mode_range_check = ToggleSwitchWidget("Range Selection on Map", checked=True)
+        self.click_mode_range_check = ToggleSwitchWidget("Select Points", checked=True)
+        self.click_mode_range_check.setToolTip("Click two points on the map to set the color range")
         layout.addWidget(self.range_row)
         self.range_values_row = QWidget()
         self.range_values_row.setObjectName("controlsRow")
@@ -147,24 +227,88 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
+        self.select_region_check = ToggleSwitchWidget("Select Rectangle", checked=False)
+        self.select_region_check.setToolTip(
+            "On: drag to select a rectangle without zooming (statistics and colors follow it).\n"
+            "Off: drag pans and zoom works as usual. Replaces Select Points, Line Scan and Add Point while on."
+        )
+        self.show_selection_check = ToggleSwitchWidget("Show Rectangle", checked=False)
+        self.show_selection_check.setToolTip("Outline the selected rectangle on the map (the selection is kept either way)")
+        self.discrete_band_count = 2
+        self.discrete_minus_button = QPushButton("-")
+        self.discrete_minus_button.setObjectName("discreteBandButton")
+        self.discrete_minus_button.setFixedSize(28, 28)
+        self.discrete_minus_button.setToolTip("Remove a discrete color band")
+        self.discrete_band_label = QLabel(str(self.discrete_band_count))
+        self.discrete_band_label.setObjectName("mutedInfo")
+        self.discrete_band_label.setFixedWidth(18)
+        self.discrete_band_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.discrete_plus_button = QPushButton("+")
+        self.discrete_plus_button.setObjectName("discreteBandButton")
+        self.discrete_plus_button.setFixedSize(28, 28)
+        self.discrete_plus_button.setToolTip("Add a discrete color band")
+        self.colorbar_mode_combo = QComboBox()
+        self.colorbar_mode_combo.setObjectName("viewerCombo")
+        self._configure_compact_combo(self.colorbar_mode_combo, 5)
+        self.colorbar_mode_combo.addItem("Bar", "bar")
+        self.colorbar_mode_combo.addItem("Boxes", "boxes")
+        self.colorbar_mode_combo.setToolTip("Custom legend display")
+        update_combo_popup_width(self.colorbar_mode_combo)
+        debug_print("PanelControlsWidget colorbar mode combo initialized")
+        debug_print(f"PanelControlsWidget discrete bands initial={self.discrete_band_count}")
 
         # ------------------------------------------------------------------------------------------------
         # Rotation in single view
         # ------------------------------------------------------------------------------------------------
-        self.rotation_combo = QComboBox()
-        self.rotation_combo.setObjectName("viewerCombo")
-        self._configure_compact_combo(self.rotation_combo, 8)
-        self.rotation_combo.addItem("0 deg", 0)
-        self.rotation_combo.addItem("90 deg", 90)
-        self.rotation_combo.addItem("180 deg", 180)
-        self.rotation_combo.addItem("270 deg", 270)
-        update_combo_popup_width(self.rotation_combo)
+        self.rotation_button_row = QWidget()
+        self.rotation_button_row.setObjectName("rotationButtonRow")
+        rotation_button_layout = QHBoxLayout(self.rotation_button_row)
+        rotation_button_layout.setContentsMargins(0, 0, 0, 0)
+        rotation_button_layout.setSpacing(2)
+        debug_print("PanelControlsWidget rotation button row created")
+        self.rotation_buttons: dict[int, QPushButton] = {}
+        for degrees, icon_name in (
+            (0, "coordinate_00.png"),
+            (90, "coordinate_90.png"),
+            (180, "coordinate_180.png"),
+            (270, "coordinate_270.png"),
+        ):
+            button = self._make_rotation_button(degrees, icon_name)
+            self.rotation_buttons[degrees] = button
+            rotation_button_layout.addWidget(button)
+            debug_print(f"PanelControlsWidget rotation button added degrees={degrees}")
+        self._sync_rotation_buttons()
+        debug_print("PanelControlsWidget rotation buttons initialized")
 
         palette_row_layout.addWidget(self.palette_combo, 1)
+        palette_row_layout.addWidget(self.discrete_minus_button)
+        palette_row_layout.addWidget(self.discrete_band_label)
+        palette_row_layout.addWidget(self.discrete_plus_button)
+        palette_row_layout.addWidget(self.colorbar_mode_combo)
         palette_row_layout.addWidget(self.range_slider, 4)
         palette_row_layout.addWidget(self.full_scale_check)
-        palette_row_layout.addWidget(self.rotation_combo)
+        palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
+        # Select Points | Select Rectangle | Show Rectangle: one box, placed on the Range input row when it
+        # has room (labels shorten to fit) and on a line of its own below it only when it does not.
+        self.region_toggles = QWidget()
+        self.region_toggles.setObjectName("controlsRow")
+        toggles_layout = QHBoxLayout(self.region_toggles)
+        toggles_layout.setContentsMargins(0, 0, 0, 0)
+        toggles_layout.setSpacing(6)
+        toggles_layout.addWidget(self.click_mode_range_check)  # "Select Points": two clicks set the range
+        toggles_layout.addWidget(self.select_region_check)
+        toggles_layout.addWidget(self.show_selection_check)
+        self.region_row = QWidget()  # fallback line directly under the Range input
+        self.region_row.setObjectName("controlsRow")
+        self.region_row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.region_row_layout = QHBoxLayout(self.region_row)
+        self.region_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.region_row_layout.setSpacing(8)
+        layout.insertWidget(layout.indexOf(self.range_values_row) + 1, self.region_row)
+        self._region_inline = True
+        self._sync_discrete_controls()
+        self._match_palette_width_to_plot_type()
         self._apply_layout_mode("wide", force=True)
         # ------------------------------------------------------------------------------------------------
 
@@ -203,6 +347,24 @@ class PanelControlsWidget(QWidget):
         self.status_label.hide()
         debug_print("PanelControlsWidget UI ready")
 
+    def _match_palette_width_to_plot_type(self) -> None:
+        """Give the colour-palette and plot-type ("Heatmap") dropdowns one shared minimum width.
+
+        Width = what the longest plot-type entry needs, minus a few px so neither dropdown
+        is wider than necessary. Set through a widget stylesheet because the app stylesheet's
+        `min-width: 72px` would override setMinimumWidth(). CSS min-width excludes the
+        8+24+2 px of padding/border, which `fit_combo_to_longest_item` already accounts for.
+        """
+        metrics = self.plot_type_combo.fontMetrics()
+        longest = max(
+            (metrics.horizontalAdvance(self.plot_type_combo.itemText(i)) for i in range(self.plot_type_combo.count())),
+            default=0,
+        )
+        css_width = max(72, longest + 4 - _DROPDOWN_TRIM_PX)
+        for combo in (self.plot_type_combo, self.palette_combo):
+            combo.setStyleSheet(f"QComboBox {{ min-width: {css_width}px; }}")
+            debug_print(f"PanelControlsWidget {combo.objectName()} shared css min-width={css_width}")
+
     def _configure_compact_combo(self, combo: QComboBox, minimum_contents_length: int) -> None:
         debug_print("PanelControlsWidget._configure_compact_combo called")
         combo.setMinimumContentsLength(minimum_contents_length)
@@ -210,6 +372,33 @@ class PanelControlsWidget(QWidget):
         debug_print(
             f"PanelControlsWidget compact combo configured length={minimum_contents_length}"
         )
+
+    def _make_rotation_button(self, degrees: int, icon_name: str) -> QPushButton:
+        debug_print("PanelControlsWidget._make_rotation_button called")
+        button = QPushButton()
+        button.setObjectName("rotationIconButton")
+        button.setCheckable(True)
+        button.setProperty("subtle", True)
+        button.setFixedSize(32, 32)
+        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIconSize(QSize(24, 24))
+        button.setToolTip(f"Rotate {degrees} degrees")
+        debug_print(f"PanelControlsWidget rotation button configured degrees={degrees}")
+        return button
+
+    def _sync_rotation_buttons(self) -> None:
+        debug_print("PanelControlsWidget._sync_rotation_buttons called")
+        for degrees, button in self.rotation_buttons.items():
+            button.setChecked(degrees == self._selected_rotation_degrees)
+            debug_print(f"PanelControlsWidget rotation button checked degrees={degrees} checked={button.isChecked()}")
+
+    @staticmethod
+    def _clockwise_to_orientation_degrees(degrees: int) -> int:
+        debug_print("PanelControlsWidget._clockwise_to_orientation_degrees called")
+        mapped_degrees = (-int(degrees)) % 360
+        debug_print(f"PanelControlsWidget clockwise degrees={degrees}")
+        debug_print(f"PanelControlsWidget orientation degrees={mapped_degrees}")
+        return mapped_degrees
 
     def _clear_layout(self, target_layout: QHBoxLayout) -> None:
         debug_print("PanelControlsWidget._clear_layout called")
@@ -223,32 +412,33 @@ class PanelControlsWidget(QWidget):
                     f"{widget.objectName() or widget.__class__.__name__}"
                 )
 
-    def _apply_layout_mode(self, mode: str, *, force: bool = False) -> None:
+    def _apply_layout_mode(self, mode: str, *, force: bool = False, inline: bool | None = None) -> None:
         debug_print("PanelControlsWidget._apply_layout_mode called")
-        if mode == self._layout_mode and not force:
+        if inline is None:
+            inline = self._region_inline
+        if mode == self._layout_mode and inline == self._region_inline and not force:
             debug_print(f"PanelControlsWidget layout mode unchanged={mode}")
             self._debug_range_layout("unchanged")
             return
         debug_print(f"PanelControlsWidget changing layout mode from={self._layout_mode} to={mode}")
         self._clear_layout(self.range_row_layout)
         self._clear_layout(self.range_values_row_layout)
+        self._clear_layout(self.region_row_layout)
+        self._region_inline = inline
         if mode == "compact":
             debug_print("PanelControlsWidget applying compact range rows")
-            self.click_mode_range_check.setText("Range")
-            self.click_mode_range_check.setToolTip("Range Selection on Map")
             self.range_row_layout.setSpacing(8)
             self.range_values_row_layout.setSpacing(2)
             self.range_row_layout.addWidget(self.plot_type_combo, 1)
-            self.range_row_layout.addWidget(self.click_mode_range_check)
             self.range_values_row_layout.addWidget(self.range_label)
             self.range_values_row_layout.addWidget(self.range_min_spin, 1)
             self.range_values_row_layout.addWidget(self.range_max_spin, 1)
             self.range_values_row_layout.addWidget(self.reset_button)
+            if inline:
+                self.range_values_row_layout.addWidget(self.region_toggles)  # on the Range input row
             self.range_values_row.show()
         else:
             debug_print("PanelControlsWidget applying wide range row")
-            self.click_mode_range_check.setText("Range Selection on Map")
-            self.click_mode_range_check.setToolTip("")
             self.range_row_layout.setSpacing(8)
             self.range_values_row_layout.setSpacing(8)
             self.range_row_layout.addWidget(self.plot_type_combo)
@@ -256,13 +446,59 @@ class PanelControlsWidget(QWidget):
             self.range_row_layout.addWidget(self.range_min_spin, 1)
             self.range_row_layout.addWidget(self.range_max_spin, 1)
             self.range_row_layout.addWidget(self.reset_button)
-            self.range_row_layout.addWidget(self.click_mode_range_check)
+            if inline:
+                self.range_row_layout.addWidget(self.region_toggles)  # on the Range input row
             self.range_values_row.hide()
+        if not inline:
+            self.region_row_layout.addWidget(self.region_toggles)
+            self.region_row_layout.addStretch(1)
+        self.region_row.setVisible(not inline)
         self._layout_mode = mode
         self.range_row.updateGeometry()
         self.range_values_row.updateGeometry()
         self.updateGeometry()
         self._debug_range_layout("applied")
+
+    # Label sets for the three region toggles, longest first: Select Points / Select Rectangle / Show Rectangle.
+    _REGION_LABEL_SETS = (
+        ("Select Points", "Select Rectangle", "Show Rectangle"),
+        ("Points", "Rectangle", "Show"),
+        ("Points", "Rect", "Show"),
+    )
+
+    def _set_region_labels(self, labels: tuple[str, str, str]) -> None:
+        for toggle, text in zip(
+            (self.click_mode_range_check, self.select_region_check, self.show_selection_check), labels
+        ):
+            toggle.setText(text)
+
+    def _row_min_width(self) -> int:
+        """Minimum width of whichever row currently holds the Range inputs (and so the toggles)."""
+        layout = self.range_values_row_layout if self._layout_mode == "compact" else self.range_row_layout
+        return layout.minimumSize().width()
+
+    def _place_region_toggles(self, mode: str, width: int) -> None:
+        """Put the toggles on the Range input row, with the longest labels that fit.
+
+        A single wide row that is too narrow falls back to the two-row layout (its Range row is shorter);
+        only when no label set fits on the Range row anywhere do the toggles take a line below it.
+        """
+        if (mode, width) == self._region_last_key:
+            return  # same inputs as last time: nothing to decide again
+        self._region_last_key = (mode, width)
+        margin = 8  # card padding
+        for candidate in (["wide", "compact"] if mode == "wide" else ["compact"]):
+            for labels in self._REGION_LABEL_SETS:
+                self._set_region_labels(labels)
+                self._apply_layout_mode(candidate, force=True, inline=True)
+                if not width or self._row_min_width() <= width - margin:
+                    return
+        self._set_region_labels(self._REGION_LABEL_SETS[1])  # nothing fits inline: own line below Range
+        self._apply_layout_mode(mode, force=True, inline=False)
+        if width and self.region_row_layout.minimumSize().width() > width - margin:
+            self._set_region_labels(self._REGION_LABEL_SETS[2])
+        elif width and width - margin >= 460:
+            self._set_region_labels(self._REGION_LABEL_SETS[0])
 
     def _update_layout_mode_for_width(self, width: int) -> None:
         debug_print("PanelControlsWidget._update_layout_mode_for_width called")
@@ -270,7 +506,7 @@ class PanelControlsWidget(QWidget):
         mode = "compact" if bounded_width and bounded_width < 680 else "wide"
         debug_print(f"PanelControlsWidget current width={bounded_width}")
         debug_print(f"PanelControlsWidget selected layout mode={mode}")
-        self._apply_layout_mode(mode)
+        self._place_region_toggles(mode, bounded_width)
 
     def _debug_range_layout(self, reason: str) -> None:
         debug_print(f"PanelControlsWidget._debug_range_layout reason={reason}")
@@ -305,9 +541,14 @@ class PanelControlsWidget(QWidget):
         self.range_slider.values_changed.connect(self._handle_range_slider_changed)
         self.reset_button.clicked.connect(lambda *_: self._emit_refresh_requested("reset"))
         self.click_mode_range_check.toggled.connect(lambda *_: self._emit_refresh_requested("click-mode"))
-        self.palette_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("palette"))
+        self.palette_combo.currentIndexChanged.connect(lambda *_: self._on_palette_changed())
+        self.discrete_minus_button.clicked.connect(lambda *_: self._change_discrete_band_count(-1))
+        self.discrete_plus_button.clicked.connect(lambda *_: self._change_discrete_band_count(1))
+        self.colorbar_mode_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("colorbar-mode"))
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
-        self.rotation_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("rotation"))
+        for degrees, button in self.rotation_buttons.items():
+            button.clicked.connect(lambda _checked=False, value=degrees: self._set_rotation_degrees(value))
+            debug_print(f"PanelControlsWidget rotation button connected degrees={degrees}")
         self.plot_type_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("plot-type"))
         debug_print("PanelControlsWidget signals connected")
 
@@ -326,7 +567,8 @@ class PanelControlsWidget(QWidget):
             self.range_min_spin,
             self.range_max_spin,
             self.palette_combo,
-            self.rotation_combo,
+            self.colorbar_mode_combo,
+            self.rotation_button_row,
             self.range_slider,
             self.axis_combo,
             self.slice_slider,
@@ -364,22 +606,275 @@ class PanelControlsWidget(QWidget):
         self.file_combo.blockSignals(False)
         update_combo_popup_width(self.file_combo)
         debug_print(f"PanelControlsWidget file count={self.file_combo.count()}")
+        self.file_options_changed.emit()
+        debug_print("PanelControlsWidget file_options_changed emitted")
 
     def set_scalar_options(self, scalar_defs: list[dict]) -> None:
         debug_print("PanelControlsWidget.set_scalar_options called")
+        previous_checked = set(self.selected_phase_fraction_keys())
+        debug_print(f"PanelControlsWidget previous checked phase fractions={sorted(previous_checked)}")
         self.scalar_combo.blockSignals(True)
         self.scalar_combo.clear()
+        self._phase_fraction_keys = []
         for scalar_def in scalar_defs:
-            self.scalar_combo.addItem(scalar_def["label"], scalar_def["value"])
+            key = scalar_def["value"]
+            is_phase_fraction = self._is_phase_fraction_scalar(scalar_def)
+            label = self._phase_fraction_combo_text(key, scalar_def["label"]) if is_phase_fraction else scalar_def["label"]
+            self.scalar_combo.addItem(label, key)
+            debug_print(f"PanelControlsWidget scalar option label={scalar_def['label']}")
+            debug_print(f"PanelControlsWidget scalar option value={key}")
+            debug_print(f"PanelControlsWidget scalar option is_phase_fraction={is_phase_fraction}")
+            if is_phase_fraction:
+                self._phase_fraction_keys.append(key)
+                index = self.scalar_combo.count() - 1
+                checked = key in previous_checked or not previous_checked
+                self.scalar_combo.setItemData(
+                    index,
+                    Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked,
+                    Qt.ItemDataRole.CheckStateRole,
+                )
+                self.scalar_combo.setItemData(
+                    index,
+                    Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled,
+                    Qt.ItemDataRole.UserRole + 1,
+                )
+                debug_print(f"PanelControlsWidget phase fraction check initialized key={key}")
+                debug_print(f"PanelControlsWidget phase fraction checked={checked}")
         self.scalar_combo.blockSignals(False)
         update_combo_popup_width(self.scalar_combo)
         debug_print(f"PanelControlsWidget scalar count={self.scalar_combo.count()}")
+        debug_print(f"PanelControlsWidget phase fraction count={len(self._phase_fraction_keys)}")
+
+    def _phase_fraction_combo_text(self, key: str, fallback: str | None = None) -> str:
+        debug_print("PanelControlsWidget._phase_fraction_combo_text called")
+        display = self.phase_fraction_display_label(key, fallback)
+        debug_print(f"PanelControlsWidget phase fraction combo text={display}")
+        return display
+
+    def phase_fraction_click_role(self, row: int, click_x: float, viewport_width: int) -> str:
+        """Return checkbox, rename, or select for a phase-fraction popup click."""
+        debug_print("PanelControlsWidget.phase_fraction_click_role called")
+        debug_print(f"PanelControlsWidget click role row={row}")
+        debug_print(f"PanelControlsWidget click role x={click_x}")
+        debug_print(f"PanelControlsWidget click role viewport_width={viewport_width}")
+        if click_x <= 34:
+            debug_print("PanelControlsWidget click role=checkbox")
+            return "checkbox"
+        rename_width = 28
+        debug_print(f"PanelControlsWidget click role rename_width={rename_width}")
+        rename_start = max(35, viewport_width - rename_width)
+        debug_print(f"PanelControlsWidget click role rename_start={rename_start}")
+        debug_print(f"PanelControlsWidget click role rename_end={viewport_width}")
+        if click_x >= rename_start:
+            debug_print("PanelControlsWidget click role=rename")
+            return "rename"
+        debug_print("PanelControlsWidget click role=select")
+        return "select"
+
+    def _is_phase_fraction_scalar(self, scalar_def: dict) -> bool:
+        debug_print("PanelControlsWidget._is_phase_fraction_scalar called")
+        label = str(scalar_def.get("label", ""))
+        array = str(scalar_def.get("array", ""))
+        component = scalar_def.get("component")
+        result = component is None and (label.startswith("PhaseFraction_") or array.startswith("PhaseFraction_"))
+        debug_print(f"PanelControlsWidget phase fraction result={result}")
+        return result
+
+    def is_phase_fraction_key(self, key: str) -> bool:
+        debug_print("PanelControlsWidget.is_phase_fraction_key called")
+        debug_print(f"PanelControlsWidget phase fraction key query={key}")
+        return key in self._phase_fraction_keys
+
+    def phase_fraction_display_label(self, key: str, fallback: str | None = None) -> str:
+        debug_print("PanelControlsWidget.phase_fraction_display_label called")
+        debug_print(f"PanelControlsWidget display label key={key}")
+        label = self._phase_fraction_aliases.get(key) or fallback or key
+        debug_print(f"PanelControlsWidget display label={label}")
+        return label
+
+    def rename_phase_fraction(self, key: str, alias: str) -> None:
+        debug_print("PanelControlsWidget.rename_phase_fraction called")
+        debug_print(f"PanelControlsWidget rename key={key}")
+        old_label = self.phase_fraction_display_label(key)
+        alias = alias.strip()
+        debug_print(f"PanelControlsWidget rename old label={old_label}")
+        debug_print(f"PanelControlsWidget rename new label={alias}")
+        if key not in self._phase_fraction_keys:
+            debug_print("PanelControlsWidget rename skipped non phase fraction")
+            return
+        if alias:
+            self._phase_fraction_aliases[key] = alias
+        else:
+            self._phase_fraction_aliases.pop(key, None)
+        index = self.scalar_combo.findData(key)
+        if index >= 0:
+            self.scalar_combo.setItemText(index, self._phase_fraction_combo_text(key))
+            update_combo_popup_width(self.scalar_combo)
+        debug_print(f"PanelControlsWidget rename aliases={self._phase_fraction_aliases}")
+        self.phase_fraction_selection_changed.emit()
+        debug_print("PanelControlsWidget emitted phase_fraction_selection_changed after rename")
+
+    def rename_phase_overlay(self, key: str, current_label: str) -> None:
+        """Rename a phase from the overlay legend; works for keys not in the scalar list."""
+        debug_print("PanelControlsWidget.rename_phase_overlay called")
+        dialog = self._build_phase_fraction_rename_dialog(key, current_label)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        alias = dialog.textValue().strip()
+        if alias:
+            self._phase_fraction_aliases[key] = alias
+        else:
+            self._phase_fraction_aliases.pop(key, None)
+        index = self.scalar_combo.findData(key)
+        if index >= 0:
+            self.scalar_combo.setItemText(index, self._phase_fraction_combo_text(key))
+            update_combo_popup_width(self.scalar_combo)
+        self.phase_fraction_selection_changed.emit()
+
+    def _open_phase_fraction_rename_dialog(self, key: str) -> None:
+        debug_print("PanelControlsWidget._open_phase_fraction_rename_dialog called")
+        debug_print(f"PanelControlsWidget rename dialog key={key}")
+        current_label = self.phase_fraction_display_label(key)
+        dialog = self._build_phase_fraction_rename_dialog(key, current_label)
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        new_label = dialog.textValue()
+        debug_print(f"PanelControlsWidget rename dialog accepted={accepted}")
+        debug_print(f"PanelControlsWidget rename dialog value={new_label}")
+        if accepted:
+            self.rename_phase_fraction(key, new_label)
+
+    def _build_phase_fraction_rename_dialog(self, key: str, current_label: str) -> QInputDialog:
+        debug_print("PanelControlsWidget._build_phase_fraction_rename_dialog called")
+        debug_print(f"PanelControlsWidget build rename dialog key={key}")
+        debug_print(f"PanelControlsWidget build rename dialog current_label={current_label}")
+        dialog = QInputDialog(self)
+        dialog.setObjectName("phaseRenameDialog")
+        dialog.setWindowTitle("Rename Phase")
+        dialog.setLabelText(f"{key}\nName:")
+        dialog.setTextValue(current_label)
+        dialog.setInputMode(QInputDialog.InputMode.TextInput)
+        attach_symbol_picker(dialog.findChild(QLineEdit))
+        debug_print("PanelControlsWidget phase rename symbol picker attached")
+        dialog.setMinimumWidth(360)
+        dialog.setStyleSheet(
+            """
+QInputDialog#phaseRenameDialog {
+    background: #f7f9fc;
+    color: #102a52;
+}
+QInputDialog#phaseRenameDialog QLabel {
+    color: #102a52;
+    background: transparent;
+}
+QInputDialog#phaseRenameDialog QLineEdit {
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #ccd7e8;
+    border-radius: 8px;
+    padding: 6px 8px;
+    selection-background-color: #d9e7ff;
+    selection-color: #102a52;
+}
+QInputDialog#phaseRenameDialog QPushButton {
+    background: #ffffff;
+    color: #102a52;
+    border: 1px solid #d2dbea;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-weight: 700;
+}
+QInputDialog#phaseRenameDialog QPushButton:hover {
+    background: #eef4ff;
+    border-color: #9fb5d6;
+}
+"""
+        )
+        debug_print("PanelControlsWidget phase rename dialog styled")
+        return dialog
+
+    def selected_phase_fraction_keys(self) -> list[str]:
+        debug_print("PanelControlsWidget.selected_phase_fraction_keys called")
+        selected: list[str] = []
+        for index in range(self.scalar_combo.count()):
+            key = self.scalar_combo.itemData(index)
+            if key not in self._phase_fraction_keys:
+                continue
+            check_state = self.scalar_combo.itemData(index, Qt.ItemDataRole.CheckStateRole)
+            debug_print(f"PanelControlsWidget phase fraction key={key}")
+            debug_print(f"PanelControlsWidget phase fraction check_state={check_state}")
+            if check_state == Qt.CheckState.Checked:
+                selected.append(key)
+        debug_print(f"PanelControlsWidget selected phase fractions={selected}")
+        return selected
+
+    def set_phase_fraction_checked(self, key: str, checked: bool) -> None:
+        debug_print("PanelControlsWidget.set_phase_fraction_checked called")
+        debug_print(f"PanelControlsWidget set phase fraction key={key}")
+        debug_print(f"PanelControlsWidget set phase fraction checked={checked}")
+        index = self.scalar_combo.findData(key)
+        if index < 0 or key not in self._phase_fraction_keys:
+            debug_print("PanelControlsWidget phase fraction check skipped")
+            return
+        self.scalar_combo.setItemData(
+            index,
+            Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked,
+            Qt.ItemDataRole.CheckStateRole,
+        )
+        debug_print("PanelControlsWidget phase fraction check state updated")
+        self.phase_fraction_selection_changed.emit()
+        debug_print("PanelControlsWidget phase_fraction_selection_changed emitted")
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802
+        if watched is self.scalar_combo.view().viewport() and event.type() == QEvent.Type.MouseButtonRelease:
+            index = self.scalar_combo.view().indexAt(event.position().toPoint())
+            if not index.isValid():
+                return super().eventFilter(watched, event)
+            key = self.scalar_combo.itemData(index.row())
+            if key not in self._phase_fraction_keys:
+                return super().eventFilter(watched, event)
+            click_x = event.position().x()
+            debug_print("PanelControlsWidget scalar popup phase fraction click")
+            debug_print(f"PanelControlsWidget clicked phase fraction key={key}")
+            debug_print(f"PanelControlsWidget click x={click_x}")
+            role = self.phase_fraction_click_role(
+                index.row(),
+                click_x,
+                self.scalar_combo.view().viewport().width(),
+            )
+            if role == "checkbox":
+                current = self.scalar_combo.itemData(index.row(), Qt.ItemDataRole.CheckStateRole)
+                next_checked = current != Qt.CheckState.Checked
+                debug_print(f"PanelControlsWidget checkbox click next_checked={next_checked}")
+                self.set_phase_fraction_checked(key, next_checked)
+                self.scalar_combo.showPopup()
+                return True
+            if role == "rename":
+                debug_print("PanelControlsWidget pencil click opening rename")
+                self.scalar_combo.hidePopup()
+                self._open_phase_fraction_rename_dialog(key)
+                return True
+            debug_print("PanelControlsWidget row text click selecting active phase fraction")
+            self.scalar_combo.blockSignals(True)
+            self.scalar_combo.setCurrentIndex(index.row())
+            self.scalar_combo.blockSignals(False)
+            self.scalar_combo.hidePopup()
+            self._emit_refresh_requested("scalar")
+            return True
+        return super().eventFilter(watched, event)
 
     def set_axis(self, axis: str) -> None:
         debug_print("PanelControlsWidget.set_axis called")
+        debug_print(f"PanelControlsWidget requested axis={axis}")
         index = self.axis_combo.findData(axis)
+        debug_print(f"PanelControlsWidget axis index={index}")
         if index >= 0:
+            debug_print("PanelControlsWidget blocking axis signals for programmatic sync")
+            self.axis_combo.blockSignals(True)
             self.axis_combo.setCurrentIndex(index)
+            self.axis_combo.blockSignals(False)
+            debug_print("PanelControlsWidget unblocked axis signals after programmatic sync")
+        else:
+            debug_print("PanelControlsWidget axis not found; no change applied")
 
     def set_slice_range(self, minimum: int, maximum: int) -> None:
         debug_print("PanelControlsWidget.set_slice_range called")
@@ -420,16 +915,22 @@ class PanelControlsWidget(QWidget):
 
     def set_range_values(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget.set_range_values called")
+        debug_print(f"PanelControlsWidget set range minimum={minimum}")
+        debug_print(f"PanelControlsWidget set range maximum={maximum}")
         self.range_min_spin.blockSignals(True)
         self.range_max_spin.blockSignals(True)
         self.range_min_spin.setValue(minimum)
         self.range_max_spin.setValue(maximum)
         self.range_min_spin.blockSignals(False)
         self.range_max_spin.blockSignals(False)
+        debug_print(f"PanelControlsWidget spin stored minimum={self.range_min_spin.value()}")
+        debug_print(f"PanelControlsWidget spin stored maximum={self.range_max_spin.value()}")
         self.set_slider_values(minimum, maximum)
 
     def set_slider_bounds(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget.set_slider_bounds called")
+        debug_print(f"PanelControlsWidget slider bounds minimum={minimum}")
+        debug_print(f"PanelControlsWidget slider bounds maximum={maximum}")
         self.range_slider.set_bounds(minimum, maximum)
 
     def set_slider_values(self, minimum: float, maximum: float) -> None:
@@ -448,7 +949,15 @@ class PanelControlsWidget(QWidget):
 
     def current_scalar_label(self) -> str:
         debug_print("PanelControlsWidget.current_scalar_label called")
-        return self.scalar_combo.currentText()
+        key = self.current_scalar_key()
+        debug_print(f"PanelControlsWidget current scalar label key={key}")
+        if key in self._phase_fraction_keys:
+            label = self.phase_fraction_display_label(key)
+            debug_print(f"PanelControlsWidget current scalar phase label={label}")
+            return label
+        label = self.scalar_combo.currentText()
+        debug_print(f"PanelControlsWidget current scalar label={label}")
+        return label
 
     def current_axis(self) -> str:
         debug_print("PanelControlsWidget.current_axis called")
@@ -462,9 +971,67 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget.current_palette called")
         return self.palette_combo.currentData() or "aqua-fire"
 
+    def _on_palette_changed(self) -> None:
+        debug_print("PanelControlsWidget._on_palette_changed called")
+        self._sync_discrete_controls()
+        self._emit_refresh_requested("palette")
+
+    def _sync_discrete_controls(self) -> None:
+        debug_print("PanelControlsWidget._sync_discrete_controls called")
+        visible = self.current_palette() == "discrete-custom"
+        debug_print(f"PanelControlsWidget discrete controls visible={visible}")
+        self.discrete_minus_button.setVisible(visible)
+        self.discrete_band_label.setVisible(visible)
+        self.discrete_plus_button.setVisible(visible)
+        self.colorbar_mode_combo.setVisible(visible)
+
+    def current_colorbar_mode(self) -> str:
+        debug_print("PanelControlsWidget.current_colorbar_mode called")
+        mode = self.colorbar_mode_combo.currentData() or "bar"
+        debug_print(f"PanelControlsWidget current colorbar mode={mode}")
+        return mode
+
+    def current_discrete_band_count(self) -> int:
+        debug_print("PanelControlsWidget.current_discrete_band_count called")
+        debug_print(f"PanelControlsWidget current discrete bands={self.discrete_band_count}")
+        return self.discrete_band_count
+
+    def _change_discrete_band_count(self, delta: int) -> None:
+        debug_print("PanelControlsWidget._change_discrete_band_count called")
+        debug_print(f"PanelControlsWidget discrete delta={delta}")
+        next_count = max(2, min(10, self.discrete_band_count + int(delta)))
+        debug_print(f"PanelControlsWidget discrete next_count={next_count}")
+        if next_count == self.discrete_band_count:
+            debug_print("PanelControlsWidget discrete count unchanged")
+            return
+        self.discrete_band_count = next_count
+        self.discrete_band_label.setText(str(next_count))
+        debug_print(f"PanelControlsWidget discrete label={self.discrete_band_label.text()}")
+        self._emit_refresh_requested("discrete-bands")
+
     def current_rotation_degrees(self) -> int:
         debug_print("PanelControlsWidget.current_rotation_degrees called")
-        return int(self.rotation_combo.currentData() or 0)
+        debug_print(f"PanelControlsWidget current rotation degrees={self._rotation_degrees}")
+        return self._rotation_degrees
+
+    def selected_rotation_degrees(self) -> int:
+        """Return the clockwise angle shown by the selected rotation button."""
+        debug_print("PanelControlsWidget.selected_rotation_degrees called")
+        debug_print(f"PanelControlsWidget selected rotation degrees={self._selected_rotation_degrees}")
+        return self._selected_rotation_degrees
+
+    def set_rotation_degrees(self, degrees: int) -> None:
+        """Select a clockwise rotation angle through the normal refresh path."""
+        debug_print("PanelControlsWidget.set_rotation_degrees called")
+        normalized_degrees = int(degrees) % 360
+        debug_print(f"PanelControlsWidget requested rotation degrees={normalized_degrees}")
+        if normalized_degrees not in self.rotation_buttons:
+            debug_print("PanelControlsWidget requested rotation is unsupported")
+            return
+        if self._selected_rotation_degrees == normalized_degrees:
+            debug_print("PanelControlsWidget requested rotation already selected")
+            return
+        self._set_rotation_degrees(normalized_degrees)
 
     def current_range(self) -> tuple[float, float]:
         debug_print("PanelControlsWidget.current_range called")
@@ -473,6 +1040,18 @@ class PanelControlsWidget(QWidget):
     def full_scale_enabled(self) -> bool:
         debug_print("PanelControlsWidget.full_scale_enabled called")
         return self.full_scale_check.isChecked()
+
+    def select_region_enabled(self) -> bool:
+        return self.select_region_check.isChecked()
+
+    def show_selection_enabled(self) -> bool:
+        return self.show_selection_check.isChecked()
+
+    def set_select_region_checked(self, checked: bool) -> None:
+        """Set the Select Region toggle without emitting its toggled signal."""
+        self.select_region_check.blockSignals(True)
+        self.select_region_check.setChecked(bool(checked))
+        self.select_region_check.blockSignals(False)
 
     def current_plot_type(self) -> str:
         return self.plot_type_combo.currentData() or "heatmap"
@@ -495,9 +1074,22 @@ class PanelControlsWidget(QWidget):
         self._last_trigger = trigger
         debug_print(f"PanelControlsWidget external trigger={trigger}")
 
+    def _set_rotation_degrees(self, degrees: int) -> None:
+        debug_print("PanelControlsWidget._set_rotation_degrees called")
+        self._selected_rotation_degrees = int(degrees)
+        debug_print(f"PanelControlsWidget selected icon rotation degrees={self._selected_rotation_degrees}")
+        self._rotation_degrees = self._clockwise_to_orientation_degrees(degrees)
+        debug_print(f"PanelControlsWidget internal rotation degrees={self._rotation_degrees}")
+        self._sync_rotation_buttons()
+        self._emit_refresh_requested("rotation")
+        self.rotation_changed.emit(self._selected_rotation_degrees)
+        debug_print("PanelControlsWidget rotation_changed emitted")
+
     def _handle_range_slider_changed(self, minimum: float, maximum: float) -> None:
         debug_print("PanelControlsWidget._handle_range_slider_changed called")
         debug_print(f"PanelControlsWidget slider changed={minimum}..{maximum}")
+        if self.full_scale_check.isChecked():
+            debug_print("PanelControlsWidget preserving full scale after slider range edit")
         self.range_min_spin.blockSignals(True)
         self.range_max_spin.blockSignals(True)
         self.range_min_spin.setValue(minimum)
@@ -512,5 +1104,7 @@ class PanelControlsWidget(QWidget):
         minimum = self.range_min_spin.value()
         maximum = self.range_max_spin.value()
         debug_print(f"PanelControlsWidget spin range raw={minimum}..{maximum}")
+        if self.full_scale_check.isChecked():
+            debug_print("PanelControlsWidget preserving full scale after spin range edit")
         self.set_slider_values(minimum, maximum)
         self._emit_refresh_requested("range")

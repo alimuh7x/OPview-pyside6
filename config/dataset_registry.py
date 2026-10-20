@@ -5,7 +5,12 @@ from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 from app.debug import debug_print
-from utils.dataset_detector import DatasetInfo, detect_available_datasets, detect_unconfigured_vtk_files
+from utils.dataset_detector import (
+    DatasetInfo,
+    detect_available_datasets,
+    detect_unconfigured_vtk_files,
+    eager_file_limit,
+)
 
 
 class DatasetRegistry:
@@ -30,7 +35,13 @@ class DatasetRegistry:
         for file_path in unconfigured_files:
             base_name = self._extract_base_name(file_path)
             grouped.setdefault(base_name, []).append(file_path)
+        debug_print(f"DatasetRegistry unconfigured group count={len(grouped)}")
         for base_name, files in grouped.items():
+            matched_count = len(files)
+            limited_files = files[:eager_file_limit()]
+            debug_print(f"DatasetRegistry unconfigured group={base_name}")
+            debug_print(f"DatasetRegistry unconfigured matched_count={matched_count}")
+            debug_print(f"DatasetRegistry unconfigured eager_count={len(limited_files)}")
             dataset_id = f"auto-{base_name.lower()}"
             self._datasets.append(
                 DatasetInfo(
@@ -40,8 +51,9 @@ class DatasetRegistry:
                     module_label="Other Files",
                     module_icon="•",
                     file_glob=f"{base_name}_*{files[0].suffix}",
-                    matched_files=files,
-                    matched_count=len(files),
+                    matched_files=limited_files,
+                    matched_count=matched_count,
+                    files_limited=matched_count > len(limited_files),
                     dataset_config={"id": dataset_id, "label": base_name, "scalars": None},
                 )
             )
@@ -65,6 +77,9 @@ class DatasetRegistry:
         debug_print("DatasetRegistry.get_dropdown_options called")
         options: List[Dict[str, Any]] = []
         for dataset in self._datasets:
+            module_label = "" if dataset.module_id == "unconfigured" else dataset.module_label
+            option_label = dataset.label if module_label == "" else f"{module_label}: {dataset.label}"
+            debug_print(f"DatasetRegistry dropdown option label={option_label}")
             payload = {
                 "id": dataset.dataset_id,
                 "label": dataset.label,
@@ -73,9 +88,9 @@ class DatasetRegistry:
                 "files_limited": dataset.files_limited,
                 "dataset_config": dataset.dataset_config,
                 "module_id": dataset.module_id,
-                "module_label": dataset.module_label,
+                "module_label": module_label,
             }
-            options.append({"label": f"{dataset.module_label}: {dataset.label}", "value": payload})
+            options.append({"label": option_label, "value": payload})
         return options
 
     @property

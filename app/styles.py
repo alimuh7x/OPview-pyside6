@@ -8,6 +8,7 @@ from app.debug import debug_print
 def build_app_stylesheet() -> str:
     """Return a windows11-friendly stylesheet closer to OPView."""
     debug_print("build_app_stylesheet called")
+    debug_print("build_app_stylesheet adding sidebar accent hover and pressed states")
     _assets = Path(__file__).parent.parent / "assets"
     _arrow     = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
     _arrow_up  = str(_assets / "dropUp_icon_2.png").replace("\\", "/")
@@ -232,6 +233,106 @@ QWidget#toolbarStrip {{
     background: #f3f6fa;
     border-radius: 10px;
 }}
+QFrame#phaseFractionHistorySeparator {{
+    color: #d7deea;
+    background: transparent;
+    border: none;
+    border-top: 1px solid #d7deea;
+    margin-top: 8px;
+    margin-bottom: 4px;
+}}
+QWidget#timePlotToolbar {{
+    background: #f3f6fa;
+    border: 1px solid #e0e7f1;
+    border-radius: 8px;
+}}
+QWidget#timePlotActionRow,
+QWidget#timePlotStatusRow,
+QWidget#timePlotPointsContainer {{
+    background: transparent;
+}}
+QPushButton#timePlotAddPointButton,
+QPushButton#timePlotManualButton,
+QPushButton#timePlotCancelButton,
+QPushButton#timePlotClearButton {{
+    background: #ffffff;
+    border: 1px solid #d2dbea;
+    border-radius: 7px;
+    padding: 3px 10px;
+    font-weight: 700;
+}}
+QPushButton#timePlotAddPointButton:hover,
+QPushButton#timePlotManualButton:hover,
+QPushButton#timePlotCancelButton:hover,
+QPushButton#timePlotClearButton:hover {{
+    background: #eaf0f8;
+    border-color: #bfccde;
+}}
+QPushButton#timePlotAddPointButton:checked {{
+    background: #cc0c24;
+    color: #ffffff;
+    border-color: #ad081d;
+}}
+QPushButton#timePlotCalculateButton {{
+    background: #123764;
+    color: #ffffff;
+    border: 1px solid #123764;
+    border-radius: 7px;
+    padding: 3px 12px;
+    font-weight: 800;
+}}
+QPushButton#timePlotCalculateButton:hover {{
+    background: #1b4778;
+    border-color: #1b4778;
+}}
+QPushButton#timePlotCalculateButton:disabled,
+QPushButton#timePlotCancelButton:disabled {{
+    background: #edf1f7;
+    color: #8fa0b8;
+    border-color: #d9e1ed;
+}}
+QWidget#timePlotPointRow {{
+    background: #f8fafd;
+    border: 1px solid #dfe7f2;
+    border-radius: 6px;
+}}
+QLabel#timePlotPointLabel {{
+    color: #17375e;
+    font-size: 13px;
+    font-weight: 700;
+}}
+QPushButton#timePlotRemovePointButton {{
+    background: #ffffff;
+    color: #6a7e9f;
+    border: 1px solid #d8e0ec;
+    border-radius: 6px;
+    padding: 0px;
+    font-weight: 800;
+}}
+QPushButton#timePlotRemovePointButton:hover {{
+    background: #ffecef;
+    color: #cc0c24;
+    border-color: #f2b9c1;
+}}
+QPushButton#discreteBandButton {{
+    background: #ffffff;
+    color: #111827;
+    border: 2px solid #8a96a8;
+    border-radius: 8px;
+    padding: 0px;
+    font-size: 18px;
+    font-weight: 900;
+}}
+QPushButton#discreteBandButton:hover {{
+    background: #f3f6fa;
+    border-color: #5f6b7a;
+    color: #000000;
+}}
+QPushButton#discreteBandButton:pressed {{
+    background: #d8dde6;
+    border-color: #4b5563;
+    color: #000000;
+}}
 QWidget#controlsRow {{
     background: transparent;
 }}
@@ -261,6 +362,8 @@ QDoubleSpinBox#viewerSpin {{
     min-height: 28px;
     background: #ffffff;
     color: #102a52;
+    selection-background-color: #d8ecff;
+    selection-color: #102a52;
     border: 1px solid #ccd7e8;
     border-radius: 10px;
     padding: 2px 24px 2px 8px;
@@ -365,12 +468,39 @@ QWidget#sidebarShell QPushButton[accent="true"] {{
     border: 1px solid rgba(255, 255, 255, 0.16);
     color: #ffffff;
 }}
+QWidget#sidebarShell QPushButton[accent="true"]:hover {{
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.28);
+}}
+QWidget#sidebarShell QPushButton[accent="true"]:pressed {{
+    background: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.34);
+}}
 QPushButton[subtle="true"] {{
     background: #ffffff;
     border: 1px solid #d2dbea;
     border-radius: 10px;
     padding: 6px 12px;
     font-weight: 700;
+}}
+QPushButton#rotationIconButton,
+QPushButton#lineScanDirectionButton {{
+    background: #ffffff;
+    border: 1px solid #d2dbea;
+    border-radius: 8px;
+    padding: 0px;
+}}
+QPushButton#rotationIconButton:hover,
+QPushButton#lineScanDirectionButton:hover {{
+    background: #eef3f8;
+    border-color: #bdcad9;
+}}
+QPushButton#rotationIconButton:checked,
+QPushButton#rotationIconButton:pressed,
+QPushButton#lineScanDirectionButton:checked,
+QPushButton#lineScanDirectionButton:pressed {{
+    background: #9aabbf;
+    border-color: #8194aa;
 }}
 QPushButton#playbackTransportButton {{
     background: transparent;
@@ -521,6 +651,22 @@ QLabel#graphSettingsTitle {{
     font-size: 16px;
     font-weight: 800;
 }}
+QPushButton#graphSettingsToggleButton,
+QPushButton#graphSettingsCollapsedToggleButton {{
+    background: transparent;
+    border: none;
+    padding: 0px;
+}}
+QPushButton#graphSettingsToggleButton:hover,
+QPushButton#graphSettingsCollapsedToggleButton:hover {{
+    background: transparent;
+    border: none;
+}}
+QWidget#graphSettingsCollapsedLabel {{
+    color: #0d2b55;
+    font-size: 16px;
+    font-weight: 800;
+}}
 QGroupBox#graphSettingsSection {{
     background: #ffffff;
     border: 1px solid #d5deeb;
@@ -595,6 +741,52 @@ QComboBox#graphCombo QAbstractItemView {{
     background: #ffffff;
     color: #102a52;
     border: 1px solid #ccd7e8;
+    selection-background-color: #1e4a8a;
+    selection-color: #ffffff;
+}}
+QComboBox#graphCombo QAbstractItemView::item {{
+    background: #ffffff;
+    color: #102a52;
+    min-height: 28px;
+    padding: 4px 8px;
+}}
+QComboBox#graphCombo QAbstractItemView {{
+    outline: none;
+}}
+QComboBox#graphCombo QAbstractItemView::item:focus,
+QComboBox#graphCombo QAbstractItemView::item:selected {{
+    background: #e3ecf8;
+    color: #102a52;
+    border: none;
+}}
+QComboBox#graphCombo QAbstractItemView::item:hover {{
+    background: #1e4a8a;
+    color: #ffffff;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar:vertical {{
+    background: #edf2f8;
+    border-left: 1px solid #ccd7e8;
+    margin: 0px;
+    width: 13px;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::handle:vertical {{
+    background: #6f89ad;
+    border-radius: 5px;
+    min-height: 24px;
+    margin: 2px;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::handle:vertical:hover {{
+    background: #526f98;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::add-line:vertical,
+QComboBox#graphCombo QAbstractItemView QScrollBar::sub-line:vertical {{
+    background: transparent;
+    border: none;
+    height: 0px;
+}}
+QComboBox#graphCombo QAbstractItemView QScrollBar::add-page:vertical,
+QComboBox#graphCombo QAbstractItemView QScrollBar::sub-page:vertical {{
+    background: transparent;
 }}
 QWidget#panelTabHeader {{
     background: transparent;
@@ -662,6 +854,14 @@ QMenu::separator {{
     height: 1px;
     background: #ced8e8;
     margin: 4px 8px;
+}}
+QProgressDialog {{
+    background: #f7f9fc;
+    color: #102a52;
+}}
+QProgressDialog QLabel {{
+    background: transparent;
+    color: #102a52;
 }}
 QProgressBar {{
     background: #e7ecf4;

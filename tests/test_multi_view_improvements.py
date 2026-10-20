@@ -8,13 +8,16 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 try:
     import numpy as np
     from PySide6.QtWidgets import QApplication, QHBoxLayout
-    from multi_view.multi_view_cell import MultiViewCell
+    import multi_view.multi_view_panel as multi_view_panel_module
+    from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader
     from multi_view.multi_view_panel import MultiViewPanel
 except ModuleNotFoundError as exc:
     QApplication = None
     QHBoxLayout = None
     np = None
+    multi_view_panel_module = None
     MultiViewCell = None
+    MultiViewHeader = None
     MultiViewPanel = None
     MISSING_DEPENDENCY = exc.name
 else:
@@ -37,6 +40,38 @@ class MultiViewImprovementTests(unittest.TestCase):
             phase.write_text("", encoding="utf-8")
 
             self.assertEqual(MultiViewPanel._phase_overlay_file(str(source)), phase)
+
+    def test_phase_overlay_file_prefers_phasefield_over_distorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            source = vtk_dir / "ElasticStrains_00005000.vts"
+            phase = vtk_dir / "PhaseField_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            source.write_text("", encoding="utf-8")
+            phase.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(MultiViewPanel._phase_overlay_file(str(source)), phase)
+
+    def test_phase_overlay_file_falls_back_to_distorted_phasefield(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            source = vtk_dir / "ElasticStrains_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            source.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(MultiViewPanel._phase_overlay_file(str(source)), distorted)
+
+    def test_phase_overlay_file_prefers_phasefield_when_source_is_distorted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_dir = Path(tmp)
+            phase = vtk_dir / "PhaseField_00005000.vts"
+            distorted = vtk_dir / "PhaseFieldDistorted_00005000.vts"
+            phase.write_text("", encoding="utf-8")
+            distorted.write_text("", encoding="utf-8")
+
+            self.assertEqual(MultiViewPanel._phase_overlay_file(str(distorted)), phase)
 
     def test_phase_overlay_file_returns_current_phasefield_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,6 +133,20 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertEqual(colorbar.title.font.to_plotly_json(), PlotStyle.colorbar_title_font())
         self.assertEqual(colorbar.tickfont.to_plotly_json(), PlotStyle.colorbar_tick_font())
 
+    def test_multiview_colorbar_tick_text_uses_spacing_based_decimals(self):
+        from multi_view.colorbar_canvas import _build_colorbar_figure
+
+        figure = _build_colorbar_figure(
+            [[0.0, "#000000"], [1.0, "#ffffff"]],
+            0.0,
+            1.0,
+            "Shared Label",
+        )
+        colorbar = figure.data[0].colorbar
+
+        self.assertEqual(list(colorbar.tickvals), [0.0, 0.25, 0.5, 0.75, 1.0])
+        self.assertEqual(list(colorbar.ticktext), ["0.00", "0.25", "0.50", "0.75", "1.00"])
+
     def test_export_size_includes_headers_and_colorbar(self):
         size = MultiViewPanel._export_image_size(
             cell_widths=[400, 400, 400],
@@ -144,6 +193,58 @@ class MultiViewImprovementTests(unittest.TestCase):
 
         self.assertIsInstance(panel.analysis_card.layout(), QHBoxLayout)
 
+    def test_multiview_analysis_graphs_match_single_view_graph_height(self):
+        from viewer.heatmap_canvas import _CANVAS_HEIGHT
+
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertEqual(panel.line_scan_canvas.height(), _CANVAS_HEIGHT)
+        self.assertEqual(panel.histogram_canvas.height(), _CANVAS_HEIGHT)
+
+    def test_multiview_analysis_graphs_use_wide_canvases(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertEqual(panel.line_scan_canvas.width(), 800)
+        self.assertEqual(panel.histogram_canvas.width(), 800)
+        self.assertEqual(panel.histogram_canvas.width(), panel.line_scan_canvas.width())
+
+    def test_multiview_discrete_palette_controls_show_only_for_discrete_custom(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertTrue(panel.discrete_minus_button.isHidden())
+        self.assertTrue(panel.discrete_band_label.isHidden())
+        self.assertTrue(panel.discrete_plus_button.isHidden())
+        self.assertTrue(panel.colorbar_mode_combo.isHidden())
+
+        panel.palette_combo.setCurrentIndex(panel.palette_combo.findData("discrete-custom"))
+        QApplication.processEvents()
+
+        self.assertFalse(panel.discrete_minus_button.isHidden())
+        self.assertFalse(panel.discrete_band_label.isHidden())
+        self.assertFalse(panel.discrete_plus_button.isHidden())
+        self.assertFalse(panel.colorbar_mode_combo.isHidden())
+        self.assertEqual(panel.discrete_minus_button.objectName(), "discreteBandButton")
+        self.assertEqual(panel.discrete_plus_button.objectName(), "discreteBandButton")
+        self.assertEqual(panel._current_colorbar_mode(), "bar")
+        panel.colorbar_mode_combo.setCurrentIndex(panel.colorbar_mode_combo.findData("boxes"))
+        self.assertEqual(panel._current_colorbar_mode(), "boxes")
+
+    def test_multiview_discrete_band_buttons_clamp_between_two_and_ten(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        panel._change_discrete_band_count(-1)
+        self.assertEqual(panel.discrete_band_count, 2)
+        panel._change_discrete_band_count(20)
+        self.assertEqual(panel.discrete_band_count, 10)
+        self.assertEqual(panel.discrete_band_label.text(), "10")
+
+    def test_default_analysis_canvases_match_single_view_width(self):
+        from viewer.histogram_canvas import _W as histogram_width
+        from viewer.line_scan_canvas import _W as line_width
+
+        self.assertEqual(histogram_width, line_width)
+        self.assertEqual(line_width, 600)
+
     def test_full_scale_is_off_by_default(self):
         panel = MultiViewPanel({"label": "demo", "available_projects": []})
 
@@ -155,6 +256,12 @@ class MultiViewImprovementTests(unittest.TestCase):
         third_row = control_card.layout().itemAt(1).layout()
 
         self.assertIs(third_row.itemAt(third_row.count() - 1).widget(), panel.interfaces_on)
+
+    def test_multiview_has_vector_overlay_toggle(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        self.assertFalse(panel.vectors_on.isChecked())
+        self.assertIn("vector", panel.vectors_on.toolTip().lower())
 
     def test_selected_scalar_def_falls_back_to_first_scalar(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
@@ -208,6 +315,50 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertEqual(scalar_defs[0]["scale"], 1.0)
         self.assertIsNone(scalar_defs[0]["units"])
 
+    def test_multiview_configured_scalar_defs_include_all_phase_fraction_arrays(self):
+        class FakeReader:
+            scalar_fields = ["PhaseFields", "Interfaces", "PhaseFraction_1", "PhaseFraction_0"]
+
+        original_get_reader = multi_view_panel_module.get_reader
+        multi_view_panel_module.get_reader = lambda _path: FakeReader()
+        self.addCleanup(lambda: setattr(multi_view_panel_module, "get_reader", original_get_reader))
+        dataset_info = {
+            "available_projects": [
+                {
+                    "files": ["phase.vts"],
+                    "dataset_config": {
+                        "scalars": [
+                            {"label": "PhaseFields", "array": "PhaseFields"},
+                            {"label": "Interfaces", "array": "Interfaces"},
+                        ],
+                    },
+                }
+            ]
+        }
+
+        scalar_defs = MultiViewPanel._build_scalar_defs(dataset_info)
+
+        labels = [scalar_def["label"] for scalar_def in scalar_defs]
+        self.assertEqual(labels, ["PhaseFields", "Interfaces", "PhaseFraction_0", "PhaseFraction_1"])
+
+    def test_multiview_auto_scalar_defs_include_vector_norm_and_components(self):
+        class FakeReader:
+            scalar_fields = ["Temperature", "Velocity"]
+            mesh = {
+                "Temperature": np.array([1.0, 2.0]),
+                "Velocity": np.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            }
+
+        original_get_reader = multi_view_panel_module.get_reader
+        multi_view_panel_module.get_reader = lambda _path: FakeReader()
+        self.addCleanup(lambda: setattr(multi_view_panel_module, "get_reader", original_get_reader))
+        dataset_info = {"available_projects": [{"files": ["auto.vts"], "dataset_config": {}}]}
+
+        scalar_defs = MultiViewPanel._build_scalar_defs(dataset_info)
+
+        labels = [scalar_def["label"] for scalar_def in scalar_defs]
+        self.assertEqual(labels, ["Temperature", "Velocity (norm)", "Velocity[0]", "Velocity[1]", "Velocity[2]"])
+
     def test_nearest_grid_value_uses_clicked_coordinates(self):
         x_grid = np.array([[0.0, 1.0], [0.0, 1.0]])
         y_grid = np.array([[0.0, 0.0], [1.0, 1.0]])
@@ -216,6 +367,26 @@ class MultiViewImprovementTests(unittest.TestCase):
         value = MultiViewPanel._nearest_grid_value(x_grid, y_grid, z_grid, 0.9, 0.8)
 
         self.assertEqual(value, 40.0)
+
+    def test_multiview_cell_fill_canvas_mode_removes_aspect_ratio_borders(self):
+        import plotly.graph_objects as go
+
+        figure = go.Figure()
+
+        MultiViewCell._configure_axes(figure, fill_canvas=True)
+
+        self.assertEqual(tuple(figure.layout.xaxis.domain), (0, 1))
+        self.assertEqual(tuple(figure.layout.yaxis.domain), (0, 1))
+        self.assertIsNone(figure.layout.yaxis.scaleanchor)
+
+    def test_multiview_cell_default_mode_preserves_aspect_ratio(self):
+        import plotly.graph_objects as go
+
+        figure = go.Figure()
+
+        MultiViewCell._configure_axes(figure, fill_canvas=False)
+
+        self.assertEqual(figure.layout.yaxis.scaleanchor, "x")
 
     def test_click_range_first_click_stores_value_without_changing_range(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
@@ -321,6 +492,34 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertEqual(panel.status_label.text, "")
         self.assertEqual(panel._render_count, 1)
 
+    def test_conversion_change_preserves_range_slider_position(self):
+        selected = MultiViewPanel._range_from_position(
+            (0.2, 0.8),
+            (0.0, 100.0),
+        )
+
+        self.assertEqual(selected, (20.0, 80.0))
+
+    def test_conversion_change_stores_current_range_position_before_rerender(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.range_min = _SpinStub(2.0)
+        panel.range_max = _SpinStub(8.0)
+        panel.range_slider = _RangeSliderStub(0.0, 10.0)
+        panel._pending_range_position = None
+        panel._range_initialized = False
+        panel._render_count = 0
+
+        def render_all():
+            panel._render_count += 1
+
+        panel._render_all = render_all
+
+        MultiViewPanel._on_display_scale_changed(panel)
+
+        self.assertEqual(panel._pending_range_position, (0.2, 0.8))
+        self.assertTrue(panel._range_initialized)
+        self.assertEqual(panel._render_count, 1)
+
     def test_line_scan_horizontal_uses_nearest_y_row(self):
         x_grid = np.array([[0.0, 1.0, 2.0], [0.0, 1.0, 2.0], [0.0, 1.0, 2.0]])
         y_grid = np.array([[0.0, 0.0, 0.0], [5.0, 5.0, 5.0], [10.0, 10.0, 10.0]])
@@ -395,32 +594,258 @@ class MultiViewImprovementTests(unittest.TestCase):
 
         self.assertEqual(scalar_def["value"], "interfaces")
 
-    def test_line_scan_series_uses_all_cached_grids(self):
+    def test_line_scan_series_uses_file_numbers_for_default_legends(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
         panel._grid_cache = {
-            "a.vts": (
+            "/tmp/VTK/PhaseField_00005000.vts": (
                 np.array([[0.0, 1.0], [0.0, 1.0]]),
                 np.array([[0.0, 0.0], [2.0, 2.0]]),
                 np.array([[1.0, 2.0], [3.0, 4.0]]),
             ),
-            "b.vts": (
+            "/tmp/VTK/PhaseField_00010000.vts": (
                 np.array([[0.0, 1.0], [0.0, 1.0]]),
                 np.array([[0.0, 0.0], [2.0, 2.0]]),
                 np.array([[5.0, 6.0], [7.0, 8.0]]),
             ),
         }
-        panel._columns = {"a.vts": None, "b.vts": None}
+        panel._columns = {
+            "/tmp/VTK/PhaseField_00005000.vts": None,
+            "/tmp/VTK/PhaseField_00010000.vts": None,
+        }
+        panel._legend_names = {}
         panel.direction_combo = _ComboStub("horizontal")
         panel._line_scan_y = 2.0
         panel._line_scan_x = None
 
         series, title, x_label = MultiViewPanel._build_line_scan_series(panel)
 
-        self.assertEqual([item["name"] for item in series], ["a.vts", "b.vts"])
+        self.assertEqual([item["name"] for item in series], ["5000", "10000"])
         np.testing.assert_array_equal(series[0]["y"], np.array([3.0, 4.0]))
         np.testing.assert_array_equal(series[1]["y"], np.array([7.0, 8.0]))
         self.assertEqual(title, "Horizontal Scan at Y=2.00")
         self.assertEqual(x_label, "X Position")
+
+    def test_histogram_series_uses_file_numbers_for_default_legends(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel._columns = {
+            "/tmp/VTK/ElasticStrains_00005000.vts": None,
+            "/tmp/VTK/ElasticStrains_00010000.vts": None,
+        }
+        panel._grid_cache = {
+            "/tmp/VTK/ElasticStrains_00005000.vts": (None, None, np.array([[1.0, 2.0]])),
+            "/tmp/VTK/ElasticStrains_00010000.vts": (None, None, np.array([[3.0, 4.0]])),
+        }
+        panel._legend_names = {}
+
+        series, label = MultiViewPanel._build_histogram_series(
+            panel,
+            {"value": "eps_xx"},
+            1.0,
+            1.0,
+            "eps_xx",
+        )
+
+        self.assertEqual([item["name"] for item in series], ["5000", "10000"])
+        self.assertEqual(label, "eps_xx")
+
+    def test_multiview_custom_legend_names_still_override_file_numbers(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        path = "/tmp/VTK/PhaseField_00005000.vts"
+        panel._grid_cache = {
+            path: (
+                np.array([[0.0, 1.0], [0.0, 1.0]]),
+                np.array([[0.0, 0.0], [2.0, 2.0]]),
+                np.array([[1.0, 2.0], [3.0, 4.0]]),
+            ),
+        }
+        panel._columns = {path: None}
+        panel._legend_names = {path: "Baseline"}
+        panel.direction_combo = _ComboStub("horizontal")
+        panel._line_scan_y = 2.0
+        panel._line_scan_x = None
+
+        series, _title, _x_label = MultiViewPanel._build_line_scan_series(panel)
+
+        self.assertEqual([item["name"] for item in series], ["Baseline"])
+
+    def test_multiview_graph_control_change_does_not_rerender_heatmaps(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        path = "/tmp/VTK/PhaseField_00005000.vts"
+        panel._columns = {path: None}
+        panel._grid_cache = {
+            path: (
+                np.array([[0.0, 1.0], [0.0, 1.0]]),
+                np.array([[0.0, 0.0], [1.0, 1.0]]),
+                np.array([[1.0, 2.0], [3.0, 4.0]]),
+            )
+        }
+        panel._legend_names = {}
+        panel._scalar_defs = [{"label": "Phase", "value": "phase", "array": "Phase"}]
+        panel.scalar_combo = _ComboStub("phase")
+        panel.colorbar_label_edit = _LineEditStub("")
+        panel.unit_scale_combo = _ComboStub((1.0, ""))
+        panel._line_scan_direction = "horizontal"
+        panel._line_scan_y = None
+        panel._line_scan_x = None
+        panel.line_grid_check = _ToggleStub(False)
+        panel.histogram_grid_check = _ToggleStub(False)
+        panel.histogram_bins_slider = _SliderStub(40)
+        panel.line_scan_canvas = _AnalysisCanvasStub()
+        panel.histogram_canvas = _AnalysisCanvasStub()
+        panel._render_count = 0
+        panel._render_all = lambda: setattr(panel, "_render_count", panel._render_count + 1)
+
+        MultiViewPanel._on_analysis_control_changed(panel)
+
+        self.assertEqual(panel._render_count, 0)
+        self.assertEqual(len(panel.line_scan_canvas.calls), 1)
+        self.assertEqual(len(panel.histogram_canvas.calls), 1)
+
+    def test_multiview_graph_grid_toggles_do_not_rerender_heatmaps(self):
+        panel = MultiViewPanel({"available_projects": []})
+        path = "/tmp/VTK/PhaseField_00005000.vts"
+        panel._columns = {path: None}
+        panel._grid_cache = {
+            path: (
+                np.array([[0.0, 1.0], [0.0, 1.0]]),
+                np.array([[0.0, 0.0], [1.0, 1.0]]),
+                np.array([[1.0, 2.0], [3.0, 4.0]]),
+            )
+        }
+        panel._scalar_defs = [{"label": "Phase", "value": "phase", "array": "Phase"}]
+        panel.scalar_combo.blockSignals(True)
+        panel.scalar_combo.addItem("Phase", "phase")
+        panel.scalar_combo.setCurrentIndex(panel.scalar_combo.count() - 1)
+        panel.scalar_combo.blockSignals(False)
+        panel.line_scan_canvas = _AnalysisCanvasStub()
+        panel.histogram_canvas = _AnalysisCanvasStub()
+        panel._render_count = 0
+        panel._render_all = lambda: setattr(panel, "_render_count", panel._render_count + 1)
+
+        panel.line_grid_check.setChecked(True)
+        panel.histogram_grid_check.setChecked(True)
+        panel.line_scan_canvas.calls.clear()
+        panel.histogram_canvas.calls.clear()
+
+        panel.line_grid_check.setChecked(False)
+        panel.histogram_grid_check.setChecked(False)
+
+        self.assertEqual(panel._render_count, 0)
+        self.assertEqual(len(panel.line_scan_canvas.calls), 2)
+        self.assertEqual(len(panel.histogram_canvas.calls), 2)
+
+    def test_multiview_header_defaults_legend_to_file_number(self):
+        header = MultiViewHeader("/tmp/VTK/PhaseField_00005000.vts")
+
+        self.assertEqual(header.legend_name(), "5000")
+
+    def test_multiview_header_legend_edit_row_is_readable(self):
+        header = MultiViewHeader("/tmp/VTK/PhaseField_00005000.vts")
+        layout = header.layout()
+        legend_label = layout.itemAt(0).widget()
+        name_edit = layout.itemAt(1).widget()
+        close_button = layout.itemAt(2).widget()
+
+        self.assertEqual(legend_label.text(), "Legend:")
+        self.assertGreaterEqual(name_edit.height(), 30)
+        self.assertGreaterEqual(close_button.width(), 18)
+        self.assertGreaterEqual(close_button.height(), 18)
+        self.assertIn("font-size: 13px", name_edit.styleSheet())
+
+    def test_multiview_vector_overlay_skips_when_toggle_is_off(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.vectors_on = _ToggleStub(False)
+        panel._rotation_degrees = 0
+
+        overlay = MultiViewPanel._build_vector_overlay_for_file(
+            panel,
+            _VectorReaderStub(),
+            {"array": "Velocity", "label": "Velocity"},
+            "z",
+            MultiViewPanel._orientation(panel),
+        )
+
+        self.assertIsNone(overlay)
+
+    def test_multiview_vector_overlay_builds_for_selected_vector_scalar(self):
+        panel = MultiViewPanel.__new__(MultiViewPanel)
+        panel.vectors_on = _ToggleStub(True)
+        panel._rotation_degrees = 0
+
+        overlay = MultiViewPanel._build_vector_overlay_for_file(
+            panel,
+            _VectorReaderStub(),
+            {"array": "Velocity", "label": "Velocity"},
+            "z",
+            MultiViewPanel._orientation(panel),
+        )
+
+        self.assertIsNotNone(overlay)
+        self.assertEqual(overlay["label"], "Velocity")
+        self.assertIn("arrow_length", overlay)
+        self.assertEqual(overlay["u"].shape, (2, 2))
+
+    def test_multiview_cell_adds_vector_arrow_traces(self):
+        cell = MultiViewCell.__new__(MultiViewCell)
+        vector_overlay = {
+            "x": np.array([[0.0, 1.0]]),
+            "y": np.array([[0.0, 0.0]]),
+            "u": np.array([[1.0, 1.0]]),
+            "v": np.array([[0.0, 0.0]]),
+            "magnitude": np.array([[1.0, 2.0]]),
+            "label": "Velocity",
+            "arrow_length": 1.0,
+        }
+
+        traces = cell._build_vector_traces(vector_overlay)
+
+        self.assertTrue(any(trace.name == "Velocity arrows" for trace in traces))
+        self.assertTrue(any(trace.name == "Velocity arrow heads" for trace in traces))
+
+    def test_multiview_cell_uses_selected_plot_type_renderer(self):
+        from viewer.colorscale import palette_to_cmap
+
+        traces = MultiViewCell._build_plot_traces(
+            np.array([[0.0, 1.0], [0.0, 1.0]]),
+            np.array([[0.0, 0.0], [1.0, 1.0]]),
+            np.array([[1.0, 2.0], [3.0, 4.0]]),
+            vmin=1.0,
+            vmax=4.0,
+            cmap=palette_to_cmap("aqua-fire"),
+            plot_type="contour_lines",
+        )
+
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0].type, "contour")
+        self.assertEqual(traces[0].contours.coloring, "lines")
+
+    def test_multiview_cell_uses_filled_contour_values_renderer(self):
+        from viewer.colorscale import palette_to_cmap
+
+        traces = MultiViewCell._build_plot_traces(
+            np.array([[0.0, 1.0], [0.0, 1.0]]),
+            np.array([[0.0, 0.0], [1.0, 1.0]]),
+            np.array([[1.0, 2.0], [3.0, 4.0]]),
+            vmin=1.0,
+            vmax=4.0,
+            cmap=palette_to_cmap("aqua-fire"),
+            plot_type="contour_filled_values",
+        )
+
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0].type, "contour")
+        self.assertEqual(traces[0].contours.coloring, "fill")
+        self.assertTrue(traces[0].contours.showlabels)
+
+    def test_multiview_plot_type_combo_includes_filled_contour_values(self):
+        panel = MultiViewPanel({"label": "demo", "available_projects": []})
+
+        plot_modes = [
+            panel.type_combo.itemData(index)
+            for index in range(panel.type_combo.count())
+        ]
+
+        self.assertIn("contour_filled_values", plot_modes)
 
 
 class _ComboStub:
@@ -462,6 +887,25 @@ class _ToggleStub:
         self._checked = checked
 
 
+class _SliderStub:
+    def __init__(self, value):
+        self._value = value
+
+    def value(self):
+        return self._value
+
+
+class _AnalysisCanvasStub:
+    def __init__(self):
+        self.calls = []
+
+    def render_lines(self, *args, **kwargs):
+        self.calls.append(("lines", args, kwargs))
+
+    def render_histograms(self, *args, **kwargs):
+        self.calls.append(("histograms", args, kwargs))
+
+
 class _SpinStub:
     def __init__(self, value=0.0):
         self._value = value
@@ -475,6 +919,26 @@ class _SpinStub:
 
     def value(self):
         return self._value
+
+
+class _RangeSliderStub:
+    def __init__(self, minimum=0.0, maximum=1.0):
+        self._minimum = minimum
+        self._maximum = maximum
+
+
+class _VectorReaderStub:
+    vector_fields = ["Velocity"]
+
+    def get_vector_overlay_grid(self, axis, index, vector_name, resolution):
+        return (
+            np.array([[0.0, 1.0], [0.0, 1.0]]),
+            np.array([[0.0, 0.0], [1.0, 1.0]]),
+            np.ones((2, 2)),
+            np.zeros((2, 2)),
+            np.array([[1.0, 2.0], [3.0, 4.0]]),
+            {"min": 1.0, "max": 4.0},
+        )
 
 
 if __name__ == "__main__":

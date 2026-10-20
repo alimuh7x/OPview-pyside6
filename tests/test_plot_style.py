@@ -10,7 +10,7 @@ class PlotStyleTests(unittest.TestCase):
         self.assertEqual(axis["title"]["text"], "X Position")
         self.assertEqual(axis["title"]["font"], PlotStyle.panel_axis_title_font())
         self.assertEqual(axis["tickfont"], PlotStyle.panel_tick_font())
-        self.assertEqual(axis["title"]["font"]["family"], "Arial")
+        self.assertEqual(axis["title"]["font"]["family"], "OPViewGreek, Arial")
         self.assertEqual(axis["title"]["font"]["color"], "#102a52")
         self.assertEqual(axis["title"]["font"]["size"], PlotStyle.PANEL_AXIS_TITLE_SIZE)
         self.assertEqual(axis["tickfont"]["size"], PlotStyle.PANEL_TICK_FONT_SIZE)
@@ -21,9 +21,14 @@ class PlotStyleTests(unittest.TestCase):
 
         self.assertEqual(axis["title"]["font"], PlotStyle.graph_axis_title_font())
         self.assertEqual(axis["tickfont"], PlotStyle.graph_tick_font())
-        self.assertEqual(axis["title"]["font"]["size"], 32)
-        self.assertEqual(axis["tickfont"]["size"], 26)
+        self.assertEqual(axis["title"]["font"]["size"], 36)
+        self.assertEqual(axis["tickfont"]["size"], 30)
         self.assertTrue(axis["showgrid"])
+
+    def test_graph_fonts_put_greek_face_before_arial(self):
+        for font in (PlotStyle.graph_axis_title_font(), PlotStyle.graph_tick_font(), PlotStyle.graph_legend_font()):
+            self.assertEqual(font["family"], f"{PlotStyle.GREEK_FONT_FAMILY}, Arial")
+        self.assertEqual(PlotStyle.panel_axis_title_font()["family"], "OPViewGreek, Arial")
 
     def test_panel_legend_uses_compact_font_with_position_overrides(self):
         legend = PlotStyle.panel_legend(x=1.0, y=1.02, xanchor="right")
@@ -32,6 +37,12 @@ class PlotStyleTests(unittest.TestCase):
         self.assertEqual(legend["x"], 1.0)
         self.assertEqual(legend["y"], 1.02)
         self.assertEqual(legend["xanchor"], "right")
+
+    def test_panel_legend_uses_three_items_per_row(self):
+        legend = PlotStyle.panel_legend()
+
+        self.assertEqual(legend["entrywidthmode"], "fraction")
+        self.assertAlmostEqual(legend["entrywidth"], 0.33)
 
     def test_graph_legend_uses_larger_custom_graph_font(self):
         legend = PlotStyle.graph_legend(x=0.02, y=0.98)
@@ -52,10 +63,10 @@ class PlotStyleTests(unittest.TestCase):
         self.assertEqual(PlotStyle.series_color(1), "#d62728")
         self.assertEqual(PlotStyle.series_color(len(PlotStyle.SERIES_COLORS)), "#111111")
 
-    def test_marker_sample_indices_keep_at_most_15_points_including_ends(self):
+    def test_marker_sample_indices_keep_at_most_20_points_including_ends(self):
         indices = PlotStyle.marker_sample_indices(40)
 
-        self.assertEqual(len(indices), 15)
+        self.assertEqual(len(indices), 20)
         self.assertEqual(indices[0], 0)
         self.assertEqual(indices[-1], 39)
 

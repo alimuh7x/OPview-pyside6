@@ -9,12 +9,12 @@ if(NOT DEFINED PROJECT_NAME)
     set(OPVIEW_STANDALONE TRUE)
 endif()
 
-set(OPVIEW_VERSION "" CACHE STRING "OPView package version (default 2.1.0, or inherited from OPStudio)")
+set(OPVIEW_VERSION "" CACHE STRING "OPView package version (default 2.0.0, or inherited from OPStudio)")
 if(NOT OPVIEW_VERSION)
     if(DEFINED OPStudio_VERSION)
         set(OPVIEW_VERSION ${OPStudio_VERSION})
     else()
-        set(OPVIEW_VERSION "2.1.0")
+        set(OPVIEW_VERSION "2.0.0")
     endif()
 endif()
 
@@ -85,6 +85,7 @@ file(GLOB_RECURSE OPVIEW_PY_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/data/*.py
     ${CMAKE_CURRENT_SOURCE_DIR}/graphs/*.py
     ${CMAKE_CURRENT_SOURCE_DIR}/multi_view/*.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/multi_property/*.py
     ${CMAKE_CURRENT_SOURCE_DIR}/sidebar/*.py
     ${CMAKE_CURRENT_SOURCE_DIR}/single_view/*.py
     ${CMAKE_CURRENT_SOURCE_DIR}/utils/*.py

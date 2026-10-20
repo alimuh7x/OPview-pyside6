@@ -14,17 +14,23 @@ from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
 
 _W = 600
-_H = 300
+_H = 350
 _PLOTLY_JS_PATH = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
 
 class LineScanCanvas(QWidget):
     """Render line scan data using Plotly."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, max_width: int = _W, show_legend: bool = True) -> None:
         debug_print("LineScanCanvas.__init__ start")
         super().__init__()
-        self._canvas_width = _W
+        self._max_width = max(240, int(max_width))
+        debug_print(f"LineScanCanvas max width={self._max_width}")
+        self._show_legend = bool(show_legend)
+        debug_print(f"LineScanCanvas show legend={self._show_legend}")
+        self._canvas_width = self._max_width
+        self._canvas_height = _H
+        debug_print(f"LineScanCanvas default height={self._canvas_height}")
         self._base_url = QUrl.fromLocalFile(str(_PLOTLY_JS_PATH.parent.resolve()) + "/")
         self._web_view = QWebEngineView(self)
         install_save_dialog_download_handler(
@@ -32,21 +38,30 @@ class LineScanCanvas(QWidget):
             self,
             fallback_name="line_scan.png",
         )
-        self._web_view.setFixedSize(_W, _H)
+        self._web_view.setFixedSize(self._canvas_width, self._canvas_height)
         self._web_view.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._web_view)
-        self.setFixedSize(_W, _H)
+        self.setFixedSize(self._canvas_width, self._canvas_height)
         self._web_view.setHtml(self._empty_html(), self._base_url)
         debug_print("LineScanCanvas.__init__ complete")
 
     def set_available_width(self, width: int) -> None:
         debug_print(f"LineScanCanvas.set_available_width width={width}")
-        self._canvas_width = max(240, min(_W, int(width)))
-        self._web_view.setFixedSize(self._canvas_width, _H)
-        self.setFixedSize(self._canvas_width, _H)
+        self._canvas_width = max(240, min(self._max_width, int(width)))
+        self._web_view.setFixedSize(self._canvas_width, self._canvas_height)
+        self.setFixedSize(self._canvas_width, self._canvas_height)
         debug_print(f"LineScanCanvas canvas width={self._canvas_width}")
+        debug_print(f"LineScanCanvas canvas height={self._canvas_height}")
+
+    def set_canvas_height(self, height: int) -> None:
+        debug_print(f"LineScanCanvas.set_canvas_height height={height}")
+        self._canvas_height = max(240, int(height))
+        self._web_view.setFixedSize(self._canvas_width, self._canvas_height)
+        self.setFixedSize(self._canvas_width, self._canvas_height)
+        debug_print(f"LineScanCanvas applied height={self._canvas_height}")
+        debug_print(f"LineScanCanvas current size={self.width()}x{self.height()}")
 
     def render_line(self, x_data, z_data, *, title: str, x_label: str, y_label: str) -> None:
         debug_print("LineScanCanvas.render_line called")
@@ -62,6 +77,19 @@ class LineScanCanvas(QWidget):
     def render_lines(self, series, *, title: str, x_label: str, y_label: str, show_grid: bool = True) -> None:
         debug_print("LineScanCanvas.render_lines called")
         debug_print(f"LineScanCanvas series count={len(series)}")
+        figure = self._figure_for_lines(
+            series,
+            title=title,
+            x_label=x_label,
+            y_label=y_label,
+            show_grid=show_grid,
+        )
+        self._web_view.setHtml(self._build_html(figure), self._base_url)
+        debug_print("LineScanCanvas.render_lines complete")
+
+    def _figure_for_lines(self, series, *, title: str, x_label: str, y_label: str, show_grid: bool = True) -> go.Figure:
+        debug_print("LineScanCanvas._figure_for_lines called")
+        debug_print(f"LineScanCanvas figure series count={len(series)}")
         figure = go.Figure()
         colors = ["#c50623", "#183568", "#0f9ca6", "#f0a202", "#7b2cbf", "#2d6a4f"]
         if not series:
@@ -87,33 +115,64 @@ class LineScanCanvas(QWidget):
                     f"{y_label}=%{{y:.4f}}<br>"
                     "%{fullData.name}<extra></extra>"
                 ),
-                showlegend=bool(name),
+                showlegend=bool(name) and self._show_legend,
             ))
+        legend_orientation = "v"
+        debug_print(f"LineScanCanvas legend orientation={legend_orientation}")
+        legend_x = 1.04
+        debug_print(f"LineScanCanvas legend x={legend_x}")
+        legend_y = 1.0
+        debug_print(f"LineScanCanvas legend y={legend_y}")
+        legend_yanchor = "top"
+        debug_print(f"LineScanCanvas legend yanchor={legend_yanchor}")
+        legend_xanchor = "left"
+        debug_print(f"LineScanCanvas legend xanchor={legend_xanchor}")
+        right_margin = 210 if self._show_legend else 20
+        debug_print(f"LineScanCanvas dynamic right margin={right_margin}")
+        legend_config = None
+        if self._show_legend:
+            legend_config = PlotStyle.panel_legend(
+                orientation=legend_orientation,
+                yanchor=legend_yanchor,
+                y=legend_y,
+                xanchor=legend_xanchor,
+                x=legend_x,
+            )
+            legend_config.pop("entrywidthmode", None)
+            legend_config.pop("entrywidth", None)
+            debug_print(f"LineScanCanvas legend entrywidthmode={legend_config.get('entrywidthmode')}")
+            debug_print(f"LineScanCanvas legend entrywidth={legend_config.get('entrywidth')}")
+            debug_print("LineScanCanvas legend placed outside right side")
+        else:
+            debug_print("LineScanCanvas legend hidden for single view")
+        debug_print("LineScanCanvas top margin=76 for modebar")
         figure.update_layout(
             width=self._canvas_width,
-            height=_H,
-            margin=dict(l=80, r=20, t=30, b=70),
+            height=self._canvas_height,
+            margin=dict(l=80, r=right_margin, t=76, b=70),
             paper_bgcolor="white",
             plot_bgcolor="white",
             font=PlotStyle.layout_font(),
-            legend=PlotStyle.panel_legend(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1.0,
-            ),
+            showlegend=self._show_legend,
             xaxis=PlotStyle.panel_axis(x_label, show_grid),
             yaxis=PlotStyle.panel_axis(y_label, show_grid),
         )
-        self._web_view.setHtml(self._build_html(figure), self._base_url)
-        debug_print("LineScanCanvas.render_lines complete")
+        if legend_config is not None:
+            figure.update_layout(legend=legend_config)
+        debug_print("LineScanCanvas._figure_for_lines complete")
+        return figure
 
     def _build_html(self, figure: go.Figure) -> str:
+        debug_print("LineScanCanvas._build_html called")
+        debug_print("LineScanCanvas modebar top offset=0px")
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
-<style>html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}</style>
+<style>
+{PlotStyle.greek_font_face()}
+html,body{{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:white;}}
+.modebar{{top: 0px !important;}}
+</style>
 <script src="plotly.min.js"></script>
 </head><body>
 <div id="div"></div>

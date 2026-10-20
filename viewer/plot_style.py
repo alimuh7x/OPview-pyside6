@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
+
+from app.debug import debug_print
 
 
 class PlotStyle:
     """Central style object for Plotly-based charts."""
 
     FONT_FAMILY = "Arial"
+    GREEK_FONT_FAMILY = "OPViewGreek"  # Greek-only STIX Two Text Italic face declared by chart pages
     TEXT_COLOR = "#102a52"
     MUTED_COLOR = "#6a7e9f"
     GRID_COLOR = "rgba(128, 128, 128, 0.2)"
@@ -20,7 +24,7 @@ class PlotStyle:
     PANEL_AXIS_TITLE_SIZE   = 22
     PANEL_TICK_FONT_SIZE    = 18
     TRACE_LINE_WIDTH        = 3.5
-    MAX_MARKER_POINTS       = 15
+    MAX_MARKER_POINTS       = 20
     MARKER_SIZE             = 12
     MARKER_SYMBOLS          = (
         "circle",
@@ -43,10 +47,15 @@ class PlotStyle:
         "#8c564b",
     )
 
-    GRAPH_LEGEND_FONT_SIZE  = 28
-    GRAPH_AXIS_TITLE_SIZE   = 32
-    GRAPH_TICK_FONT_SIZE    = 26
+    GRAPH_LEGEND_FONT_SIZE  = 32
+    GRAPH_AXIS_TITLE_SIZE   = 36
+    GRAPH_TICK_FONT_SIZE    = 30
     GUIDE_LINE_WIDTH        = 6
+
+    # Interface overlay (fill and outline share both values). Opaque, so the outline never stacks
+    # onto a semi-transparent fill and leaves a darker line just inside the band edge.
+    INTERFACE_OVERLAY_COLOR = "#000000"
+    INTERFACE_OVERLAY_ALPHA = 1.0
 
     COLORBAR_TITLE_SIZE     = 28
     COLORBAR_TICK_FONT_SIZE = 24
@@ -67,28 +76,50 @@ class PlotStyle:
         }
 
     @classmethod
+    def _graph_family(cls) -> str:
+        return f"{cls.GREEK_FONT_FAMILY}, {cls.FONT_FAMILY}"
+
+    @classmethod
+    def greek_font_face(cls) -> str:
+        """Use the bundled italic face for Greek and µ, with other text falling back to Arial."""
+        font_path = Path(__file__).resolve().parent.parent / "assets" / "fonts" / "STIXTwoText-Italic.ttf"
+        debug_print(f"PlotStyle Greek font path={font_path}")
+        css = (
+            f"@font-face{{font-family:'{cls.GREEK_FONT_FAMILY}';font-style:normal;font-weight:100 900;"
+            f"src:url('{font_path.as_uri()}') format('truetype');unicode-range:U+0370-03FF,U+00B5;}}"
+        )
+        debug_print(f"PlotStyle Greek font face ready family={cls.GREEK_FONT_FAMILY}")
+        return css
+
+    @classmethod
     def layout_font(cls) -> dict[str, Any]:
         return cls.font()
 
     @classmethod
     def panel_axis_title_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.PANEL_AXIS_TITLE_SIZE)
+        font = cls.font(size=cls.PANEL_AXIS_TITLE_SIZE, family=cls._graph_family())
+        debug_print(f"PlotStyle panel axis title font={font}")
+        return font
 
     @classmethod
     def panel_tick_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.PANEL_TICK_FONT_SIZE)
+        font = cls.font(size=cls.PANEL_TICK_FONT_SIZE, family=cls._graph_family())
+        debug_print(f"PlotStyle panel tick font={font}")
+        return font
 
     @classmethod
     def graph_axis_title_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.GRAPH_AXIS_TITLE_SIZE)
+        return cls.font(size=cls.GRAPH_AXIS_TITLE_SIZE, family=cls._graph_family())
 
     @classmethod
     def graph_tick_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.GRAPH_TICK_FONT_SIZE)
+        return cls.font(size=cls.GRAPH_TICK_FONT_SIZE, family=cls._graph_family())
 
     @classmethod
     def colorbar_title_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.COLORBAR_TITLE_SIZE)
+        font = cls.font(size=cls.COLORBAR_TITLE_SIZE, family=cls._graph_family())
+        debug_print(f"PlotStyle colorbar title font={font}")
+        return font
 
     @classmethod
     def colorbar_tick_font(cls) -> dict[str, Any]:
@@ -108,11 +139,13 @@ class PlotStyle:
 
     @classmethod
     def panel_legend_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.PANEL_LEGEND_FONT_SIZE)
+        font = cls.font(size=cls.PANEL_LEGEND_FONT_SIZE, family=cls._graph_family())
+        debug_print(f"PlotStyle panel legend font={font}")
+        return font
 
     @classmethod
     def graph_legend_font(cls) -> dict[str, Any]:
-        return cls.font(size=cls.GRAPH_LEGEND_FONT_SIZE)
+        return cls.font(size=cls.GRAPH_LEGEND_FONT_SIZE, family=cls._graph_family())
 
     @classmethod
     def empty_annotation_font(cls) -> dict[str, Any]:
@@ -126,7 +159,12 @@ class PlotStyle:
 
     @classmethod
     def panel_legend(cls, **overrides: Any) -> dict[str, Any]:
-        return cls._legend(cls.panel_legend_font(), **overrides)
+        config = {
+            "entrywidthmode": "fraction",
+            "entrywidth": 0.33,
+        }
+        config.update(overrides)
+        return cls._legend(cls.panel_legend_font(), **config)
 
     @classmethod
     def graph_legend(cls, **overrides: Any) -> dict[str, Any]:
@@ -160,14 +198,15 @@ class PlotStyle:
         return indices
 
     @classmethod
-    def marker_style(cls, series_index: int, **overrides: Any) -> dict[str, Any]:
+    def marker_style(cls, series_index: int, *, limit_displayed: bool = True, **overrides: Any) -> dict[str, Any]:
         symbol = cls.MARKER_SYMBOLS[int(series_index) % len(cls.MARKER_SYMBOLS)]
         config = {
             "size": cls.MARKER_SIZE,
             "symbol": symbol,
-            "maxdisplayed": cls.MAX_MARKER_POINTS,
             "line": {"color": "white", "width": 1.5},
         }
+        if limit_displayed:
+            config["maxdisplayed"] = cls.MAX_MARKER_POINTS
         config.update(overrides)
         return config
 

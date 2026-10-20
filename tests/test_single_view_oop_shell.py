@@ -2,17 +2,25 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QSizePolicy, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QSizePolicy, QSlider, QWidget
 
 from app.application_bootstrap import ApplicationBootstrap
 from app.main_window import MainWindow
 from app.styles import build_app_stylesheet
+from multi_property.multi_property_tab import MultiPropertyTab
 from single_view.tab_widget import SingleViewTab
 from viewer.histogram_canvas import HistogramCanvas
-from viewer.panel_widget import PanelWidget
+from viewer.panel_widget import PanelWidget, PlaybackTickMarksWidget
+from viewer.time_plot_canvas import TimePlotCanvas
 
 
 class SingleViewOOPShellTests(unittest.TestCase):
@@ -26,6 +34,8 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertIsInstance(window, MainWindow)
         self.assertIs(window.single_view_tab, window.content_tabs["single_view"])
+        self.assertIsInstance(window.content_tabs["multi_property"], MultiPropertyTab)
+        self.assertEqual(window.tab_widget.tabText(2), "Multi Property")
 
     def test_application_bootstrap_uses_windows11_style(self):
         bootstrap = ApplicationBootstrap()
@@ -40,6 +50,30 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIn("background: transparent;", stylesheet)
         self.assertIn("padding: 7px 20px;", stylesheet)
         self.assertIn("border-bottom: 3px solid #cc0c24;", stylesheet)
+
+    def test_viewer_spin_box_selection_uses_light_blue(self):
+        stylesheet = build_app_stylesheet()
+
+        self.assertIn("selection-background-color: #d8ecff;", stylesheet)
+        self.assertIn("selection-color: #102a52;", stylesheet)
+
+    def test_rotation_icon_buttons_have_hover_and_checked_styles(self):
+        stylesheet = build_app_stylesheet()
+
+        self.assertIn("QPushButton#rotationIconButton:hover", stylesheet)
+        self.assertIn("QPushButton#rotationIconButton:checked", stylesheet)
+        self.assertIn("QPushButton#lineScanDirectionButton:hover", stylesheet)
+        self.assertIn("QPushButton#lineScanDirectionButton:checked", stylesheet)
+        self.assertIn("background: #9aabbf;", stylesheet)
+
+    def test_discrete_band_buttons_have_prominent_styles(self):
+        stylesheet = build_app_stylesheet()
+
+        self.assertIn("QPushButton#discreteBandButton", stylesheet)
+        self.assertIn("color: #111827;", stylesheet)
+        self.assertIn("border: 2px solid #8a96a8;", stylesheet)
+        self.assertIn("font-size: 18px;", stylesheet)
+        self.assertIn("font-weight: 900;", stylesheet)
 
     def test_main_window_wires_sidebar_to_single_view(self):
         window = MainWindow()
@@ -76,6 +110,17 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertEqual(window.documentation_button.property("accent"), True)
         self.assertIsNone(window.header_bar.findChild(QLabel, "brandLogo"))
         self.assertFalse(window.windowIcon().isNull())
+
+    def test_main_window_does_not_start_filesystem_autoscan(self):
+        window = MainWindow()
+
+        self.assertFalse(hasattr(window, "file_watcher"))
+
+    def test_main_window_manual_folder_project_name_uses_parent_and_folder(self):
+        window = MainWindow()
+        folder = Path("/tmp/VTK_final/VTK_final")
+
+        self.assertEqual(window._manual_folder_project_name(folder), "VTK_final/VTK_final")
 
     def test_main_tabs_live_inside_header_bar(self):
         window = MainWindow()
@@ -152,6 +197,701 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIn("Line Scan", section_titles)
         self.assertIn("Histogram", section_titles)
         self.assertNotIn("Line Scan & Histogram Analysis", section_titles)
+
+
+    def test_panel_analysis_card_has_plot_over_time_section(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        section_titles = [
+            label.text()
+            for label in panel.findChildren(QLabel, "sectionTitle")
+        ]
+
+        self.assertIn("Plot Over Time", section_titles)
+        self.assertIsInstance(panel.time_plot_canvas, TimePlotCanvas)
+        self.assertEqual(panel.time_plot_selected_label.text(), "No point selected")
+        self.assertIsNotNone(panel.findChild(QWidget, "timePlotToolbar"))
+        self.assertIsNotNone(panel.findChild(QWidget, "timePlotActionRow"))
+        self.assertIsNotNone(panel.findChild(QWidget, "timePlotStatusRow"))
+        self.assertEqual(panel.time_plot_add_point_btn.objectName(), "timePlotAddPointButton")
+        self.assertEqual(panel.time_plot_calculate_btn.objectName(), "timePlotCalculateButton")
+        self.assertEqual(panel.time_plot_use_same_points_check.objectName(), "timePlotUseSamePointsToggle")
+        self.assertFalse(panel.time_plot_use_same_points_check.isChecked())
+        self.assertTrue(panel.time_plot_show_points_check.isChecked())
+        self.assertTrue(panel.time_plot_show_points_check.isEnabled())
+
+    def test_single_view_line_frequency_and_plot_over_time_share_default_width(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        self.assertEqual(panel.line_scan_canvas.width(), 600)
+        self.assertEqual(panel.histogram_canvas.width(), 600)
+        self.assertEqual(panel.time_plot_canvas.width(), 600)
+        self.assertFalse(panel.line_scan_canvas._show_legend)
+        self.assertFalse(panel.histogram_canvas._show_legend)
+
+    def test_single_view_discrete_palette_controls_show_only_for_discrete_custom(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        controls = panel.controls_widget
+
+        self.assertTrue(controls.discrete_minus_button.isHidden())
+        self.assertTrue(controls.discrete_band_label.isHidden())
+        self.assertTrue(controls.discrete_plus_button.isHidden())
+        self.assertTrue(controls.colorbar_mode_combo.isHidden())
+
+        index = controls.palette_combo.findData("discrete-custom")
+        controls.palette_combo.setCurrentIndex(index)
+        QApplication.processEvents()
+
+        self.assertFalse(controls.discrete_minus_button.isHidden())
+        self.assertFalse(controls.discrete_band_label.isHidden())
+        self.assertFalse(controls.discrete_plus_button.isHidden())
+        self.assertFalse(controls.colorbar_mode_combo.isHidden())
+        self.assertEqual(controls.discrete_minus_button.objectName(), "discreteBandButton")
+        self.assertEqual(controls.discrete_plus_button.objectName(), "discreteBandButton")
+
+    def test_single_view_discrete_palette_can_choose_bar_or_numbered_boxes(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        controls = panel.controls_widget
+
+        index = controls.palette_combo.findData("discrete-custom")
+        controls.palette_combo.setCurrentIndex(index)
+        QApplication.processEvents()
+
+        self.assertEqual(controls.current_colorbar_mode(), "bar")
+        self.assertGreaterEqual(controls.colorbar_mode_combo.findData("bar"), 0)
+        boxes_index = controls.colorbar_mode_combo.findData("boxes")
+        self.assertGreaterEqual(boxes_index, 0)
+
+        controls.colorbar_mode_combo.setCurrentIndex(boxes_index)
+
+        self.assertEqual(controls.current_colorbar_mode(), "boxes")
+
+    def test_single_view_discrete_band_buttons_clamp_between_two_and_ten(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        controls = panel.controls_widget
+
+        controls._change_discrete_band_count(-1)
+        self.assertEqual(controls.current_discrete_band_count(), 2)
+        controls._change_discrete_band_count(20)
+        self.assertEqual(controls.current_discrete_band_count(), 10)
+        self.assertEqual(controls.discrete_band_label.text(), "10")
+
+    def test_single_view_line_and_frequency_hide_legend_margin(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+
+        line_figure = panel.line_scan_canvas._figure_for_lines(
+            [{"name": "PhaseField", "x": [0.0, 1.0], "y": [2.0, 3.0]}],
+            title="Line Scan",
+            x_label="X Position",
+            y_label="Value",
+        )
+        histogram_figure = panel.histogram_canvas._figure_for_histograms(
+            [{"name": "PhaseField", "values": [1.0, 2.0, 3.0]}],
+            label="Value",
+            bins=10,
+        )
+
+        self.assertFalse(line_figure.layout.showlegend)
+        self.assertFalse(histogram_figure.layout.showlegend)
+        self.assertEqual(line_figure.layout.margin.r, 20)
+        self.assertEqual(histogram_figure.layout.margin.r, 20)
+
+    def test_plot_over_time_show_points_defaults_on_but_can_be_disabled(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        panel.controller.state.time_plot_points = [{"label": "P1", "x": 1.0, "y": 2.0}]
+
+        self.assertTrue(panel.time_plot_show_points_check.isChecked())
+        self.assertTrue(panel.controller.state.time_plot_points_visible)
+
+        panel.time_plot_show_points_check.setChecked(False)
+
+        self.assertFalse(panel.time_plot_show_points_check.isChecked())
+        self.assertFalse(panel.controller.state.time_plot_points_visible)
+        self.assertEqual(panel.controller._time_plot_marker_points(), [])
+
+    def test_plot_over_time_click_mode_selects_point_without_range_change(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        before_range = (panel.controller.state.range_min, panel.controller.state.range_max)
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+        x_value = float(x_grid[0, 0])
+        y_value = float(y_grid[0, 0])
+
+        panel.time_plot_add_point_btn.click()
+        panel.controller._handle_heatmap_click(x_value, y_value)
+
+        self.assertTrue(panel.time_plot_add_point_btn.isChecked())
+        self.assertTrue(panel.controller.state.time_plot_pick_mode)
+        self.assertEqual(panel.controller.state.click_count, 0)
+        self.assertEqual((panel.controller.state.range_min, panel.controller.state.range_max), before_range)
+        self.assertAlmostEqual(panel.controller.state.time_plot_x, x_value)
+        self.assertAlmostEqual(panel.controller.state.time_plot_y, y_value)
+        self.assertIn("x=", panel.time_plot_selected_label.text())
+
+    def test_single_view_tab_use_same_points_toggle_follows_shared_points(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "PhaseField", "files": []})
+        target = PanelWidget({"label": "CRSS", "files": []})
+        tab._attach_time_plot_point_sharing(source)
+        tab._attach_time_plot_point_sharing(target)
+
+        source.controller.set_time_plot_points(
+            [{"label": "P1", "x": 12.0, "y": 18.0}],
+            source="test-source",
+            notify=True,
+        )
+        target.time_plot_use_same_points_check.setChecked(True)
+
+        self.assertTrue(target.time_plot_use_same_points_check.isChecked())
+        self.assertEqual(len(target.controller.state.time_plot_points), 1)
+        self.assertAlmostEqual(float(target.controller.state.time_plot_points[0]["x"]), 12.0)
+        self.assertAlmostEqual(float(target.controller.state.time_plot_points[0]["y"]), 18.0)
+
+        source.controller.set_time_plot_points(
+            [
+                {"label": "P1", "x": 12.0, "y": 18.0},
+                {"label": "P2", "x": 20.0, "y": 25.0},
+            ],
+            source="test-source",
+            notify=True,
+        )
+
+        self.assertEqual(len(target.controller.state.time_plot_points), 2)
+        self.assertEqual(target.controller.state.time_plot_points[1]["label"], "P2")
+        self.assertAlmostEqual(float(target.controller.state.time_plot_points[1]["x"]), 20.0)
+        self.assertAlmostEqual(float(target.controller.state.time_plot_points[1]["y"]), 25.0)
+
+    def test_single_view_tabs_share_selected_file_number_across_different_combo_orders(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "Temperature", "files": []})
+        target = PanelWidget({"label": "Stress", "files": []})
+        source.controls_widget.set_file_options([
+            "/tmp/Temperature_00000000.vts",
+            "/tmp/Temperature_00000500.vts",
+            "/tmp/Temperature_00001000.vts",
+        ])
+        target.controls_widget.set_file_options([
+            "/tmp/Stress_00000000.vts",
+            "/tmp/Stress_00001000.vts",
+            "/tmp/Stress_00000500.vts",
+        ])
+        tab._attach_file_number_sharing(source)
+        tab._attach_file_number_sharing(target)
+
+        source.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(target.controls_widget.file_combo.currentIndex(), 2)
+        self.assertEqual(Path(target.controls_widget.current_file_path()).name, "Stress_00000500.vts")
+
+    def test_single_view_file_number_sharing_keeps_panel_without_matching_file(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "Temperature", "files": []})
+        target = PanelWidget({"label": "Stress", "files": []})
+        source.controls_widget.set_file_options([
+            "/tmp/Temperature_00000000.vts",
+            "/tmp/Temperature_00000500.vts",
+        ])
+        target.controls_widget.set_file_options([
+            "/tmp/Stress_00000000.vts",
+            "/tmp/Stress_00001000.vts",
+        ])
+        tab._attach_file_number_sharing(source)
+        tab._attach_file_number_sharing(target)
+        target.controls_widget.file_combo.setCurrentIndex(1)
+
+        source.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(target.controls_widget.file_combo.currentIndex(), 1)
+        self.assertEqual(Path(target.controls_widget.current_file_path()).name, "Stress_00001000.vts")
+
+    def test_single_view_tabs_share_rotation(self):
+        tab = SingleViewTab()
+        source = PanelWidget({"label": "Temperature", "files": []})
+        target = PanelWidget({"label": "Stress", "files": []})
+        tab._attach_rotation_sharing(source)
+        tab._attach_rotation_sharing(target)
+
+        source.controls_widget.rotation_buttons[90].click()
+
+        self.assertEqual(source.controls_widget.selected_rotation_degrees(), 90)
+        self.assertEqual(target.controls_widget.selected_rotation_degrees(), 90)
+        self.assertEqual(source.controls_widget.current_rotation_degrees(), 270)
+        self.assertEqual(target.controls_widget.current_rotation_degrees(), 270)
+        self.assertTrue(target.controls_widget.rotation_buttons[90].isChecked())
+
+    def test_plot_over_time_add_point_toggle_disables_range_and_line_modes(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.line_mode_check.setChecked(True)
+        self.assertTrue(panel.line_mode_check.isChecked())
+
+        panel.time_plot_add_point_btn.click()
+
+        self.assertTrue(panel.time_plot_add_point_btn.isChecked())
+        self.assertEqual(panel.time_plot_add_point_btn.text(), "Add Point: ON")
+        self.assertTrue(panel.controller.state.time_plot_pick_mode)
+        self.assertFalse(panel.line_mode_check.isChecked())
+        self.assertFalse(panel.controls_widget.click_mode_range_check.isChecked())
+        self.assertEqual(panel.controller.state.click_count, 0)
+        self.assertIsNone(panel.controller.state.first_click)
+
+    def test_project_change_loads_first_new_file_and_resyncs_playback_slider(self):
+        first_project_files = [
+            str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve()),
+            str(Path("Project1/VTK/ElasticStrains_00000500.vts").resolve()),
+        ]
+        second_project_files = [
+            str(Path("Project1/VTK/ElasticStrains_00001000.vts").resolve()),
+            str(Path("Project1/VTK/ElasticStrains_00001500.vts").resolve()),
+            str(Path("Project1/VTK/ElasticStrains_00002000.vts").resolve()),
+        ]
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "available_projects": [
+                    {
+                        "vtk_folder": str(Path("Project1/VTK").resolve()),
+                        "project_name": "First",
+                        "files": first_project_files,
+                    },
+                    {
+                        "vtk_folder": str(Path("Project1/VTK").resolve()),
+                        "project_name": "Second",
+                        "files": second_project_files,
+                    },
+                ],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.playback_slider.setValue(1)
+        self.assertEqual(panel.controller.state.file_path, first_project_files[1])
+
+        panel.controls_widget.project_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.controls_widget.file_combo.count(), 3)
+        self.assertEqual(panel.controls_widget.current_file_path(), second_project_files[0])
+        self.assertEqual(panel.controller.state.file_path, second_project_files[0])
+        self.assertEqual(panel.playback_slider.maximum(), 2)
+        self.assertEqual(panel.playback_slider.value(), 0)
+        self.assertEqual(panel.frame_label.text(), "0 / 2")
+        self.assertEqual(panel.playback_slider.tickPosition(), QSlider.TickPosition.TicksBelow)
+        self.assertGreater(panel.playback_slider.tickInterval(), 0)
+        self.assertTrue(panel.playback_tick_marks.isVisibleTo(panel))
+        self.assertEqual(panel.playback_tick_marks.maximum(), 2)
+        self.assertGreaterEqual(panel.playback_tick_marks.minimumHeight(), 8)
+
+        panel.playback_slider.setValue(2)
+        self.assertEqual(panel.frame_label.text(), "2 / 2")
+
+    def test_reload_discovers_new_files_in_same_vtk_folder(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            vtk_folder = Path(tmp) / "VTK"
+            vtk_folder.mkdir()
+            first_file = vtk_folder / "ElasticStrains_00000000.vts"
+            second_file = vtk_folder / "ElasticStrains_00000500.vts"
+            other_file = vtk_folder / "PhaseField_00000500.vts"
+            first_file.touch()
+
+            panel = PanelWidget(
+                dataset_info={
+                    "id": "mechanics-elastic",
+                    "label": "Elastic Strains",
+                    "files": [],
+                    "vtk_folder": str(vtk_folder),
+                    "dataset_config": {
+                        "label": "Elastic Strains",
+                        "file_glob": "ElasticStrains_*.vts",
+                        "scalars": [
+                            {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                        ],
+                    },
+                    "tab_id": "single_view",
+                }
+            )
+            panel.controls_widget.set_file_options([str(first_file.resolve())])
+            panel.controller.state.file_path = str(first_file.resolve())
+            second_file.touch()
+            other_file.touch()
+
+            panel.controller.discover_new_file_options("reload-button")
+
+            self.assertEqual(panel.controls_widget.file_combo.count(), 2)
+            self.assertEqual(panel.controls_widget.current_file_path(), str(first_file.resolve()))
+            self.assertEqual(panel.controls_widget.file_combo.itemData(1), str(second_file.resolve()))
+            self.assertEqual(panel.dataset_info["files"], [str(first_file.resolve()), str(second_file.resolve())])
+
+    def test_playback_tick_marks_paints_visible_dividers(self):
+        widget = PlaybackTickMarksWidget()
+        widget.resize(120, 10)
+        widget.setMaximum(4)
+        pixmap = QPixmap(widget.size())
+        pixmap.fill(QColor("#ffffff"))
+
+        widget.render(pixmap)
+
+        image = pixmap.toImage()
+        visible_pixels = 0
+        for y in range(image.height()):
+            for x in range(image.width()):
+                color = image.pixelColor(x, y)
+                if color.red() < 180 and color.green() < 190 and color.blue() < 210:
+                    visible_pixels += 1
+        self.assertGreater(visible_pixels, 10)
+
+    def test_playback_tick_marks_reports_hover_frame_number(self):
+        widget = PlaybackTickMarksWidget()
+        widget.resize(120, 10)
+        widget.setMaximum(4)
+
+        self.assertFalse(widget.hasMouseTracking())
+        self.assertTrue(widget.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents))
+        self.assertEqual(widget.frame_index_at_position(9), 0)
+        self.assertEqual(widget.frame_index_at_position(60), 2)
+        self.assertEqual(widget.frame_index_at_position(111), 4)
+        self.assertEqual(widget.hover_text_for_position(60), "2")
+        self.assertEqual(widget.hover_text_for_position(111), "4")
+
+    def test_playback_slider_reports_same_hover_frame_number(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [
+                    str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve()),
+                    str(Path("Project1/VTK/ElasticStrains_00000500.vts").resolve()),
+                    str(Path("Project1/VTK/ElasticStrains_00001000.vts").resolve()),
+                    str(Path("Project1/VTK/ElasticStrains_00001500.vts").resolve()),
+                    str(Path("Project1/VTK/ElasticStrains_00002000.vts").resolve()),
+                ],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        panel.playback_slider.resize(120, panel.playback_slider.height())
+
+        self.assertTrue(panel.playback_slider.hasMouseTracking())
+        self.assertEqual(panel.playback_hover_text_for_slider_position(60), "2")
+        self.assertEqual(panel.playback_hover_text_for_slider_position(111), "4")
+
+    def test_range_or_line_mode_turns_off_add_point_toggle(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.time_plot_add_point_btn.click()
+        panel.controls_widget.click_mode_range_check.setChecked(True)
+
+        self.assertFalse(panel.time_plot_add_point_btn.isChecked())
+        self.assertEqual(panel.time_plot_add_point_btn.text(), "Add Point")
+        self.assertFalse(panel.controller.state.time_plot_pick_mode)
+        self.assertTrue(panel.controls_widget.click_mode_range_check.isChecked())
+
+        panel.time_plot_add_point_btn.click()
+        panel.line_mode_check.setChecked(True)
+
+        self.assertFalse(panel.time_plot_add_point_btn.isChecked())
+        self.assertEqual(panel.time_plot_add_point_btn.text(), "Add Point")
+        self.assertFalse(panel.controller.state.time_plot_pick_mode)
+        self.assertTrue(panel.line_mode_check.isChecked())
+
+    def test_plot_over_time_can_store_multiple_clicked_points(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+
+        panel.time_plot_add_point_btn.click()
+        panel.controller._handle_heatmap_click(float(x_grid[0, 0]), float(y_grid[0, 0]))
+        panel.controller._handle_heatmap_click(float(x_grid[-1, -1]), float(y_grid[-1, -1]))
+
+        self.assertEqual(len(panel.controller.state.time_plot_points), 2)
+        self.assertIn("2 points selected", panel.time_plot_selected_label.text())
+
+    def test_plot_over_time_shows_selected_point_rows_and_can_remove_one(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+
+        panel.time_plot_add_point_btn.click()
+        panel.controller._handle_heatmap_click(float(x_grid[0, 0]), float(y_grid[0, 0]))
+        panel.controller._handle_heatmap_click(float(x_grid[-1, -1]), float(y_grid[-1, -1]))
+
+        point_labels = panel.time_plot_points_container.findChildren(QLabel, "timePlotPointLabel")
+        remove_buttons = panel.time_plot_points_container.findChildren(QPushButton, "timePlotRemovePointButton")
+        self.assertEqual([label.text().split()[0] for label in point_labels], ["P1", "P2"])
+        self.assertEqual(len(remove_buttons), 2)
+
+        remove_buttons[0].click()
+
+        remaining_labels = panel.time_plot_points_container.findChildren(QLabel, "timePlotPointLabel")
+        self.assertEqual(len(panel.controller.state.time_plot_points), 1)
+        self.assertEqual(remaining_labels[0].text().split()[0], "P1")
+        self.assertIn("1 point selected", panel.time_plot_selected_label.text())
+
+    def test_plot_over_time_points_are_always_drawn_with_readable_labels(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+
+        panel.time_plot_add_point_btn.click()
+        panel.controller._handle_heatmap_click(float(x_grid[0, 0]), float(y_grid[0, 0]))
+        panel.controller._handle_heatmap_click(float(x_grid[-1, -1]), float(y_grid[-1, -1]))
+
+        payload = panel.heatmap_canvas._last_export_payload
+        figure = panel.heatmap_canvas._build_figure(
+            x_grid=payload["x_grid"],
+            y_grid=payload["y_grid"],
+            z_grid=payload["z_grid"],
+            cmap=payload["cmap"],
+            vmin=payload["vmin"],
+            vmax=payload["vmax"],
+            line_overlay=payload["line_overlay"],
+            overlay_grid=payload["overlay_grid"],
+            time_plot_points=payload["time_plot_points"],
+            title="",
+            colorbar_label=payload["colorbar_label"],
+            plot_type="heatmap",
+        )
+
+        marker_traces = [trace for trace in figure.data if trace.name == "Plot Over Time Points"]
+        self.assertEqual(len(marker_traces), 1)
+        self.assertEqual(tuple(marker_traces[0].text), ("P1", "P2"))
+        outline_traces = [trace for trace in figure.data if trace.name == "Plot Over Time Label Outline"]
+        self.assertEqual(outline_traces, [])
+        halo_traces = [trace for trace in figure.data if trace.name == "Plot Over Time Label Halo"]
+        self.assertEqual(halo_traces, [])
+        label_annotations = [annotation for annotation in figure.layout.annotations if annotation.name == "Plot Over Time Label Box"]
+        self.assertEqual(len(label_annotations), 2)
+        self.assertTrue(all(annotation.bgcolor == "rgba(255, 255, 255, 0.92)" for annotation in label_annotations))
+        self.assertTrue(all(annotation.borderwidth == 0 for annotation in label_annotations))
+        self.assertEqual(marker_traces[0].textfont.color, "#06162d")
+
+    def test_file_change_keeps_time_plot_points_and_line_scan_position(self):
+        first_file = str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())
+        second_file = str(Path("Project1/VTK/ElasticStrains_00000500.vts").resolve())
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [first_file, second_file],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+        point_x = float(x_grid[0, 0])
+        point_y = float(y_grid[0, 0])
+        line_y = float(y_grid[20, 0])
+
+        panel.time_plot_add_point_btn.click()
+        panel.controller._handle_heatmap_click(point_x, point_y)
+        panel.time_plot_show_points_check.setChecked(True)
+        panel.line_mode_check.setChecked(True)
+        panel.show_line_check.setChecked(True)
+        panel.controller._handle_heatmap_click(point_x, line_y)
+
+        panel.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.controller.state.file_path, second_file)
+        self.assertTrue(panel.controller.state.time_plot_points_visible)
+        self.assertEqual(len(panel.controller.state.time_plot_points), 1)
+        self.assertAlmostEqual(float(panel.controller.state.time_plot_points[0]["x"]), point_x)
+        self.assertAlmostEqual(float(panel.controller.state.time_plot_points[0]["y"]), point_y)
+        self.assertAlmostEqual(panel.controller.state.line_scan_y, line_y)
+        payload = panel.heatmap_canvas._last_export_payload
+        self.assertEqual(payload["time_plot_points"][0]["label"], "P1")
+        self.assertEqual(payload["line_overlay"], ("horizontal", line_y))
+
+    def test_file_change_keeps_line_scan_at_same_display_fraction_when_extent_changes(self):
+        first_file = str(Path("Project1/VTK/PhaseField_00001500.vts").resolve())
+        second_file = str(Path("Project1/VTK/PhaseField_00002000.vts").resolve())
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [first_file, second_file],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        _, first_y_grid, _ = panel.controller._last_display_grids
+        first_y_min = float(np.nanmin(first_y_grid))
+        first_y_max = float(np.nanmax(first_y_grid))
+        first_fraction = 0.25
+        first_line_y = first_y_min + first_fraction * (first_y_max - first_y_min)
+
+        panel.line_mode_check.setChecked(True)
+        panel.show_line_check.setChecked(True)
+        panel.controller._handle_heatmap_click(float(panel.controller._last_display_grids[0][0, 0]), first_line_y)
+
+        panel.controls_widget.file_combo.setCurrentIndex(1)
+
+        _, second_y_grid, _ = panel.controller._last_display_grids
+        second_y_min = float(np.nanmin(second_y_grid))
+        second_y_max = float(np.nanmax(second_y_grid))
+        expected_line_y = second_y_min + first_fraction * (second_y_max - second_y_min)
+        payload = panel.heatmap_canvas._last_export_payload
+        self.assertAlmostEqual(panel.controller.state.line_scan_y, expected_line_y, places=6)
+        self.assertEqual(payload["line_overlay"], ("horizontal", panel.controller.state.line_scan_y))
+
+    def test_manual_point_dialog_has_clear_coordinate_inputs(self):
+        from viewer.manual_point_dialog import ManualPointDialog
+
+        dialog = ManualPointDialog(x_value=1.25, y_value=2.5)
+
+        self.assertEqual(dialog.objectName(), "manualPointDialog")
+        self.assertEqual(dialog.windowTitle(), "Manual Point")
+        self.assertEqual(dialog.x_input.objectName(), "manualPointXInput")
+        self.assertEqual(dialog.y_input.objectName(), "manualPointYInput")
+        self.assertAlmostEqual(dialog.point_values()[0], 1.25)
+        self.assertAlmostEqual(dialog.point_values()[1], 2.5)
+        stylesheet = dialog.styleSheet()
+        self.assertIn("QDialog#manualPointDialog", stylesheet)
+        self.assertIn("QLabel#manualPointLabel", stylesheet)
+        self.assertIn("QDoubleSpinBox#manualPointXInput", stylesheet)
+        self.assertIn("color: #102a52", stylesheet)
+        self.assertIn("background: #ffffff", stylesheet)
+
+    def test_plot_over_time_clicked_point_snaps_to_grid_point(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+        expected_x = float(x_grid[0, 0])
+        expected_y = float(y_grid[0, 0])
+
+        panel.time_plot_add_point_btn.click()
+        panel.controller._handle_heatmap_click(expected_x + 0.19, expected_y + 0.21)
+
+        point = panel.controller.state.time_plot_points[0]
+        self.assertAlmostEqual(point["x"], expected_x)
+        self.assertAlmostEqual(point["y"], expected_y)
 
     def test_panel_show_line_defaults_off(self):
         panel = PanelWidget({"label": "PhaseField", "files": []})
@@ -253,6 +993,68 @@ class SingleViewOOPShellTests(unittest.TestCase):
 
         self.assertEqual(grid.shape, (160, 160))
 
+    def test_heatmap_mode_dropdown_includes_gradient_magnitude(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        labels = [
+            panel.controls_widget.scalar_combo.itemText(index)
+            for index in range(panel.controls_widget.scalar_combo.count())
+        ]
+        plot_modes = [
+            panel.controls_widget.plot_type_combo.itemText(index)
+            for index in range(panel.controls_widget.plot_type_combo.count())
+        ]
+
+        self.assertEqual(labels, ["eps_xx"])
+        self.assertIn("|grad|", plot_modes)
+
+    def test_selecting_gradient_magnitude_mode_updates_heatmap_grid(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        grad_index = panel.controls_widget.plot_type_combo.findText("|grad|")
+        self.assertGreaterEqual(grad_index, 0)
+        panel.controls_widget.plot_type_combo.setCurrentIndex(grad_index)
+        panel.controller.refresh_view()
+
+        payload = panel.heatmap_canvas._last_export_payload
+        z_grid = payload["z_grid"]
+
+        self.assertEqual(panel.controls_widget.current_scalar_label(), "eps_xx")
+        self.assertEqual(panel.controls_widget.current_plot_type(), "gradient_magnitude")
+        self.assertIn("|grad|", payload["colorbar_label"])
+        self.assertGreater(float(z_grid.max()), 0.0)
+        self.assertGreaterEqual(float(z_grid.min()), 0.0)
+
     def test_live_heatmap_keeps_visible_plotly_heatmap_and_colorbar(self):
         panel = PanelWidget(
             dataset_info={
@@ -291,6 +1093,95 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertNotEqual(figure.data[0].opacity, 0)
         self.assertIsNotNone(figure.data[0].colorbar)
 
+    def test_live_heatmap_can_replace_colorbar_with_discrete_numbered_boxes(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        payload = panel.heatmap_canvas._last_export_payload
+
+        figure = panel.heatmap_canvas._build_figure(
+            x_grid=payload["x_grid"],
+            y_grid=payload["y_grid"],
+            z_grid=payload["z_grid"],
+            cmap=payload["cmap"],
+            vmin=payload["vmin"],
+            vmax=payload["vmax"],
+            line_overlay=payload["line_overlay"],
+            overlay_grid=payload["overlay_grid"],
+            title="",
+            colorbar_label="Phase",
+            plot_type="heatmap",
+            colorbar_mode="boxes",
+            discrete_colors=["#0066ff", "#ff1f1f", "#00c853"],
+        )
+
+        self.assertFalse(figure.data[0].showscale)
+        labels = [
+            annotation.text
+            for annotation in figure.layout.annotations
+            if annotation.name == "Discrete Colorbar Label"
+        ]
+        self.assertEqual(labels, ["1", "2", "3"])
+        titles = [
+            annotation
+            for annotation in figure.layout.annotations
+            if annotation.name == "Discrete Colorbar Title"
+        ]
+        self.assertEqual(len(titles), 1)
+        self.assertEqual(titles[0].text, "Phase")
+        self.assertEqual(titles[0].textangle, 90)
+        label_annotations = [
+            annotation
+            for annotation in figure.layout.annotations
+            if annotation.name == "Discrete Colorbar Label"
+        ]
+        label_positions = [annotation.y for annotation in label_annotations]
+        expected_side_label_y = sum(label_positions) / len(label_positions)
+        self.assertAlmostEqual(titles[0].y, expected_side_label_y)
+        self.assertGreater(titles[0].x, label_annotations[0].x)
+        self.assertGreaterEqual(titles[0].x - label_annotations[0].x, 0.09)
+
+    def test_single_view_custom_palette_boxes_mode_reaches_render_payload(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        controls = panel.controls_widget
+        controls.palette_combo.setCurrentIndex(controls.palette_combo.findData("discrete-custom"))
+        controls.colorbar_mode_combo.setCurrentIndex(controls.colorbar_mode_combo.findData("boxes"))
+
+        panel.controller.refresh_view()
+        payload = panel.heatmap_canvas._last_export_payload
+
+        self.assertEqual(panel.controller.state.colorbar_mode, "boxes")
+        self.assertEqual(payload["colorbar_mode"], "boxes")
+        self.assertEqual(len(payload["discrete_colors"]), controls.current_discrete_band_count())
+
     def test_png_export_uses_automatic_good_resolution(self):
         from matplotlib import image as mpimg
 
@@ -318,12 +1209,202 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertGreaterEqual(image.shape[0], 1000)
         self.assertGreaterEqual(image.shape[1], 1000)
 
+    def test_threshold_png_export_masks_values_outside_selected_range(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        panel.heatmap_canvas._last_export_payload = {
+            "z_grid": np.array([[0.1, 0.6], [0.8, 1.2]], dtype=float),
+            "x_grid": np.array([[0.0, 1.0], [0.0, 1.0]], dtype=float),
+            "y_grid": np.array([[0.0, 0.0], [1.0, 1.0]], dtype=float),
+            "cmap": "viridis",
+            "vmin": 0.5,
+            "vmax": 1.0,
+            "plot_type": "threshold",
+            "line_overlay": None,
+            "overlay_grid": None,
+            "time_plot_points": [],
+            "colorbar_label": "",
+            "phase_fraction_overlays": [],
+        }
+
+        z_grid = panel.heatmap_canvas._export_z_grid_for_payload(
+            panel.heatmap_canvas._last_export_payload
+        )
+
+        self.assertTrue(np.isnan(z_grid[0, 0]))
+        self.assertFalse(np.isnan(z_grid[0, 1]))
+        self.assertFalse(np.isnan(z_grid[1, 0]))
+        self.assertTrue(np.isnan(z_grid[1, 1]))
+
+    def test_threshold_export_uses_high_resolution_png_with_logo(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        threshold_index = panel.controls_widget.plot_type_combo.findData("threshold")
+        panel.controls_widget.plot_type_combo.blockSignals(True)
+        panel.controls_widget.plot_type_combo.setCurrentIndex(threshold_index)
+        panel.controls_widget.plot_type_combo.blockSignals(False)
+        calls = []
+
+        def fake_save_png(path):
+            calls.append(("heatmap-only", path))
+            return True
+
+        def fake_save_high_resolution_png(path, **kwargs):
+            calls.append(("high-resolution", path, kwargs["payload"]["plot_type"], kwargs["logo_path"].name))
+            return True
+
+        def fake_save_current_export_widget_png(path):
+            calls.append(("current-row", path))
+            return True
+
+        panel.heatmap_canvas.save_png = fake_save_png
+        panel.heatmap_canvas.save_high_resolution_png = fake_save_high_resolution_png
+        panel.controller._save_current_export_widget_png = fake_save_current_export_widget_png
+        output_path = str(Path(tempfile.gettempdir()) / "opview_threshold_exact_view_test.png")
+
+        with patch("viewer.heatmap_controller.QFileDialog.getSaveFileName", return_value=(output_path, "PNG (*.png)")):
+            panel.controller._export_png()
+
+        self.assertEqual(calls, [("high-resolution", output_path, "threshold", "OP_Logo.png")])
+
+    def test_heatmap_export_uses_high_resolution_png_with_logo(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        calls = []
+
+        def fake_save_high_resolution_png(path, **kwargs):
+            calls.append(("high-resolution", path, kwargs["payload"]["plot_type"], kwargs["logo_path"].name))
+            return True
+
+        def fake_save_current_export_widget_png(path):
+            calls.append(("current-row", path))
+            return True
+
+        panel.heatmap_canvas.save_high_resolution_png = fake_save_high_resolution_png
+        panel.controller._save_current_export_widget_png = fake_save_current_export_widget_png
+        output_path = str(Path(tempfile.gettempdir()) / "opview_heatmap_exact_view_test.png")
+
+        with patch("viewer.heatmap_controller.QFileDialog.getSaveFileName", return_value=(output_path, "PNG (*.png)")):
+            panel.controller._export_png()
+
+        self.assertEqual(calls, [("high-resolution", output_path, "heatmap", "OP_Logo.png")])
+
+    def test_png_export_uses_high_resolution_heatmap_payload_with_logo(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve())],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scale": 100.0,
+                    "units": "%",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        calls = []
+
+        def fake_load_display_grid(reader, scalar_def, axis, slice_index, **kwargs):
+            calls.append(("load-resolution", kwargs.get("resolution")))
+            size = int(kwargs.get("resolution") or 4)
+            grid = np.arange(size * size, dtype=float).reshape(size, size)
+            return grid, grid, grid, {"min": 0.0, "max": float(grid.max()), "mean": 1.0, "std": 0.0}
+
+        def fake_save_high_resolution_png(path, **kwargs):
+            calls.append(("save-high-resolution", kwargs["payload"]["z_grid"].shape, kwargs["logo_path"].name))
+            return True
+
+        def fake_save_current_export_widget_png(path):
+            calls.append(("current-row", path))
+            return True
+
+        panel.controller._load_display_grid = fake_load_display_grid
+        panel.heatmap_canvas.save_high_resolution_png = fake_save_high_resolution_png
+        panel.controller._save_current_export_widget_png = fake_save_current_export_widget_png
+        output_path = str(Path(tempfile.gettempdir()) / "opview_high_resolution_exact_view_test.png")
+
+        with patch("viewer.heatmap_controller.QFileDialog.getSaveFileName", return_value=(output_path, "PNG (*.png)")):
+            panel.controller._export_png()
+
+        self.assertIn(("load-resolution", 1000), calls)
+        self.assertIn(("save-high-resolution", (1000, 1000), "OP_Logo.png"), calls)
+        self.assertNotIn(("current-row", output_path), calls)
+
     def test_phase_field_defaults_to_phasefields_scalar(self):
         panel = PanelWidget(
             dataset_info={
                 "id": "phase-field-phase",
                 "label": "PhaseField",
                 "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "Interfaces", "array": "Interfaces"},
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        self.assertEqual(panel.controls_widget.current_scalar_label(), "PhaseFields")
+        self.assertEqual(panel.controls_widget.scalar_combo.currentText(), "PhaseFields")
+        self.assertEqual(panel.controller.state.scalar_label, "PhaseFields")
+
+    def test_phase_field_panel_shows_phase_fraction_history_graph(self):
+        first_file = str(Path("Project1/VTK/PhaseField_00000000.vts").resolve())
+        second_file = str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [first_file, second_file],
                 "dataset_config": {
                     "label": "PhaseField",
                     "scalars": [
@@ -335,8 +1416,116 @@ class SingleViewOOPShellTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(panel.controls_widget.current_scalar_label(), "PhaseFields")
-        self.assertIn("PhaseFields", panel.map_title_label.text())
+        payload = panel.phase_fraction_history_canvas._last_payload
+
+        self.assertFalse(panel.phase_fraction_history_canvas.isHidden())
+        self.assertFalse(panel.phase_fraction_history_separator.isHidden())
+        self.assertEqual(payload["y_label"], "Phase fraction (%)")
+        self.assertEqual(payload["current_step"], 0)
+        self.assertIn("PhaseFraction_0", [item["label"] for item in payload["series"]])
+        for item in payload["series"]:
+            for value in item["values"]:
+                self.assertGreaterEqual(value, 0.0)
+                self.assertLessEqual(value, 100.0)
+
+        panel.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.phase_fraction_history_canvas._last_payload["current_step"], 5000)
+
+        panel.phase_history_dt_spin.setValue(0.5)
+        panel.phase_history_time_unit_combo.setCurrentText("min")
+
+        converted_payload = panel.phase_fraction_history_canvas._last_payload
+        self.assertEqual(converted_payload["x_label"], "Time [min]")
+        self.assertAlmostEqual(converted_payload["current_step"], 2500 / 60)
+        self.assertAlmostEqual(converted_payload["series"][0]["steps"][1], 2500 / 60)
+
+    def test_plot_over_time_uses_phase_history_dt_time_axis(self):
+        panel = PanelWidget({"label": "PhaseField", "files": []})
+        panel.controller._time_plot_series_data = [
+            {"label": "P1", "x": 1.0, "y": 2.0, "steps": [0, 5000], "values": [3.0, 4.0]}
+        ]
+        panel.controller._time_plot_display_label = "PhaseFields"
+
+        self.assertEqual(panel.phase_history_time_unit_combo.itemText(0), "timestep")
+        default_series, default_x_label, default_hover_x_label = panel.controller._converted_time_plot_series()
+        self.assertEqual(default_x_label, "Timestep")
+        self.assertEqual(default_hover_x_label, "timestep")
+        self.assertEqual(default_series[0]["steps"], [0.0, 5000.0])
+
+        panel.phase_history_dt_spin.setValue(0.5)
+        panel.phase_history_time_unit_combo.setCurrentText("min")
+        converted_series, x_label, hover_x_label = panel.controller._converted_time_plot_series()
+
+        self.assertEqual(x_label, "Time [min]")
+        self.assertEqual(hover_x_label, "time")
+        self.assertAlmostEqual(converted_series[0]["steps"][1], 2500 / 60)
+
+    def test_non_phase_field_panel_shows_selected_scalar_average_history_graph(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "mechanics-elastic",
+                "label": "Elastic Strains",
+                "files": [
+                    str(Path("Project1/VTK/ElasticStrains_00000000.vts").resolve()),
+                    str(Path("Project1/VTK/ElasticStrains_00000500.vts").resolve()),
+                ],
+                "dataset_config": {
+                    "label": "Elastic Strains",
+                    "scalars": [
+                        {"label": "eps_xx", "array": "ElasticStrains", "component": 0},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        payload = panel.phase_fraction_history_canvas._last_payload
+
+        self.assertFalse(panel.phase_fraction_history_canvas.isHidden())
+        self.assertFalse(panel.phase_fraction_history_separator.isHidden())
+        self.assertEqual(payload["y_label"], "eps_xx")
+        self.assertEqual(payload["current_step"], 0)
+        self.assertEqual([item["label"] for item in payload["series"]], ["eps_xx"])
+        self.assertEqual(payload["series"][0]["steps"], [0.0, 500.0])
+        self.assertEqual(len(payload["series"][0]["values"]), 2)
+
+        panel.phase_history_dt_spin.setValue(0.5)
+        panel.phase_history_time_unit_combo.setCurrentText("min")
+
+        converted_payload = panel.phase_fraction_history_canvas._last_payload
+        self.assertEqual(converted_payload["x_label"], "Time [min]")
+        self.assertAlmostEqual(converted_payload["current_step"], 0.0)
+        self.assertAlmostEqual(converted_payload["series"][0]["steps"][1], 250 / 60)
+
+    def test_scaled_non_phase_field_average_history_uses_display_units(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "plasticity-crss",
+                "label": "CRSS",
+                "files": [
+                    str(Path("Project1/VTK/CRSS_00000000.vts").resolve()),
+                    str(Path("Project1/VTK/CRSS_00000500.vts").resolve()),
+                ],
+                "dataset_config": {
+                    "label": "CRSS",
+                    "scale": 1e-6,
+                    "units": "MPa",
+                    "scalars": [
+                        {"label": "CRSS 0", "array": "CRSS_0_0"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        payload = panel.phase_fraction_history_canvas._last_payload
+
+        self.assertFalse(panel.phase_fraction_history_canvas.isHidden())
+        self.assertEqual(payload["y_label"], "CRSS 0 (MPa)")
+        self.assertEqual(payload["series"][0]["label"], "CRSS 0")
+        self.assertEqual(payload["series"][0]["steps"], [0.0, 500.0])
+        self.assertTrue(any(np.isfinite(value) for value in payload["series"][0]["values"]))
 
     def test_histogram_canvas_handles_near_constant_data(self):
         canvas = HistogramCanvas()
@@ -421,6 +1610,47 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertAlmostEqual(panel.controls_widget.range_slider.lower_value(), 2.0, places=4)
         self.assertAlmostEqual(panel.controls_widget.range_slider.upper_value(), 7.0, places=4)
 
+    def test_range_spin_box_text_edit_commits_only_when_finished(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        panel.show()
+        QApplication.processEvents()
+        panel.controls_widget.range_min_spin.setValue(2.0)
+        panel.controls_widget.range_max_spin.setValue(7.0)
+        QApplication.processEvents()
+
+        line_edit = panel.controls_widget.range_min_spin.lineEdit()
+        panel.controls_widget.range_min_spin.setFocus()
+        line_edit.selectAll()
+        QTest.keyClicks(line_edit, "1")
+        QApplication.processEvents()
+
+        self.assertAlmostEqual(panel.controls_widget.range_slider.lower_value(), 2.0, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_slider.upper_value(), 7.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_min, 2.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, 7.0, places=4)
+
+        QTest.keyClick(line_edit, Qt.Key.Key_Return)
+        QApplication.processEvents()
+
+        self.assertAlmostEqual(panel.controls_widget.range_slider.lower_value(), 1.0, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_slider.upper_value(), 7.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_min, 1.0, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, 7.0, places=4)
+
     def test_range_reset_restores_slider_bounds(self):
         panel = PanelWidget(
             dataset_info={
@@ -449,6 +1679,108 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertAlmostEqual(panel.controller.state.range_min, initial_min, places=4)
         self.assertAlmostEqual(panel.controller.state.range_max, initial_max, places=4)
 
+    def test_map_range_selection_works_immediately_after_range_reset(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        x_grid, y_grid, z_grid = panel.controller._last_display_grids
+        finite_values = np.unique(z_grid[np.isfinite(z_grid)])
+        low_value = float(finite_values[len(finite_values) // 3])
+        high_value = float(finite_values[(len(finite_values) * 2) // 3])
+        low_index = tuple(int(index[0]) for index in np.where(z_grid == low_value))
+        high_index = tuple(int(index[0]) for index in np.where(z_grid == high_value))
+        low_value = float(z_grid[low_index])
+        high_value = float(z_grid[high_index])
+
+        panel.controls_widget.full_scale_check.setChecked(True)
+        panel.controls_widget.reset_button.click()
+        panel.controller._handle_heatmap_click(float(x_grid[low_index]), float(y_grid[low_index]))
+        panel.controller._handle_heatmap_click(float(x_grid[high_index]), float(y_grid[high_index]))
+
+        self.assertTrue(panel.controls_widget.click_mode_range_check.isChecked())
+        self.assertEqual(panel.controller.state.click_mode, "range")
+        self.assertEqual(panel.controls_widget.last_trigger(), "range-selection")
+        self.assertAlmostEqual(panel.controller.state.range_min, min(low_value, high_value), places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, max(low_value, high_value), places=4)
+
+    def test_manual_range_is_preserved_when_changing_file_frame(self):
+        first_file = str(Path("Project1/VTK/PhaseField_00000000.vts").resolve())
+        second_file = str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [first_file, second_file],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.controls_widget.range_min_spin.setValue(0.2)
+        panel.controls_widget.range_max_spin.setValue(0.8)
+
+        panel.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.controller.state.file_path, second_file)
+        self.assertAlmostEqual(panel.controller.state.range_min, 0.2, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, 0.8, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_min_spin.value(), 0.2, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_max_spin.value(), 0.8, places=4)
+        self.assertAlmostEqual(panel.heatmap_canvas._last_export_payload["vmin"], 0.2, places=4)
+        self.assertAlmostEqual(panel.heatmap_canvas._last_export_payload["vmax"], 0.8, places=4)
+
+    def test_manual_range_is_preserved_when_changing_file_on_non_first_scalar(self):
+        first_file = str(Path("Project1/VTK/PhaseField_00000000.vts").resolve())
+        second_file = str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [first_file, second_file],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.controls_widget.scalar_combo.setCurrentIndex(1)
+        panel.controls_widget.range_min_spin.setValue(0.2)
+        panel.controls_widget.range_max_spin.setValue(0.8)
+
+        panel.controls_widget.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(panel.controller.state.file_path, second_file)
+        self.assertEqual(panel.controller.state.scalar_label, "Interfaces")
+        self.assertAlmostEqual(panel.controller.state.range_min, 0.2, places=4)
+        self.assertAlmostEqual(panel.controller.state.range_max, 0.8, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_min_spin.value(), 0.2, places=4)
+        self.assertAlmostEqual(panel.controls_widget.range_max_spin.value(), 0.8, places=4)
+        self.assertAlmostEqual(panel.heatmap_canvas._last_export_payload["vmin"], 0.2, places=4)
+        self.assertAlmostEqual(panel.heatmap_canvas._last_export_payload["vmax"], 0.8, places=4)
+
     def test_full_scale_mode_ignores_manual_slider_range(self):
         panel = PanelWidget(
             dataset_info={
@@ -475,6 +1807,89 @@ class SingleViewOOPShellTests(unittest.TestCase):
         self.assertIsNotNone(image)
         self.assertAlmostEqual(image.norm.vmin, float(panel.controller._last_scaled_grid.min()), places=4)
         self.assertAlmostEqual(image.norm.vmax, float(panel.controller._last_scaled_grid.max()), places=4)
+
+    def test_manual_range_spin_edit_keeps_full_scale_mode_enabled(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.controls_widget.full_scale_check.setChecked(True)
+        panel.controls_widget.range_min_spin.setValue(2.0)
+        panel.controls_widget.range_max_spin.setValue(7.0)
+
+        image = panel.heatmap_canvas._image
+
+        self.assertTrue(panel.controls_widget.full_scale_check.isChecked())
+        self.assertEqual(panel.controller.state.colorscale_mode, "dynamic")
+        self.assertAlmostEqual(image.norm.vmin, float(panel.controller._last_scaled_grid.min()), places=4)
+        self.assertAlmostEqual(image.norm.vmax, float(panel.controller._last_scaled_grid.max()), places=4)
+
+    def test_manual_range_slider_edit_keeps_full_scale_mode_enabled(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+
+        panel.controls_widget.full_scale_check.setChecked(True)
+        panel.controls_widget.range_slider.set_values(2.0, 7.0)
+
+        image = panel.heatmap_canvas._image
+
+        self.assertTrue(panel.controls_widget.full_scale_check.isChecked())
+        self.assertEqual(panel.controller.state.colorscale_mode, "dynamic")
+        self.assertAlmostEqual(image.norm.vmin, float(panel.controller._last_scaled_grid.min()), places=4)
+        self.assertAlmostEqual(image.norm.vmax, float(panel.controller._last_scaled_grid.max()), places=4)
+
+    def test_heatmap_click_does_not_change_range_when_range_selection_is_off(self):
+        panel = PanelWidget(
+            dataset_info={
+                "id": "phase-field-phase",
+                "label": "PhaseField",
+                "files": [str(Path("Project1/VTK/PhaseField_00005000.vts").resolve())],
+                "dataset_config": {
+                    "label": "PhaseField",
+                    "scalars": [
+                        {"label": "PhaseFields", "array": "PhaseFields"},
+                        {"label": "Interfaces", "array": "Interfaces"},
+                    ],
+                },
+                "tab_id": "single_view",
+            }
+        )
+        before_range = (panel.controller.state.range_min, panel.controller.state.range_max)
+        x_grid, y_grid, _ = panel.controller._last_display_grids
+
+        panel.controls_widget.click_mode_range_check.setChecked(False)
+        panel.controller._handle_heatmap_click(float(x_grid[0, 0]), float(y_grid[0, 0]))
+        panel.controller._handle_heatmap_click(float(x_grid[-1, -1]), float(y_grid[-1, -1]))
+
+        self.assertFalse(panel.controls_widget.click_mode_range_check.isChecked())
+        self.assertFalse(panel.line_mode_check.isChecked())
+        self.assertEqual(panel.controller.state.click_mode, "none")
+        self.assertEqual((panel.controller.state.range_min, panel.controller.state.range_max), before_range)
 
     def test_invalid_spin_box_order_is_clamped_deterministically(self):
         panel = PanelWidget(
