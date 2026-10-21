@@ -77,6 +77,31 @@ foreach(name IN LISTS opview_top)
         list(APPEND system_libs "${name}")
     endif()
 endforeach()
+# A system library then also brings its own dependencies from the system:
+# mixing it with OPView's older copy of one of those breaks (the system
+# libgssapi_krb5 of Ubuntu 24.04 failed against OPView's 22.04 libkrb5).
+# So follow the skipped libraries' DT_NEEDED and leave those out as well -
+# except the libraries OPView bundles because newer Ubuntu releases no
+# longer ship them under that soname (see the Depends notes in OPStudio's
+# CMakeLists.txt).
+set(keep_bundled libpcre.so.3 libmpdec.so.3 libFLAC.so.8 libunistring.so.2 libtiff.so.5)
+set(queue ${system_libs})
+while(queue)
+    list(POP_FRONT queue lib)
+    execute_process(COMMAND readelf -d "${OPVIEW_INTERNAL}/${lib}"
+        OUTPUT_VARIABLE dyn ERROR_QUIET)
+    string(REGEX MATCHALL "\\(NEEDED\\)[^[]*\\[[^]]+\\]" entries "${dyn}")
+    foreach(e IN LISTS entries)
+        string(REGEX REPLACE ".*\\[([^]]+)\\]" "\\1" dep "${e}")
+        if(dep IN_LIST opview_top AND NOT dep IN_LIST system_libs
+                AND NOT dep IN_LIST keep_bundled AND NOT dep MATCHES "^lib(Qt6|icu)"
+                AND NOT EXISTS "${dest_on_disk}/${dep}")
+            list(APPEND excludes PATTERN "${dep}" EXCLUDE)
+            list(APPEND system_libs "${dep}")
+            list(APPEND queue "${dep}")
+        endif()
+    endforeach()
+endwhile()
 list(LENGTH system_libs n_system)
 message(STATUS "OPView: using the system's copy of ${n_system} libraries OPStudio loads: ${system_libs}")
 
