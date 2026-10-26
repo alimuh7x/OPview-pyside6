@@ -96,7 +96,8 @@ class MainWindow(QMainWindow):
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
-        self.sidebar_widget = SidebarWidget()
+        self.sidebar_widget = SidebarWidget(project_path=self._project_path)
+        debug_print(f"MainWindow sidebar reload project path={self._project_path}")
         body_layout.addWidget(self.sidebar_widget, 0)
         content_area = QWidget()
         content_area.setObjectName("contentShell")
@@ -408,6 +409,9 @@ class MainWindow(QMainWindow):
         assert self.sidebar_widget is not None
         if self.sidebar_widget.mode() == "custom_graph":
             last = self._settings.value("last_text_folder", "")
+            debug_print(f"MainWindow Add Folder saved text folder={last}")
+            last = str(self._project_path) if self._project_path is not None else last
+            debug_print(f"MainWindow Add Folder text dialog start path={last}")
             folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing Text Data Files", last)
             if not folder:
                 return
@@ -430,6 +434,9 @@ class MainWindow(QMainWindow):
             debug_print(f"MainWindow added text folder: {text_folder}")
             return
         last = self._settings.value("last_vtk_folder", "")
+        debug_print(f"MainWindow Add Folder saved VTK folder={last}")
+        last = str(self._project_path) if self._project_path is not None else last
+        debug_print(f"MainWindow Add Folder VTK dialog start path={last}")
         folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing VTK Files", last)
         if not folder:
             return

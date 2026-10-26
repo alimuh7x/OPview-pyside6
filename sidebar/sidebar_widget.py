@@ -110,9 +110,11 @@ class SidebarWidget(QWidget):
     add_folder_requested = Signal()
     text_files_add_requested = Signal(list)
 
-    def __init__(self) -> None:
+    def __init__(self, project_path: Path | None = None) -> None:
         debug_print("SidebarWidget.__init__ start")
         super().__init__()
+        self._project_path = Path(project_path).expanduser() if project_path is not None else None
+        debug_print(f"SidebarWidget startup project path={self._project_path}")
         self._projects: dict[str, dict] = {}
         self._manual_projects: dict[str, dict] = {}
         self._hidden_projects: set[str] = set()
@@ -266,7 +268,7 @@ class SidebarWidget(QWidget):
         debug_print("SidebarWidget emitted projects_changed")
 
     def reload_from_cwd(self) -> None:
-        """Reload project folders from the current working directory, preserving manual projects."""
+        """Reload the startup folder (or working directory), preserving manual projects."""
         debug_print("SidebarWidget.reload_from_cwd called")
         from utils.project_scanner import scan_project_folders
         if self._reload_spinner.is_spinning():
@@ -278,8 +280,13 @@ class SidebarWidget(QWidget):
         # long scan/read loops call maybe_yield(), which keeps the spinner turning
         set_yield_callback(self._repaint_during_reload)
         try:
-            scanned = scan_project_folders(Path.cwd(), quick_scan=True)
+            scan_path = self._project_path if self._project_path is not None else Path.cwd()
+            debug_print(f"SidebarWidget reload scan path={scan_path}")
+            scanned = scan_project_folders(scan_path, quick_scan=True)
+            debug_print(f"SidebarWidget reload scanned projects count={len(scanned)}")
+            debug_print(f"SidebarWidget reload preserving manual projects count={len(self._manual_projects)}")
             self.set_projects({**scanned, **self._manual_projects})
+            debug_print(f"SidebarWidget reload retained projects count={len(self._projects)}")
             self.reload_requested.emit()
         finally:
             set_yield_callback(None)
