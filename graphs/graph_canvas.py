@@ -13,6 +13,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from utils.label_formatting import format_plotly_figure
 from config import units
 from data.text_sources import GenericTextDataSource
 from utils.webengine_downloads import install_save_dialog_download_handler
@@ -437,6 +438,7 @@ class GraphCanvas(QWidget):
 
     def _build_html(self, figure: go.Figure) -> str:
         debug_print(f"GraphCanvas._build_html size width={self._graph_width} height={_GRAPH_HEIGHT}")
+        format_plotly_figure(figure)
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>

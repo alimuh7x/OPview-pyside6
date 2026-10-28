@@ -43,7 +43,8 @@ _FILE_COMBO_MAX_VISIBLE_ITEMS = 12
 _TIME_LIKE_COLUMNS = ("time", "t")  # preferred X column, case-insensitive
 _DEFAULT_TITLES = {"x": "Time", "y1": "Y1", "y2": "Y2"}
 _SETTINGS_SCROLLBAR_ALLOWANCE = 20  # room for the vertical scrollbar beside the settings
-_CUSTOM = "Custom"  # last entry of a From dropdown: opens the formula dialog
+_CUSTOM = "Custom…"  # last entry of a To dropdown: opens the formula dialog
+_CONVERSION_TOOLTIP = "Convert the values to this unit, or choose Custom… to write a formula."
 _NO_UNIT = "-"  # shown when a column has no unit; also the dimensionless unit
 _UNIT_COMBO_WIDTH = 128  # the from and to dropdowns are the same width; room for "percent (%)"
 _MAX_LISTED_COLUMNS = 2  # more columns on one axis are abbreviated: "a, b, …"
@@ -53,11 +54,11 @@ def conversion_options(source_unit: str) -> list[tuple[str, str]]:
     """Entries of a "To" combo: an em dash (no conversion), then the scale of the source unit without the source.
 
     The scale runs small to large (milli ... base ... Mega) and is named by prefix; the unit chosen in From is
-    not listed again. An unknown unit has nothing to convert to.
+    not listed again. Custom remains available even for an unknown source unit.
     """
     family = units.family_units(source_unit)
     options = [("\u2014", "as-is")]
-    return options + [(units.scale_label(unit), f"to:{unit}") for unit in family if unit != source_unit]
+    return options + [(units.scale_label(unit), f"to:{unit}") for unit in family if unit != source_unit] + [(_CUSTOM, "custom")]
 
 
 class _RotatedSettingsLabel(QWidget):
@@ -118,6 +119,8 @@ class GraphPanelWidget(QWidget):
         self._unit_combos: dict[tuple[str, str], QComboBox] = {}
         self._x_formula = ""
         self._x_custom_unit = ""
+        self._x_conversion = "as-is"  # committed target; Custom is applied only after accepting its dialog
+        debug_print("GraphPanelWidget X conversion initialized to as-is")
         self._file_column_names: dict[str, tuple[str, ...]] = {}  # columns of each file, by file path
         self._color_combos: dict[tuple[str, str], QComboBox] = {}
         self._sources_layout: QVBoxLayout | None = None
@@ -158,7 +161,7 @@ class GraphPanelWidget(QWidget):
             "columns_by_file": {k: list(v) for k, v in self._columns_by_file.items()},
             "column_settings": self._column_settings,
             "x_axis_column": self.x_axis_combo.currentData(),
-            "x_axis_conversion": self.x_axis_conversion_combo.currentData() or "as-is",
+            "x_axis_conversion": self._x_conversion,
             "x_axis_source_unit": self._unit_of(self.x_axis_unit_combo),
             "x_axis_formula": self._x_formula,
             "x_axis_custom_unit": self._x_custom_unit,
@@ -406,9 +409,10 @@ class GraphPanelWidget(QWidget):
         self.x_axis_conversion_combo.setFixedWidth(_UNIT_COMBO_WIDTH)
         self.x_axis_unit_combo = self._build_unit_combo()
         self._fill_conversion_combo(self.x_axis_conversion_combo, _NO_UNIT, "as-is")
-        self.x_axis_conversion_combo.currentIndexChanged.connect(self._refresh_graph)
+        self.x_axis_conversion_combo.currentIndexChanged.connect(self._on_x_conversion_changed)
+        self.x_axis_conversion_combo.activated.connect(self._on_x_conversion_activated)
+        debug_print("GraphPanelWidget connected Custom formula activation to X To dropdown")
         self.x_axis_unit_combo.currentIndexChanged.connect(self._on_x_unit_changed)
-        self.x_axis_unit_combo.activated.connect(self._on_x_unit_activated)
         x_conversion_row = QWidget()
         x_conversion_layout = QHBoxLayout(x_conversion_row)
         x_conversion_layout.setContentsMargins(0, 0, 0, 0)
@@ -792,13 +796,13 @@ class GraphPanelWidget(QWidget):
         combo.setFixedWidth(_UNIT_COMBO_WIDTH)
         GraphPanelWidget._rebuild_unit_combo(combo, _NO_UNIT, _NO_UNIT)
         combo.setToolTip(
-            "Unit of the data in the file, pre-filled from its units row. Custom: write a formula instead."
+            "Unit of the source data, pre-filled from its units row. Choose Custom… in To to write a formula."
         )
         return combo
 
     @staticmethod
     def _rebuild_unit_combo(combo: QComboBox, selected: str, native: str = "") -> None:
-        """From lists the scale of the data's own unit by prefix, then Custom.
+        """From lists the scale of the data's own unit by prefix.
 
         Each entry keeps its unit as data, so the base unit's name never has to be shown. When the file gives
         no unit (`native`), `s`, `K` and `°C` follow so the user can say what the data is. The list belongs to
@@ -812,7 +816,7 @@ class GraphPanelWidget(QWidget):
         if no_unit:
             for base in units.declarable_units():
                 combo.addItem(base, base)
-        combo.addItem(_CUSTOM, _CUSTOM)
+        debug_print("GraphPanelWidget From dropdown contains source units only")
         index = combo.findData(selected)
         combo.setCurrentIndex(index if index >= 0 else 0)
         update_combo_popup_width(combo)
@@ -825,13 +829,14 @@ class GraphPanelWidget(QWidget):
 
     @staticmethod
     def _unit_of(combo: QComboBox) -> str:
-        """The unit (or "Custom") behind the selected entry of a From dropdown."""
+        """The source unit behind the selected entry of a From dropdown."""
         return combo.currentData() or _NO_UNIT
 
     @staticmethod
     def _fill_conversion_combo(combo: QComboBox, source_unit: str, current: str) -> str:
         """Rebuild the "To" entries for a source unit; returns the conversion now selected."""
         combo.blockSignals(True)
+        combo.setFixedWidth(_UNIT_COMBO_WIDTH)
         combo.clear()
         for label, value in conversion_options(source_unit):
             combo.addItem(label, value)
@@ -841,44 +846,53 @@ class GraphPanelWidget(QWidget):
         combo.setCurrentIndex(index)
         update_combo_popup_width(combo)
         combo.blockSignals(False)
+        combo.setToolTip(_CONVERSION_TOOLTIP)
+        debug_print(f"GraphPanelWidget To dropdown includes Custom; selected={combo.currentData()}")
         return combo.currentData() or "as-is"
 
     def _on_x_column_changed(self, _index: int = 0) -> None:
         self._sync_x_unit_from_file()
 
     def _on_x_unit_changed(self, _index: int = 0) -> None:
-        if self._unit_of(self.x_axis_unit_combo) == _CUSTOM:
-            return  # handled when activated: the formula dialog decides
         unit = units.normalize_unit(self._unit_of(self.x_axis_unit_combo)) or _NO_UNIT
-        self._fill_conversion_combo(
-            self.x_axis_conversion_combo, unit, self.x_axis_conversion_combo.currentData() or "as-is"
-        )
+        debug_print(f"GraphPanelWidget X source unit changed={unit}")
+        if self._x_conversion == "custom":
+            self._show_custom(self.x_axis_unit_combo, self.x_axis_conversion_combo, self._x_custom_unit)
+        else:
+            self._x_conversion = self._fill_conversion_combo(self.x_axis_conversion_combo, unit, self._x_conversion)
         self._refresh_graph()
 
-    def _on_x_unit_activated(self, _index: int = 0) -> None:
-        if self._unit_of(self.x_axis_unit_combo) != _CUSTOM:
+    def _on_x_conversion_changed(self, _index: int = 0) -> None:
+        conversion = self.x_axis_conversion_combo.currentData() or "as-is"
+        debug_print(f"GraphPanelWidget X To selected={conversion}")
+        if conversion == "custom":
+            debug_print("GraphPanelWidget X Custom selection waiting for formula acceptance")
             return
+        self._x_conversion = conversion
+        self.x_axis_conversion_combo.setFixedWidth(_UNIT_COMBO_WIDTH)
+        self.x_axis_conversion_combo.setToolTip(_CONVERSION_TOOLTIP)
+        debug_print(f"GraphPanelWidget X committed conversion={self._x_conversion}")
+        self._refresh_graph()
+
+    def _on_x_conversion_activated(self, _index: int = 0) -> None:
+        if self.x_axis_conversion_combo.currentData() != "custom":
+            return
+        debug_print("GraphPanelWidget opening formula editor from X To dropdown")
         column = self.x_axis_combo.currentData()
         answer = self._ask_formula(self._files[0], column, self._x_formula, self._x_custom_unit) if (
             column and self._files
         ) else None
         if answer is None:
-            if self.x_axis_conversion_combo.currentData() != "custom":
-                self._show_unit(self.x_axis_unit_combo, self._x_previous_unit(), self._x_native_unit())
+            self._fill_conversion_combo(self.x_axis_conversion_combo, self._unit_of(self.x_axis_unit_combo), self._x_conversion)
+            if self._x_conversion == "custom":
+                self._show_custom(self.x_axis_unit_combo, self.x_axis_conversion_combo, self._x_custom_unit)
+            debug_print(f"GraphPanelWidget X formula cancelled; restored target={self._x_conversion}")
             return
         self._x_formula, self._x_custom_unit = answer
+        self._x_conversion = "custom"
+        debug_print(f"GraphPanelWidget X formula accepted; result unit={self._x_custom_unit}")
         self._show_custom(self.x_axis_unit_combo, self.x_axis_conversion_combo, self._x_custom_unit)
         self._refresh_graph()
-
-    def _x_native_unit(self) -> str:
-        """The unit the file gives for the X column ("" when it gives none)."""
-        column = self.x_axis_combo.currentData()
-        return units.normalize_unit(self._file_unit(self._files[0], column)) if (column and self._files) else ""
-
-    def _x_previous_unit(self) -> str:
-        column = self.x_axis_combo.currentData()
-        file_unit = self._file_unit(self._files[0], column) if (column and self._files) else ""
-        return units.normalize_unit(file_unit)
 
     def _sync_x_unit_from_file(self) -> None:
         """Default the X unit to the file's units row for the chosen X column."""
@@ -887,6 +901,9 @@ class GraphPanelWidget(QWidget):
         self.x_axis_unit_combo.blockSignals(True)
         self._show_unit(self.x_axis_unit_combo, units.normalize_unit(file_unit), units.normalize_unit(file_unit))
         self.x_axis_unit_combo.blockSignals(False)
+        if self._x_conversion == "custom":
+            self._x_conversion = "as-is"
+            debug_print("GraphPanelWidget X column changed; reset custom target for new source column")
         self._on_x_unit_changed()
 
     def _build_column_setting(self, file_path: str, column: str) -> QWidget:
@@ -959,7 +976,8 @@ class GraphPanelWidget(QWidget):
         unit_combo.currentIndexChanged.connect(
             lambda _index, f=file_path, c=column, combo=unit_combo: self._set_source_unit(f, c, self._unit_of(combo))
         )
-        unit_combo.activated.connect(lambda _index, f=file_path, c=column: self._on_unit_activated(f, c))
+        conversion_combo.activated.connect(lambda _index, f=file_path, c=column: self._on_conversion_activated(f, c))
+        debug_print(f"GraphPanelWidget connected Custom formula activation to Y To dropdown column={column}")
         if settings.get("conversion") == "custom":
             self._show_custom(unit_combo, conversion_combo, settings.get("custom_unit", ""))
         self._conversion_combos[(file_path, column)] = conversion_combo
@@ -1002,13 +1020,18 @@ class GraphPanelWidget(QWidget):
 
     def _set_conversion(self, file_path: str, column: str, conversion: str) -> None:
         debug_print(f"GraphPanelWidget._set_conversion file={file_path} column={column} conversion={conversion}")
+        if conversion == "custom":
+            debug_print("GraphPanelWidget Y Custom selection waiting for formula acceptance")
+            return
         self._ensure_column_setting(file_path, column)["conversion"] = conversion or "as-is"
+        combo = self._conversion_combos.get((file_path, column))
+        if combo is not None:
+            combo.setFixedWidth(_UNIT_COMBO_WIDTH)
+            combo.setToolTip(_CONVERSION_TOOLTIP)
         self._refresh_graph()
 
     def _set_source_unit(self, file_path: str, column: str, text: str) -> None:
         debug_print(f"GraphPanelWidget._set_source_unit file={file_path} column={column} unit={text}")
-        if text == _CUSTOM:
-            return  # handled when activated: the formula dialog decides
         settings = self._ensure_column_setting(file_path, column)
         settings["source_unit"] = units.normalize_unit(text) or _NO_UNIT
         combo = self._conversion_combos.get((file_path, column))
@@ -1016,33 +1039,42 @@ class GraphPanelWidget(QWidget):
             settings["conversion"] = self._fill_conversion_combo(
                 combo, settings["source_unit"], settings.get("conversion", "as-is")
             )
+            if settings["conversion"] == "custom":
+                self._show_custom(self._unit_combos[(file_path, column)], combo, settings.get("custom_unit", ""))
+                debug_print("GraphPanelWidget retained Y custom formula after source unit declaration changed")
         self._refresh_graph()
 
-    def _on_unit_activated(self, file_path: str, column: str) -> None:
-        combo = self._unit_combos.get((file_path, column))
-        if combo is None or self._unit_of(combo) != _CUSTOM:
+    def _on_conversion_activated(self, file_path: str, column: str) -> None:
+        combo = self._conversion_combos.get((file_path, column))
+        if combo is None or combo.currentData() != "custom":
             return
+        debug_print(f"GraphPanelWidget opening formula editor from Y To dropdown column={column}")
         settings = self._ensure_column_setting(file_path, column)
         answer = self._ask_formula(file_path, column, settings.get("formula", ""), settings.get("custom_unit", ""))
         if answer is None:
-            if settings.get("conversion") != "custom":
-                self._show_unit(combo, settings.get("source_unit", ""), self._file_unit(file_path, column))
+            self._fill_conversion_combo(combo, settings.get("source_unit", ""), settings.get("conversion", "as-is"))
+            if settings.get("conversion") == "custom":
+                self._show_custom(self._unit_combos[(file_path, column)], combo, settings.get("custom_unit", ""))
+            debug_print(f"GraphPanelWidget Y formula cancelled; restored target={settings.get('conversion')}")
             return
         settings["formula"], settings["custom_unit"] = answer
         settings["conversion"] = "custom"
-        self._show_custom(combo, self._conversion_combos[(file_path, column)], answer[1])
+        debug_print(f"GraphPanelWidget Y formula accepted; result unit={answer[1]}")
+        self._show_custom(self._unit_combos[(file_path, column)], combo, answer[1])
         self._refresh_graph()
 
     def _show_custom(self, unit_combo: QComboBox, conversion_combo: QComboBox, label: str) -> None:
-        """Show a formula conversion: the From dropdown reads Custom, the To dropdown the result's unit label."""
-        unit_combo.blockSignals(True)
-        unit_combo.setCurrentIndex(max(0, unit_combo.findData(_CUSTOM)))
-        unit_combo.blockSignals(False)
-        conversion_combo.blockSignals(True)
-        conversion_combo.clear()
-        conversion_combo.addItem(label or _NO_UNIT, "custom")
-        conversion_combo.setCurrentIndex(0)
-        conversion_combo.blockSignals(False)
+        """Keep the source unit in From and show the formula result as Custom (unit) in To."""
+        self._fill_conversion_combo(conversion_combo, self._unit_of(unit_combo), "custom")
+        text = f"Custom ({label})" if label else _CUSTOM
+        conversion_combo.setItemText(conversion_combo.findData("custom"), text)
+        conversion_combo.ensurePolished()
+        width = max(_UNIT_COMBO_WIDTH, conversion_combo.fontMetrics().horizontalAdvance(text) + 56)
+        conversion_combo.setFixedWidth(width)
+        debug_print(f"GraphPanelWidget custom target label width={width}")
+        conversion_combo.setToolTip(f"Custom formula result unit: {label or 'no unit'}. Choose Custom again to edit.")
+        debug_print(f"GraphPanelWidget custom conversion shown: From={self._unit_of(unit_combo)} To={text}")
+        update_combo_popup_width(conversion_combo)
 
     def _ask_formula(self, file_path: str, column: str, formula: str, unit: str) -> tuple[str, str] | None:
         """Open the formula dialog for one column; returns (formula, unit label), or None when cancelled."""

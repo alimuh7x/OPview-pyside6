@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from utils.label_formatting import format_plotly_figure
 from app.readable_dialogs import readable_information, readable_warning
 from app.resources import ASSETS_DIR
 from graphs.graph_canvas import GraphCanvas
@@ -587,6 +588,7 @@ QDialog#graphAnimationPlayer QProgressBar::chunk {
 
     def _build_html(self, figure: go.Figure) -> str:
         debug_print("GraphAnimationPlayer._build_html called")
+        format_plotly_figure(figure)
         figure_json = figure.to_json()
         return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>

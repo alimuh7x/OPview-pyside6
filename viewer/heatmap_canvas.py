@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
 from config.constants import DEFAULTS
+from utils.label_formatting import format_plotly_figure, label_to_matplotlib
 from viewer.colorbar_ticks import format_colorbar_tick, format_colorbar_ticks
 from viewer.colorscale import cmap_to_plotly_scale
 from viewer.discrete_legend import add_discrete_legend_to_figure
@@ -568,7 +569,7 @@ class HeatmapCanvas(QWidget):
                 text = fig.text(
                     right_edge / width_pixels,
                     row_mid / height_pixels,
-                    str(overlay["label"]),
+                    label_to_matplotlib(str(overlay["label"])),
                     fontsize=legend_font,
                     color="#102a52",
                     va="center",
@@ -607,7 +608,7 @@ class HeatmapCanvas(QWidget):
             ax.text(
                 float(point["x"]),
                 float(point["y"]),
-                str(point["label"]),
+                label_to_matplotlib(str(point["label"])),
                 color="#06162d",
                 fontsize=13,
                 ha="center",
@@ -648,7 +649,7 @@ class HeatmapCanvas(QWidget):
         colorbar.ax.tick_params(labelsize=tick_font_size, pad=tick_pad, length=0)
         if payload.get("colorbar_label"):
             colorbar.set_label(
-                payload["colorbar_label"], fontsize=title_font_size, labelpad=label_pad, fontfamily=_EXPORT_FONT_FAMILY
+                label_to_matplotlib(payload["colorbar_label"]), fontsize=title_font_size, labelpad=label_pad, fontfamily=_EXPORT_FONT_FAMILY
             )
         canvas.draw()
         fig.savefig(path, dpi=dpi, facecolor="white")
@@ -1337,6 +1338,7 @@ class HeatmapCanvas(QWidget):
 
     def _build_html(self, figure: go.Figure) -> str:
         debug_print("HeatmapCanvas._build_html called")
+        format_plotly_figure(figure)
         figure_json = figure.to_json()
         zoom = self._zoom_window
         zoom_json = json.dumps({"x": [zoom[0], zoom[1]], "y": [zoom[2], zoom[3]]}) if zoom else "null"

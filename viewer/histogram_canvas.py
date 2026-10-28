@@ -10,6 +10,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
 from app.debug import debug_print
+from utils.label_formatting import format_plotly_figure
 from utils.webengine_downloads import install_save_dialog_download_handler
 from viewer.plot_style import PlotStyle
 
@@ -251,6 +252,7 @@ class HistogramCanvas(QWidget):
     def _build_html(self, figure: go.Figure) -> str:
         debug_print("HistogramCanvas._build_html called")
         debug_print("HistogramCanvas modebar top offset=0px")
+        format_plotly_figure(figure)
         figure_json = figure.to_json()
         _hist_debug(f"build_html trace_count={len(figure.data)} json_length={len(figure_json)}")
         return f"""<!DOCTYPE html>

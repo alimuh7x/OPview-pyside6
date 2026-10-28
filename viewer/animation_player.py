@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from app.debug import debug_print
 from app.readable_dialogs import readable_information, readable_question, readable_warning
 from app.resources import ASSETS_DIR, HEATMAP_LOGO_PATH
+from utils.label_formatting import label_to_matplotlib
 from viewer.colorscale import palette_to_cmap
 from viewer.plot_style import PlotStyle
 
@@ -240,7 +241,7 @@ class _FrameFetcher(QObject):
         return overlays
 
     def _read_phase_mesh(self, file_path, mesh, pv):
-        """Mesh of the PhaseField file matching file_path (PhaseFraction_* live there)."""
+        """Mesh of the matching phase output, including OpenPhase files."""
         phase_file = self._phase_overlay_file(file_path)
         if phase_file is None:
             return None
@@ -281,6 +282,12 @@ class _FrameFetcher(QObject):
             debug_print("FrameFetcher overlay using PhaseFieldDistorted fallback")
             return distorted_candidate
         debug_print("FrameFetcher overlay PhaseFieldDistorted fallback missing")
+        openphase_candidate = path.with_name(f"OpenPhase_{suffix}")
+        debug_print(f"FrameFetcher overlay OpenPhase candidate={openphase_candidate}")
+        if openphase_candidate.exists():
+            debug_print("FrameFetcher overlay using OpenPhase fallback")
+            return openphase_candidate
+        debug_print("FrameFetcher overlay OpenPhase fallback missing")
         return None
 
     def _fast_load(self, mesh, array_key, component, scale):
@@ -413,7 +420,7 @@ class _MatplotlibCanvas(QWidget):
                     zorder=_PHASE_OVERLAY_ZORDER,
                 )
                 self._phase_overlays.append(artist)
-                legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
+                legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label_to_matplotlib(label)))
             if legend_handles and show_phase_overlays:
                 self._fig.subplots_adjust(right=0.76)
                 self._legend = self._ax.legend(
@@ -433,9 +440,9 @@ class _MatplotlibCanvas(QWidget):
         elif self._legend is None:
             self._fig.subplots_adjust(right=0.92)
         if title:
-            self._ax.set_title(title, fontsize=9, pad=4)
+            self._ax.set_title(label_to_matplotlib(title), fontsize=9, pad=4)
         if self._cbar is not None:
-            self._cbar.set_label(colorbar_label or "", fontsize=_COLORBAR_LABEL_FONT_SIZE)
+            self._cbar.set_label(label_to_matplotlib(colorbar_label or ""), fontsize=_COLORBAR_LABEL_FONT_SIZE)
         self._canvas.draw_idle()
 
     def _remove_colorbar(self):
@@ -1186,7 +1193,7 @@ QDialog#animationPlayer QProgressBar::chunk {
         if not show_phase_overlays:
             cbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04, shrink=0.78)
             cbar.ax.tick_params(labelsize=_COLORBAR_TICK_FONT_SIZE)
-            cbar.set_label(self._colorbar_label or "", fontsize=_COLORBAR_LABEL_FONT_SIZE)
+            cbar.set_label(label_to_matplotlib(self._colorbar_label or ""), fontsize=_COLORBAR_LABEL_FONT_SIZE)
         overlay_artist = None
         phase_artists = []
         legend_artist = None
@@ -1292,7 +1299,7 @@ QDialog#animationPlayer QProgressBar::chunk {
                     zorder=_PHASE_OVERLAY_ZORDER,
                 )
             )
-            legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label))
+            legend_handles.append(Patch(facecolor=color, edgecolor=color, label=label_to_matplotlib(label)))
         if outside:
             legend = ax.legend(
                 handles=legend_handles,

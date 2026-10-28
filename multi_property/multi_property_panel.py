@@ -36,6 +36,7 @@ from multi_property.multi_property_cell import MultiPropertyCell, ScientificRang
 from multi_view.multi_view_cell import _CELL_W
 from multi_view.multi_view_panel import MultiViewPanel, _LOGO_W
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
+from utils.image_export_paths import image_export_path, remember_image_export_path
 from utils.unit_conversion_control import UnitConversionControl
 from utils.vtk_utils import get_reader
 from viewer.colorscale import (
@@ -1319,7 +1320,7 @@ class MultiPropertyPanel(QWidget):
         selected_path, _ = QFileDialog.getSaveFileName(
             self,
             "Export Multi Property PNG",
-            "multi_property.png",
+            image_export_path("multi_property.png"),
             "PNG (*.png)",
         )
         debug_print(f"MultiPropertyPanel export selected path={selected_path}")
@@ -1337,6 +1338,8 @@ class MultiPropertyPanel(QWidget):
             saved = bool(pixmap.save(str(output_path), "PNG"))
         debug_print(f"MultiPropertyPanel export saved={saved}")
         if saved:
+            remember_image_export_path(str(output_path))
+            debug_print("MultiPropertyPanel remembered successful PNG export folder")
             self.status_label.setText(f"Exported {output_path.name}")
         else:
             self.status_label.setText("Export failed")
@@ -2099,7 +2102,7 @@ class MultiPropertyPanel(QWidget):
         phase_file = self._phase_overlay_file(file_path)
         debug_print(f"MultiPropertyPanel overlay phase_file={phase_file}")
         if not phase_file:
-            debug_print("MultiPropertyPanel overlay skipped no PhaseField file")
+            debug_print("MultiPropertyPanel overlay skipped no matching phase output file")
             return None
         try:
             phase_reader = get_reader(str(phase_file))
@@ -2147,6 +2150,12 @@ class MultiPropertyPanel(QWidget):
             debug_print("MultiPropertyPanel overlay using PhaseFieldDistorted fallback")
             return distorted_candidate
         debug_print("MultiPropertyPanel overlay PhaseFieldDistorted fallback missing")
+        openphase_candidate = path.with_name(f"OpenPhase_{suffix}")
+        debug_print(f"MultiPropertyPanel overlay OpenPhase candidate={openphase_candidate}")
+        if openphase_candidate.exists():
+            debug_print("MultiPropertyPanel overlay using OpenPhase fallback")
+            return openphase_candidate
+        debug_print("MultiPropertyPanel overlay OpenPhase fallback missing")
         return None
 
     @staticmethod

@@ -27,6 +27,7 @@ from config.constants import DEFAULTS, PALETTES
 from multi_view.colorbar_canvas import ColorbarCanvas, _W as _CB_W
 from multi_view.multi_view_cell import MultiViewCell, MultiViewHeader, _CELL_W
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
+from utils.image_export_paths import image_export_path, remember_image_export_path
 from config import units as unit_table
 from utils.time_series import compact_timestep_label
 from utils.unit_conversion_control import UnitConversionControl
@@ -954,12 +955,7 @@ class MultiViewPanel(QWidget):
         self._reset_click_range_state("range reset clicked")
         self._range_initialized = False
         debug_print("MultiViewPanel click range state cleared for reset")
-        self.full_scale.blockSignals(True)
-        debug_print("MultiViewPanel full scale signals blocked")
-        self.full_scale.setChecked(True)
-        debug_print("MultiViewPanel full scale checked for range reset")
-        self.full_scale.blockSignals(False)
-        debug_print("MultiViewPanel full scale signals unblocked")
+        debug_print(f"MultiViewPanel reset preserves Full Scale={self.full_scale.isChecked()}")
         self._render_all()
         debug_print("MultiViewPanel._on_range_reset_clicked complete")
 
@@ -1337,10 +1333,14 @@ class MultiViewPanel(QWidget):
             debug_print("MultiViewPanel export skipped: no columns")
             return
         px = self._heatmap_row.grab()
-        path, _ = QFileDialog.getSaveFileName(self, "Export", "multi_view.png", "PNG (*.png)")
+        path, _ = QFileDialog.getSaveFileName(self, "Export", image_export_path("multi_view.png"), "PNG (*.png)")
         if path:
             debug_print(f"MultiViewPanel saving export path={path}")
-            px.save(path)
+            saved = px.save(path)
+            debug_print(f"MultiViewPanel export saved={saved}")
+            if saved:
+                remember_image_export_path(path)
+                debug_print("MultiViewPanel remembered successful PNG export folder")
         else:
             debug_print("MultiViewPanel export cancelled")
         debug_print("MultiViewPanel._export complete")
@@ -1640,7 +1640,7 @@ class MultiViewPanel(QWidget):
         phase_file = self._phase_overlay_file(file_path)
         debug_print(f"MultiViewPanel overlay phase_file={phase_file}")
         if not phase_file:
-            debug_print("MultiViewPanel overlay skipped: no matching PhaseField file")
+            debug_print("MultiViewPanel overlay skipped: no matching phase output file")
             return None
         try:
             phase_reader = get_reader(str(phase_file))
@@ -1702,4 +1702,10 @@ class MultiViewPanel(QWidget):
             debug_print("MultiViewPanel overlay using PhaseFieldDistorted fallback")
             return distorted_candidate
         debug_print("MultiViewPanel overlay PhaseFieldDistorted fallback missing")
+        openphase_candidate = path.with_name(f"OpenPhase_{suffix}")
+        debug_print(f"MultiViewPanel overlay OpenPhase candidate={openphase_candidate}")
+        if openphase_candidate.exists():
+            debug_print("MultiViewPanel overlay using OpenPhase fallback")
+            return openphase_candidate
+        debug_print("MultiViewPanel overlay OpenPhase fallback missing")
         return None

@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from app.debug import debug_print
+from utils.label_formatting import format_plotly_figure
 from viewer.colorbar_ticks import format_colorbar_tick, format_colorbar_ticks
 from viewer.colorscale import cmap_to_plotly_scale
 from viewer.discrete_legend import build_discrete_legend_html
@@ -132,6 +133,7 @@ class ColorbarCanvas(QWidget):
         figure = _build_colorbar_figure(colorscale, vmin, vmax, label)
         debug_print("MultiView ColorbarCanvas layout ready")
 
+        format_plotly_figure(figure)
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>

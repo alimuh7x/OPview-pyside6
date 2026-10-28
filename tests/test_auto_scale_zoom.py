@@ -88,6 +88,120 @@ class AutoScaleZoomTests(unittest.TestCase):
         return restyle, refresh
 
     # ---- defaults ------------------------------------------------------------------------------
+    def test_lock_scale_starts_off_and_is_before_full_scale(self):
+        self.assertFalse(self.controls.lock_scale_check.isChecked())
+        layout = self.controls.palette_row.layout()
+        self.assertEqual(layout.indexOf(self.controls.lock_scale_check) + 1, layout.indexOf(self.controls.full_scale_check))
+
+    def test_lock_scale_keeps_color_limits_across_file_changes_and_zoom(self):
+        self.controls.lock_scale_check.setChecked(True)
+        held = self.controls.current_range()
+        self.assertFalse(self.controller.auto_scale_enabled())
+
+        for index in (1, 0, 1):
+            self.controls.file_combo.setCurrentIndex(index)
+            self._zoom(_window(self.controller, 0.0, 0.4, 0.0, 0.4))
+            self.assertAlmostEqual(self.controller.state.range_min, held[0], places=6)
+            self.assertAlmostEqual(self.controller.state.range_max, held[1], places=6)
+            self.assertFalse(self.controller.auto_scale_enabled())
+
+    def test_lock_scale_captures_zoomed_limits_and_passes_them_to_animation(self):
+        self._zoom(_window(self.controller, 0.0, 0.4, 0.0, 0.4))
+        held = (self.controller.state.range_min, self.controller.state.range_max)
+
+        self.controls.lock_scale_check.setChecked(True)
+        self.controls.file_combo.setCurrentIndex(1)
+        with mock.patch("viewer.panel_widget.AnimationPlayer") as player:
+            self.panel._open_animation_player()
+
+        self.assertAlmostEqual(player.call_args.kwargs["vmin"], held[0], places=6)
+        self.assertAlmostEqual(player.call_args.kwargs["vmax"], held[1], places=6)
+
+    def test_lock_scale_allows_manual_limits_outside_next_files_range(self):
+        self.controls.lock_scale_check.setChecked(True)
+        self.controls.range_min_spin.setValue(-10.0)
+        self.controls.range_max_spin.setValue(10.0)
+
+        self.controls.file_combo.setCurrentIndex(1)
+
+        self.assertEqual(self.controls.current_range(), (-10.0, 10.0))
+        self.assertEqual(self.controller.state.range_min, -10.0)
+        self.assertEqual(self.controller.state.range_max, 10.0)
+        self.assertEqual(self.controls.range_slider.lower_value(), -10.0)
+        self.assertEqual(self.controls.range_slider.upper_value(), 10.0)
+        payload = self.controller._build_high_resolution_export_payload()
+        self.assertEqual(payload["vmin"], -10.0)
+        self.assertEqual(payload["vmax"], 10.0)
+
+    def test_unlock_scale_resumes_auto_scaling_after_manual_edits(self):
+        self.controls.lock_scale_check.setChecked(True)
+        self.controls.range_min_spin.setValue(-10.0)
+        self.controls.range_max_spin.setValue(10.0)
+        self.controls.file_combo.setCurrentIndex(1)
+
+        self.controls.lock_scale_check.setChecked(False)
+
+        self.assertTrue(self.controller.auto_scale_enabled())
+        stats = self.controller._last_grids[3]
+        self.assertAlmostEqual(self.controller.state.range_min, stats["min"])
+        self.assertAlmostEqual(self.controller.state.range_max, stats["max"])
+
+    def test_lock_scale_keeps_difference_color_limits_in_view_and_export(self):
+        self.controls.plot_type_combo.setCurrentIndex(self.controls.plot_type_combo.findData("difference"))
+        self.controls.lock_scale_check.setChecked(True)
+        self.controls.range_min_spin.setValue(-10.0)
+        self.controls.range_max_spin.setValue(10.0)
+
+        with mock.patch.object(self.canvas, "render_heatmap") as render:
+            self.controller.refresh_view()
+
+        self.assertEqual(render.call_args.kwargs["vmin"], -10.0)
+        self.assertEqual(render.call_args.kwargs["vmax"], 10.0)
+        payload = self.controller._build_high_resolution_export_payload()
+        self.assertEqual(payload["vmin"], -10.0)
+        self.assertEqual(payload["vmax"], 10.0)
+
+    def test_enabling_lock_captures_the_displayed_limits_for_full_scale_and_difference(self):
+        for mode in ("full-scale", "difference"):
+            with self.subTest(mode=mode):
+                self.controls.lock_scale_check.setChecked(False)
+                if mode == "full-scale":
+                    self.controls.full_scale_check.setChecked(True)
+                    self.controls.range_min_spin.setValue(0.01)
+                else:
+                    self.controls.plot_type_combo.setCurrentIndex(self.controls.plot_type_combo.findData("difference"))
+                with mock.patch.object(self.canvas, "render_heatmap") as render:
+                    self.controller.refresh_view()
+                    displayed = (render.call_args.kwargs["vmin"], render.call_args.kwargs["vmax"])
+
+                    self.controls.lock_scale_check.setChecked(True)
+
+                self.assertAlmostEqual(render.call_args.kwargs["vmin"], displayed[0])
+                self.assertAlmostEqual(render.call_args.kwargs["vmax"], displayed[1])
+
+    def test_lock_scale_turns_off_full_scale_until_unlocked(self):
+        self.controls.full_scale_check.setChecked(True)
+
+        self.controls.lock_scale_check.setChecked(True)
+
+        self.assertFalse(self.controls.full_scale_check.isChecked())
+        self.assertFalse(self.controls.full_scale_check.isEnabled())
+        self.assertEqual(self.controller.state.colorscale_mode, "normal")
+        self.controls.lock_scale_check.setChecked(False)
+        self.assertTrue(self.controls.full_scale_check.isEnabled())
+
+    def test_reset_sets_new_locked_limits_and_keeps_lock_enabled(self):
+        self.controls.lock_scale_check.setChecked(True)
+        self.controls.range_min_spin.setValue(-10.0)
+        self.controls.reset_button.click()
+        held = self.controls.current_range()
+
+        self.controls.file_combo.setCurrentIndex(1)
+
+        self.assertTrue(self.controls.lock_scale_check.isChecked())
+        self.assertAlmostEqual(self.controller.state.range_min, held[0], places=6)
+        self.assertAlmostEqual(self.controller.state.range_max, held[1], places=6)
+
     def test_there_is_no_auto_scale_switch_and_it_starts_at_the_full_domain_range(self):
         self.assertFalse(hasattr(self.controls, "auto_scale_check"))  # always on, nothing to switch
         self.assertTrue(self.controller.auto_scale_enabled())

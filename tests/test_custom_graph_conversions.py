@@ -48,15 +48,15 @@ class ColumnConversionTests(unittest.TestCase):
         self.assertEqual(panel._column_settings[path]["Stress"]["source_unit"], "MPa")
         targets = _targets(panel._conversion_combos[(path, "Stress")])
         # no conversion, then the scale without the unit chosen in From
-        self.assertEqual(targets, ["as-is", "to:mPa", "to:Pa", "to:kPa", "to:GPa"])
+        self.assertEqual(targets, ["as-is", "to:mPa", "to:Pa", "to:kPa", "to:GPa", "custom"])
 
-    def test_unrecognised_unit_offers_only_no_change(self):
+    def test_unrecognised_unit_offers_no_change_and_custom(self):
         path = _write("Time Force\ns mol\n0 1\n1 2\n")
         _tab, panel = _panel_with(path)
         panel._columns_by_file[path] = ["Force"]
         panel._refresh_column_settings()
         targets = _targets(panel._conversion_combos[(path, "Force")])
-        self.assertEqual(targets, ["as-is"])
+        self.assertEqual(targets, ["as-is", "custom"])
 
     def test_empty_unit_shows_dash_and_both_dropdowns_are_equally_wide(self):
         path = _write(_PLAIN_FILE)
@@ -78,7 +78,7 @@ class ColumnConversionTests(unittest.TestCase):
         self.assertEqual(
             labels,
             ["nano (n)", "micro (µ)", "milli (m)", "percent (%)", "base", "kilo (k)", "Mega (M)", "Giga (G)",
-             "s", "K", "°C", "Custom"],
+             "s", "K", "°C"],
         )  # unit unknown: every prefix, then the units the data can be declared in
 
     def test_temperature_converts_between_celsius_and_kelvin(self):
@@ -114,12 +114,12 @@ class ColumnConversionTests(unittest.TestCase):
         panel._columns_by_file[path] = ["Stress"]
         panel._refresh_column_settings()
         combo = panel._unit_combos[(path, "Stress")]
-        self.assertEqual([combo.itemData(i) for i in range(combo.count())], ["mPa", "Pa", "kPa", "MPa", "GPa", "Custom"])
+        self.assertEqual([combo.itemData(i) for i in range(combo.count())], ["mPa", "Pa", "kPa", "MPa", "GPa"])
         labels = ["milli (m)", "base", "kilo (k)", "Mega (M)", "Giga (G)"]
         self.assertEqual([combo.itemText(i) for i in range(5)], labels)  # prefixes only: the file gave the unit
         to = panel._conversion_combos[(path, "Stress")]
         self.assertEqual(
-            [to.itemText(i) for i in range(to.count())], ["\u2014", "milli (m)", "base", "kilo (k)", "Giga (G)"]
+            [to.itemText(i) for i in range(to.count())], ["\u2014", "milli (m)", "base", "kilo (k)", "Giga (G)", "Custom…"]
         )
         self.assertEqual(to.currentText(), "\u2014")  # no conversion; Mega is not repeated
 
@@ -143,7 +143,7 @@ class ColumnConversionTests(unittest.TestCase):
         to = panel._conversion_combos[(path, "Stress")]
         self.assertEqual(
             [to.itemText(i) for i in range(to.count())],
-            ["\u2014", "milli (m)", "minute (min)", "hour (h)", "day"],
+            ["\u2014", "milli (m)", "minute (min)", "hour (h)", "day", "Custom…"],
         )
         to.setCurrentIndex(to.findData("to:min"))
         figure = panel.canvas._build_figure(panel.state())

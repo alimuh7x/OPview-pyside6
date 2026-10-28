@@ -9,6 +9,7 @@ def build_app_stylesheet() -> str:
     """Return a windows11-friendly stylesheet closer to OPView."""
     debug_print("build_app_stylesheet called")
     debug_print("build_app_stylesheet adding sidebar accent hover and pressed states")
+    debug_print("build_app_stylesheet fixing tooltip background to opaque white with dark text")
     _assets = Path(__file__).parent.parent / "assets"
     _arrow     = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
     _arrow_up  = str(_assets / "dropUp_icon_2.png").replace("\\", "/")
@@ -25,6 +26,16 @@ QWidget {{
 }}
 QLabel {{
     background: transparent;
+}}
+QToolTip,
+QWidget#sidebarShell QToolTip {{
+    background-color: #ffffff;
+    color: #102a52;
+    border: 1px solid #94a3b8;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 14px;
+    opacity: 255;
 }}
 QAbstractItemView {{
     background: #ffffff;

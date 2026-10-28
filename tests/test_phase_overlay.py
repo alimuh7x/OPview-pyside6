@@ -7,7 +7,6 @@ from PySide6.QtCore import QPoint, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QWidget
 
-from config.tabs import TAB_CONFIGS
 from viewer.heatmap_canvas import HeatmapCanvas
 from viewer.panel_widget import PanelWidget
 from viewer.phase_overlay_button import PhaseOverlayButton
@@ -390,7 +389,7 @@ class PhaseOverlayRenderTests(unittest.TestCase):
             "id": "phase",
             "label": "PhaseField",
             "files": [str(Path("Project1/VTK/PhaseField_00000000.vts").resolve())],
-            "dataset_config": TAB_CONFIGS[0]["datasets"][0],
+            "dataset_config": {"id": "auto-phasefield", "label": "PhaseField", "scalars": None},
             "tab_id": "single_view",
         })
         button = panel.phase_overlay_button
