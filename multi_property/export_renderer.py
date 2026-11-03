@@ -12,6 +12,7 @@ from matplotlib.colors import Normalize
 from matplotlib.figure import Figure
 
 from app.debug import debug_print
+from utils.label_formatting import label_to_matplotlib
 from viewer.colorbar_ticks import format_colorbar_ticks
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from viewer.plot_style import PlotStyle
@@ -218,7 +219,7 @@ def _draw_cell(
     colorbar.outline.set_visible(False)
     colorbar.ax.tick_params(labelsize=_px_to_pt(_TICK_FONT_PX, dpi), pad=_px_to_pt(_TICK_PAD_PX, dpi))
     colorbar.set_label(
-        str(payload.get("label", "")),
+        label_to_matplotlib(str(payload.get("label", ""))),
         fontsize=_px_to_pt(_TITLE_FONT_PX, dpi),
         labelpad=_px_to_pt(_LABEL_PAD_PX, dpi),
         weight="bold",

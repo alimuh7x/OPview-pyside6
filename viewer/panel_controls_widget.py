@@ -81,7 +81,8 @@ class _PhaseFractionRenameDelegate(QStyledItemDelegate):
 
 _COLOR_SCALING_TOOLTIP = (
     "Colors follow the min/max of the selected region, or of the visible (zoomed) region, automatically.\n"
-    "A range you type or pick with two points is held until you zoom, pan, select a region or press Reset."
+    "A range you type or pick with two points is held until you zoom, pan, select a region or press Reset.\n"
+    "Lock Scale keeps Min/Max fixed across files, zooming and animation. Reset sets new locked limits."
 )
 
 
@@ -227,6 +228,9 @@ class PanelControlsWidget(QWidget):
         update_combo_popup_width(self.palette_combo)
         self.range_slider = RangeSliderWidget()
         self.full_scale_check = ToggleSwitchWidget("Full Scale", checked=False)
+        self.lock_scale_check = ToggleSwitchWidget("Lock Scale", checked=False)
+        debug_print("PanelControlsWidget Lock Scale initialized off")
+        self.lock_scale_check.setToolTip("Keep the same color scale across files and animation frames. Min/Max remain editable.")
         self.select_region_check = ToggleSwitchWidget("Select Rectangle", checked=False)
         self.select_region_check.setToolTip(
             "On: drag to select a rectangle without zooming (statistics and colors follow it).\n"
@@ -286,6 +290,8 @@ class PanelControlsWidget(QWidget):
         palette_row_layout.addWidget(self.discrete_plus_button)
         palette_row_layout.addWidget(self.colorbar_mode_combo)
         palette_row_layout.addWidget(self.range_slider, 4)
+        palette_row_layout.addWidget(self.lock_scale_check)
+        debug_print("PanelControlsWidget placed Lock Scale before Full Scale")
         palette_row_layout.addWidget(self.full_scale_check)
         palette_row_layout.addWidget(self.rotation_button_row)
         layout.addWidget(self.palette_row)
@@ -546,6 +552,8 @@ class PanelControlsWidget(QWidget):
         self.discrete_plus_button.clicked.connect(lambda *_: self._change_discrete_band_count(1))
         self.colorbar_mode_combo.currentIndexChanged.connect(lambda *_: self._emit_refresh_requested("colorbar-mode"))
         self.full_scale_check.toggled.connect(lambda *_: self._emit_refresh_requested("full-scale"))
+        self.lock_scale_check.toggled.connect(self._handle_lock_scale_changed)
+        debug_print("PanelControlsWidget connected Lock Scale toggle")
         for degrees, button in self.rotation_buttons.items():
             button.clicked.connect(lambda _checked=False, value=degrees: self._set_rotation_degrees(value))
             debug_print(f"PanelControlsWidget rotation button connected degrees={degrees}")
@@ -1040,6 +1048,21 @@ QInputDialog#phaseRenameDialog QPushButton:hover {
     def full_scale_enabled(self) -> bool:
         debug_print("PanelControlsWidget.full_scale_enabled called")
         return self.full_scale_check.isChecked()
+
+    def lock_scale_enabled(self) -> bool:
+        debug_print(f"PanelControlsWidget Lock Scale enabled={self.lock_scale_check.isChecked()}")
+        return self.lock_scale_check.isChecked()
+
+    def _handle_lock_scale_changed(self, checked: bool) -> None:
+        debug_print(f"PanelControlsWidget Lock Scale toggled={checked}")
+        if checked:
+            self.full_scale_check.blockSignals(True)
+            self.full_scale_check.setChecked(False)
+            debug_print("PanelControlsWidget Lock Scale turned Full Scale off")
+            self.full_scale_check.blockSignals(False)
+        self.full_scale_check.setEnabled(not checked)
+        debug_print(f"PanelControlsWidget Full Scale available={not checked}")
+        self._emit_refresh_requested("lock-scale" if checked else "unlock-scale")
 
     def select_region_enabled(self) -> bool:
         return self.select_region_check.isChecked()

@@ -9,6 +9,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QFileDialog, QWidget
 
 from app.debug import debug_print
+from utils.image_export_paths import image_export_path, remember_image_export_path
 
 
 PNG_FILTER = "PNG (*.png);;All Files (*)"
@@ -74,7 +75,7 @@ def install_save_dialog_download_handler(
         debug_print("webengine_downloads download requested")
         suggested_name = download.suggestedFileName() or download.downloadFileName()
         debug_print(f"webengine_downloads raw suggested name={suggested_name}")
-        default_path = _suggested_png_name(suggested_name, fallback_name)
+        default_path = image_export_path(_suggested_png_name(suggested_name, fallback_name))
         debug_print(f"webengine_downloads dialog default path={default_path}")
         selected_path, _ = QFileDialog.getSaveFileName(
             parent,
@@ -88,6 +89,14 @@ def install_save_dialog_download_handler(
             debug_print("webengine_downloads download cancelled by user")
             download.cancel()
             return
+        def _remember_completed_download() -> None:
+            debug_print(f"webengine_downloads download state={download.state()}")
+            if download.state() == download.DownloadState.DownloadCompleted:
+                remember_image_export_path(final_path)
+                debug_print("webengine_downloads remembered completed image export folder")
+
+        download.stateChanged.connect(_remember_completed_download)
+        debug_print("webengine_downloads connected export folder update on completion")
         _apply_download_path(download, final_path)
 
     profile.downloadRequested.connect(_on_download_requested)

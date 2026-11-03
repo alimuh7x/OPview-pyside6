@@ -6,9 +6,11 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication, QEvent
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLineEdit
 
 from graphs.symbol_picker import SymbolPicker
+from graphs.graph_panel_widget import GraphPanelWidget
 from multi_property.multi_property_cell import MultiPropertyCell
 from multi_property.multi_property_panel import MultiPropertyPanel
 from multi_view.multi_view_cell import MultiViewHeader
@@ -41,6 +43,23 @@ class LabelSymbolPickerTests(unittest.TestCase):
         panel = PanelWidget({"label": "Test", "files": []})
         self.addCleanup(panel.deleteLater)
         self.check_insertion(panel.colorbar_label_edit)
+
+    def test_custom_graph_title_can_be_cleared_and_replaced_inside_popup(self):
+        panel = GraphPanelWidget(1)
+        self.addCleanup(panel.deleteLater)
+        edit = panel.x_title_edit
+        picker = edit.findChild(SymbolPicker)
+        picker.show_centered(edit)
+        self.addCleanup(picker.close)
+        self.assertEqual(picker.script_input.text(), "Time")
+        picker.clear_button.click()
+        QTest.qWait(250)
+        self.assertEqual(edit.text(), "")
+        self.assertEqual(picker.script_input.text(), "")
+        picker.script_input.setText("σ_xx")
+        QTest.qWait(250)
+        self.assertEqual(edit.text(), "σ_xx")
+        self.assertEqual(picker.preview_label.text(), "σ<sub>xx</sub>")
 
     def test_multi_view_colorbar_label(self):
         panel = MultiViewPanel({"available_projects": []})

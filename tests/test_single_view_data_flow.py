@@ -76,8 +76,9 @@ class SingleViewDataFlowTests(unittest.TestCase):
         registry.detect(verbose=False)
         detected_ids = {dataset.dataset_id for dataset in registry.all_datasets}
 
-        self.assertIn("mechanics-elastic", detected_ids)
-        self.assertIn("plasticity-crss", detected_ids)
+        self.assertIn("auto-elasticstrains", detected_ids)
+        self.assertIn("auto-crss", detected_ids)
+        self.assertTrue(all(dataset.dataset_config["scalars"] is None for dataset in registry.all_datasets))
 
     def test_dataset_registry_limits_eager_file_lists_for_large_vtk_folders(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -88,7 +89,7 @@ class SingleViewDataFlowTests(unittest.TestCase):
 
             registry = DatasetRegistry(vtk_dir, TAB_CONFIGS)
             registry.detect(verbose=False)
-            phase = next(dataset for dataset in registry.all_datasets if dataset.dataset_id == "phase-field-phase")
+            phase = next(dataset for dataset in registry.all_datasets if dataset.dataset_id == "auto-phasefield")
 
         self.assertEqual(phase.matched_count, 750)
         self.assertLess(len(phase.matched_files), phase.matched_count)

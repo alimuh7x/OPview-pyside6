@@ -26,6 +26,7 @@ from viewer.colorscale import cmap_to_plotly_scale
 from viewer.heatmap_canvas import HeatmapCanvas, _CANVAS_HEIGHT, _CANVAS_WIDTH
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from app.debug import debug_print
+from utils.label_formatting import format_plotly_figure
 from graphs.symbol_picker import attach_symbol_picker
 from utils.time_series import compact_timestep_label
 
@@ -277,6 +278,7 @@ class MultiViewCell(QWidget):
             figure.update_xaxes(range=[float(np.nanmin(x_vals)), float(np.nanmax(x_vals))])
             figure.update_yaxes(range=[float(np.nanmin(y_vals)), float(np.nanmax(y_vals))])
 
+        format_plotly_figure(figure)
         fig_json = figure.to_json()
         html = f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>

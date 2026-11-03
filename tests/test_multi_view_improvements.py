@@ -468,7 +468,7 @@ class MultiViewImprovementTests(unittest.TestCase):
         self.assertEqual(panel.range_max.value(), 7.0)
         self.assertEqual(panel._render_count, 1)
 
-    def test_range_reset_enables_full_scale_and_rerenders(self):
+    def test_range_reset_preserves_full_scale_and_rerenders(self):
         panel = MultiViewPanel.__new__(MultiViewPanel)
         panel._click_count = 1
         panel._first_click_value = 8.0
@@ -482,15 +482,17 @@ class MultiViewImprovementTests(unittest.TestCase):
 
         panel._render_all = render_all
 
-        MultiViewPanel._on_range_reset_clicked(panel)
-
-        self.assertFalse(panel.full_scale.blocked)
-        self.assertTrue(panel.full_scale.isChecked())
+        for enabled in (False, True):
+            with self.subTest(full_scale=enabled):
+                panel.full_scale.setChecked(enabled)
+                MultiViewPanel._on_range_reset_clicked(panel)
+                self.assertFalse(panel.full_scale.blocked)
+                self.assertEqual(panel.full_scale.isChecked(), enabled)
         self.assertEqual(panel._click_count, 0)
         self.assertIsNone(panel._first_click_value)
         self.assertIsNone(panel._last_selected_range)
         self.assertEqual(panel.status_label.text, "")
-        self.assertEqual(panel._render_count, 1)
+        self.assertEqual(panel._render_count, 2)
 
     def test_conversion_change_preserves_range_slider_position(self):
         selected = MultiViewPanel._range_from_position(

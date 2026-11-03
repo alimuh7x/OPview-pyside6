@@ -16,6 +16,7 @@ from app.debug import debug_print
 from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS
 from utils.time_series import collect_same_series_files
+from utils.image_export_paths import image_export_path, remember_image_export_path
 from utils.vtk_utils import get_reader, list_vtk_files
 from utils.ui_yield import maybe_yield
 from viewer.colorscale import (
@@ -151,6 +152,8 @@ class HeatmapController:
         self._zoom_window: visible_range.ZoomWindow | None = None  # current Plotly view; None = full domain
         self._status_prefix = ""
         self._manual_range = False  # a typed / two-point range is held (see _prepare_auto_scale)
+        self._last_rendered_color_range: tuple[float, float] | None = None
+        debug_print("HeatmapController displayed color limits initialized")
         self._selection_window: visible_range.ZoomWindow | None = None  # Select Region box, plot coordinates
         self._last_region_action = "zoom"  # which of selection / zoom the user touched last
         self._histogram_cache: dict | None = None
@@ -593,6 +596,11 @@ class HeatmapController:
         debug_print(f"HeatmapController loaded data range min={data_range_min}")
         debug_print(f"HeatmapController loaded data range max={data_range_max}")
         self.state       = self._preserve_file_change_state(fallback_state, previous_state, previous_time_points)
+        if self.controls_widget.lock_scale_enabled():
+            data_range_min = min(data_range_min, self.state.range_min)
+            data_range_max = max(data_range_max, self.state.range_max)
+            debug_print(f"HeatmapController Lock Scale preserved limits={self.state.range_min}..{self.state.range_max}")
+            debug_print(f"HeatmapController locked slider bounds={data_range_min}..{data_range_max}")
         active_scalar = self._get_scalar_def(self.state.scalar_key) or default_scalar
         debug_print(f"HeatmapController active file-change scalar={active_scalar.get('label')}")
         next_display_grids = self._file_change_display_grids(active_scalar, self.state.axis, self.state.slice_index)
@@ -1339,9 +1347,9 @@ class HeatmapController:
         return {**overlay_grid, "z": narrowed_interface_field(overlay_grid["z"], -width), "width": 0}
 
     def _phase_overlay_defs(self) -> tuple[object | None, list[dict]]:
-        """Reader and PhaseFraction_* scalar defs of the PhaseField file matching the loaded file.
+        """Reader and PhaseFraction_* scalar defs of the matching phase output file.
 
-        Read from the PhaseField file, not the active dataset, so phases are also
+        Read from PhaseField, PhaseFieldDistorted or OpenPhase output so phases are also
         offered over Composition, Stresses and every other non-phase dataset.
         """
         phase_file = self._phase_overlay_file(self.state.file_path) if self.state is not None else None
@@ -1499,7 +1507,8 @@ class HeatmapController:
         is on, or the visualization has no meaningful automatic range (threshold, contours, ...)."""
         debug_print("HeatmapController.auto_scale_enabled called")
         return (
-            not self._manual_range
+            not self.controls_widget.lock_scale_enabled()
+            and not self._manual_range
             and not self.controls_widget.full_scale_enabled()
             and self._auto_scale_unavailable_reason() is None
         )
@@ -1520,6 +1529,15 @@ class HeatmapController:
     def _prepare_auto_scale(self, previous_state, trigger: str) -> None:
         """Before a refresh: manual ranges are held, Reset restores the full range, a stale view is dropped."""
         debug_print(f"HeatmapController._prepare_auto_scale trigger={trigger}")
+        if trigger == "lock-scale" and self._last_rendered_color_range is not None:
+            lo, hi = self._last_rendered_color_range
+            debug_print(f"HeatmapController locking displayed limits={lo}..{hi}")
+            self.controls_widget.set_slider_bounds(lo, hi)
+            self.controls_widget.set_range_values(lo, hi)
+            debug_print("HeatmapController locked limits copied to editable controls")
+        if trigger == "unlock-scale":
+            self._manual_range = False
+            debug_print("HeatmapController Lock Scale released; automatic colors resumed")
         if trigger in ("range", "range-slider", "range-selection"):
             self._manual_range = True  # a typed or two-point range is held until the region changes or Reset
         elif trigger == "reset":
@@ -1651,6 +1669,8 @@ class HeatmapController:
         self.state.status_message = message
         self.controls_widget.set_status_text(message)
         self.heatmap_canvas.set_status_message(message)
+        self._last_rendered_color_range = (self.state.range_min, self.state.range_max)
+        debug_print(f"HeatmapController displayed zoom color limits={self._last_rendered_color_range}")
         if not self.heatmap_canvas.restyle_color_range(
             self.state.range_min * extra_scale, self.state.range_max * extra_scale
         ):
@@ -1814,14 +1834,18 @@ class HeatmapController:
                     diff = diff * extra_scale
                 abs_max        = max(abs(float(np.nanmin(diff))), abs(float(np.nanmax(diff))), 1e-12)
                 z_grid         = diff
-                vmin           = -abs_max
-                vmax           =  abs_max
+                if not self.controls_widget.lock_scale_enabled():
+                    vmin = -abs_max
+                    vmax = abs_max
+                debug_print(f"HeatmapController difference color limits={vmin}..{vmax}")
                 colorbar_label = f"Δ {display_label}"
                 cmap           = palette_to_cmap("ice-sunset")
             else:
                 self.controls_widget.set_status_text("No next file available for difference plot")
                 return
 
+        self._last_rendered_color_range = (vmin / extra_scale, vmax / extra_scale)
+        debug_print(f"HeatmapController displayed color limits={self._last_rendered_color_range}")
         self.heatmap_canvas.render_heatmap(
             x_grid=x_grid,
             y_grid=y_grid,
@@ -2196,7 +2220,7 @@ class HeatmapController:
             self.controls_widget.click_mode_range_check.blockSignals(False)
 
     def _build_overlay_grid(self, resolution: int | None = None):
-        """Load the PhaseField VTK file and return its grid data for drawing the interfaces overlay."""
+        """Load the matching phase output and return its interfaces overlay grid."""
         debug_print("HeatmapController._build_overlay_grid called")
         if not self.interfaces_check.isChecked():
             return None
@@ -2225,7 +2249,7 @@ class HeatmapController:
         return Heatmap2DOrientation(getattr(self.state, "rotation_degrees", 0))
 
     def _phase_overlay_file(self, file_path: str):
-        """Resolve the PhaseField_*.vts file that corresponds to the currently loaded data file."""
+        """Resolve matching PhaseField, PhaseFieldDistorted or OpenPhase output."""
         debug_print("HeatmapController._phase_overlay_file called")
         if not file_path:
             debug_print("HeatmapController no file_path for phase overlay")
@@ -2253,6 +2277,12 @@ class HeatmapController:
             debug_print("HeatmapController overlay using PhaseFieldDistorted fallback")
             return distorted_candidate
         debug_print("HeatmapController overlay PhaseFieldDistorted fallback missing")
+        openphase_candidate = path.with_name(f"OpenPhase_{suffix}")
+        debug_print(f"HeatmapController overlay OpenPhase candidate={openphase_candidate}")
+        if openphase_candidate.exists():
+            debug_print("HeatmapController overlay using OpenPhase fallback")
+            return openphase_candidate
+        debug_print("HeatmapController overlay OpenPhase fallback missing")
         return None
 
     def _on_time_plot_add_point_toggled(self, checked: bool) -> None:
@@ -2826,7 +2856,7 @@ class HeatmapController:
         selected_path, _ = QFileDialog.getSaveFileName(
             parent,
             "Export PNG",
-            default_name,
+            image_export_path(default_name),
             "PNG (*.png);;All Files (*)",
         )
         debug_print(f"HeatmapController selected export path={selected_path}")
@@ -2845,6 +2875,8 @@ class HeatmapController:
         debug_print(f"HeatmapController export saved={saved}")
         debug_print(f"HeatmapController export output path={output_path}")
         if saved:
+            remember_image_export_path(str(output_path))
+            debug_print("HeatmapController remembered successful PNG export folder")
             self.controls_widget.set_status_text(f"PNG saved: {output_path.name}")
         else:
             self.controls_widget.set_status_text("PNG export failed")
@@ -2932,8 +2964,9 @@ class HeatmapController:
             z_grid = diff
             debug_print(f"HeatmapController export payload raw difference shape={np.asarray(z_grid).shape}")
             cmap = palette_to_cmap("ice-sunset")
-            vmin = float(np.nanmin(z_grid))
-            vmax = float(np.nanmax(z_grid))
+            vmin = self.state.range_min if self.controls_widget.lock_scale_enabled() else float(np.nanmin(z_grid))
+            vmax = self.state.range_max if self.controls_widget.lock_scale_enabled() else float(np.nanmax(z_grid))
+            debug_print(f"HeatmapController difference export limits={vmin}..{vmax}")
         elif self.state.palette == DISCRETE_CUSTOM_PALETTE:
             debug_print("HeatmapController export payload using discrete custom color scale")
             cmap = self._current_palette_cmap()
@@ -2997,8 +3030,10 @@ class HeatmapController:
         if plot_type == "difference":
             debug_print("HeatmapController export payload finalizing difference color scale")
             abs_max = max(abs(float(np.nanmin(z_grid))), abs(float(np.nanmax(z_grid))), 1e-12)
-            vmin = -abs_max
-            vmax = abs_max
+            if not self.controls_widget.lock_scale_enabled():
+                vmin = -abs_max
+                vmax = abs_max
+            debug_print(f"HeatmapController final difference export limits={vmin}..{vmax}")
             colorbar_label = f"Δ {display_label}"
         payload = {
             "x_grid": np.asarray(x_grid),

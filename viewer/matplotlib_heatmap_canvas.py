@@ -8,6 +8,8 @@ from matplotlib.figure import Figure
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget
 
+from utils.label_formatting import label_to_matplotlib
+
 _CANVAS_HEIGHT  = 420
 _COLORBAR_WIDTH = 90
 _DPI            = 100
@@ -163,13 +165,13 @@ class MatplotlibHeatmapCanvas(QWidget):
             ticks = np.linspace(vmin, vmax, 5)
             self._cbar_obj.set_ticks(ticks)
             if colorbar_label:
-                self._cbar_obj.set_label(colorbar_label, fontsize=9)
+                self._cbar_obj.set_label(label_to_matplotlib(colorbar_label), fontsize=9)
             self._last_vmin = vmin
             self._last_vmax = vmax
 
         # Title
         if title:
-            self._ax_im.set_title(title, fontsize=10, pad=4, color="#333333")
+            self._ax_im.set_title(label_to_matplotlib(title), fontsize=10, pad=4, color="#333333")
 
         # Line overlay — update in-place
         if line_overlay is not None:
