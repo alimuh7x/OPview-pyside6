@@ -102,7 +102,7 @@ venv/bin/python -m unittest tests.test_single_view_data_flow.SingleViewDataFlowT
 
 ### Startup flow
 
-`main.py` → `app/startup_args.py` (argparse, deliberately Qt-free) → `app/application_bootstrap.py` (QApplication, bundled Roboto Condensed fonts from `assets/fonts/`, stylesheet from `app/styles.py`) → `app/main_window.py` (`MainWindow` coordinates the sidebar and the three content tabs).
+`main.py` → `app/startup_args.py` (argparse, deliberately Qt-free) → `app/application_bootstrap.py` (QApplication, OPStudio's light/dark mode from `app/theme.py`, bundled Montserrat fonts from `assets/fonts/`, stylesheet from `app/styles.py`) → `app/main_window.py` (`MainWindow` coordinates the sidebar and the three content tabs).
 
 ### Data discovery pipeline
 
@@ -127,4 +127,5 @@ One dataset panel = `viewer/panel_widget.py` (`PanelWidget`), composed of `Heatm
 
 - Nearly every method traces its execution with `app.debug.debug_print()` (`[DEBUG] ...` to stdout). Follow this convention in new code.
 - Modules that must work without a running QApplication (arg parsing, scanners, data sources, configs) intentionally avoid Qt imports — keep it that way.
+- The look follows OPStudio's corporate design (`app/theme.py`): write style-sheet colours in the light design and pass widget-level sheets through `themed()`, which maps every text, background and border colour to the OPStudio colour of its role in the current mode. Plot and export areas stay white on purpose.
 - User-facing documentation lives in `doc/Documentation.md` and is shown in-app via Help > Documentation; update it when changing user-visible behavior.

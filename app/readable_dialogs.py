@@ -3,6 +3,7 @@
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from app.debug import debug_print
+from app.theme import themed
 
 
 READABLE_MESSAGE_BOX_STYLESHEET = """
@@ -51,7 +52,7 @@ def build_readable_message_box(
     box.setStandardButtons(buttons)
     if default_button is not None:
         box.setDefaultButton(default_button)
-    box.setStyleSheet(READABLE_MESSAGE_BOX_STYLESHEET)
+    box.setStyleSheet(themed(READABLE_MESSAGE_BOX_STYLESHEET))
     debug_print("readable message stylesheet applied")
     return box
 

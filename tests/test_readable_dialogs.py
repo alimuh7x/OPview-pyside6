@@ -25,8 +25,8 @@ class ReadableDialogsTests(unittest.TestCase):
 
         stylesheet = box.styleSheet()
         self.assertEqual(box.objectName(), "readableMessageBox")
-        self.assertIn("background: #f7f9fc", stylesheet)
-        self.assertIn("color: #102a52", stylesheet)
+        self.assertIn("background: #f3f3f3", stylesheet)
+        self.assertIn("color: #082b63", stylesheet)
         self.assertEqual(box.standardButtons(), QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
 
 

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed
 from app.readable_dialogs import readable_information, readable_warning
 from app.resources import ASSETS_DIR
 from graphs.graph_canvas import GraphCanvas
@@ -534,7 +535,7 @@ class GraphAnimationPlayer(QDialog):
 
     def _apply_dialog_styles(self) -> None:
         debug_print("GraphAnimationPlayer._apply_dialog_styles called")
-        self.setStyleSheet("""
+        self.setStyleSheet(themed("""
 QDialog#graphAnimationPlayer {
     background: #ffffff;
     color: #102a52;
@@ -583,7 +584,7 @@ QDialog#graphAnimationPlayer QProgressBar::chunk {
     background: #4f8dcc;
     border-radius: 3px;
 }
-""")
+"""))
 
     def _build_html(self, figure: go.Figure) -> str:
         debug_print("GraphAnimationPlayer._build_html called")

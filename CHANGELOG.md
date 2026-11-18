@@ -3,6 +3,15 @@
 All notable changes to OPView are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- OPStudio's corporate design: OPStudio's colours (blue `#082B63`, red `#C90D23`, greys `#F3F3F3`/`#C7C7C7`), the Montserrat font, square corners, OPStudio-style main tabs and buttons, a light header and sidebar, and an "OPView" wordmark left of the menus.
+- Light and dark mode follow OPStudio's **DarkMode** setting; `OPVIEW_THEME=light|dark` overrides it.
+- The window title is `OPView - <project folder>`, as OPStudio's is `OPStudio - <input file>`; the window icon is the blue and red OP mark.
+- Custom Graph default series colours 2 and 4 are the OPStudio red and blue.
+
 ## [2.0.0] - 2026-10-20
 
 Changes since **v1.0.0** (`ce42b833`).

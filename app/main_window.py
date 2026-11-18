@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QMainWindow,
     QPushButton,
     QScrollArea,
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
 from app.debug import debug_print
 from app.menu_bar import AppMenuBar
 from app.resources import APP_LOGO_PATH, DOCUMENTATION_PATH
+from app.theme import color, is_dark
 from app.title_bar import apply_dark_title_bar
 from graphs.tab_widget import CustomGraphTab
 from multi_property.multi_property_tab import MultiPropertyTab
@@ -55,12 +57,14 @@ class MainWindow(QMainWindow):
 
     def _build_window(self) -> None:
         debug_print("MainWindow._build_window called")
-        self.setWindowTitle("OPview PySide6")
+        # OPStudio's format: "OPStudio - <input file>"
+        self.setWindowTitle(f"OPView - {self._project_path}" if self._project_path else "OPView")
         self.setWindowIcon(QIcon(str(APP_LOGO_PATH)))
         self.setMinimumWidth(800)
         debug_print("MainWindow minimum width set to 800")
         self.resize(1400, 900)
         self.app_menu_bar = AppMenuBar(self)
+        self.app_menu_bar.setCornerWidget(self._build_wordmark(self.app_menu_bar), Qt.Corner.TopLeftCorner)
         self.setMenuBar(self.app_menu_bar)
         debug_print("MainWindow menu bar set")
         debug_print("MainWindow filesystem autoscan disabled; use Reload to refresh projects")
@@ -149,6 +153,18 @@ class MainWindow(QMainWindow):
         root_layout.addLayout(body_layout)
         self._sync_content_width()
         debug_print("MainWindow widgets assembled")
+
+    def _build_wordmark(self, parent: QWidget) -> QLabel:
+        """The application name left of the menus, as OPStudio shows its own: "OP" blue, the rest red."""
+        # Parented: PySide does not hand a corner widget's ownership to the menu bar
+        label = QLabel(
+            f'<span style="color:{color("primary_text")}">OP</span>'
+            f'<span style="color:{color("accent")}">View</span>',
+            parent,
+        )
+        label.setObjectName("brandWordmark")
+        label.setTextFormat(Qt.TextFormat.RichText)
+        return label
 
     def _build_header(self) -> QHBoxLayout:
         debug_print("MainWindow._build_header called")
@@ -245,7 +261,8 @@ class MainWindow(QMainWindow):
         # The native window exists once shown; the Windows DWM flag needs its handle.
         if not getattr(self, "_dark_title_bar_applied", False):
             self._dark_title_bar_applied = True
-            apply_dark_title_bar(self)
+            if is_dark():
+                apply_dark_title_bar(self)
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)

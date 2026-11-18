@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed
 from graphs.symbol_picker import attach_symbol_picker
 from config.constants import PALETTES
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
@@ -757,37 +758,39 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget phase rename symbol picker attached")
         dialog.setMinimumWidth(360)
         dialog.setStyleSheet(
-            """
-QInputDialog#phaseRenameDialog {
-    background: #f7f9fc;
-    color: #102a52;
-}
-QInputDialog#phaseRenameDialog QLabel {
-    color: #102a52;
-    background: transparent;
-}
-QInputDialog#phaseRenameDialog QLineEdit {
-    background: #ffffff;
-    color: #102a52;
-    border: 1px solid #ccd7e8;
-    border-radius: 8px;
-    padding: 6px 8px;
-    selection-background-color: #d9e7ff;
-    selection-color: #102a52;
-}
-QInputDialog#phaseRenameDialog QPushButton {
-    background: #ffffff;
-    color: #102a52;
-    border: 1px solid #d2dbea;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-weight: 700;
-}
-QInputDialog#phaseRenameDialog QPushButton:hover {
-    background: #eef4ff;
-    border-color: #9fb5d6;
-}
-"""
+            themed(
+                """
+                QInputDialog#phaseRenameDialog {
+                background: #f7f9fc;
+                color: #102a52;
+                }
+                QInputDialog#phaseRenameDialog QLabel {
+                color: #102a52;
+                background: transparent;
+                }
+                QInputDialog#phaseRenameDialog QLineEdit {
+                background: #ffffff;
+                color: #102a52;
+                border: 1px solid #ccd7e8;
+                border-radius: 8px;
+                padding: 6px 8px;
+                selection-background-color: #d9e7ff;
+                selection-color: #102a52;
+                }
+                QInputDialog#phaseRenameDialog QPushButton {
+                background: #ffffff;
+                color: #102a52;
+                border: 1px solid #d2dbea;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 700;
+                }
+                QInputDialog#phaseRenameDialog QPushButton:hover {
+                background: #eef4ff;
+                border-color: #9fb5d6;
+                }
+                """
+            )
         )
         debug_print("PanelControlsWidget phase rename dialog styled")
         return dialog

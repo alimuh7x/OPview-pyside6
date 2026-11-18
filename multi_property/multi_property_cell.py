@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed
 from graphs.symbol_picker import attach_symbol_picker
 from viewer.trimmed_spin_box import TrimmedDoubleSpinBox, format_trimmed
 from multi_property.colorbar_canvas import MultiPropertyColorbarCanvas
@@ -90,57 +91,59 @@ class MultiPropertyCell(QWidget):
         self._bottom_row = bottom_row
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
-            "MultiPropertyCell { background: #ffffff; } "
-            "QWidget#multiPropertyControls { background: #ffffff; } "
-            "QWidget#multiPropertyTitleRow {"
-            "  background: #ffffff;"
-            "  border: 1px solid #d6dee9;"
-            "  border-radius: 4px;"
-            "}"
-            "QPushButton#multiPropertySelectBullet {"
-            "  background: #ffffff;"
-            "  border: 2px solid #b8c3d2;"
-            "  border-radius: 9px;"
-            "  padding: 0px;"
-            "  margin: 0px;"
-            "}"
-            "QPushButton#multiPropertySelectBullet:checked {"
-            "  background: #8FAE00;"
-            "  border-color: #8FAE00;"
-            "}"
-            "QPushButton#multiPropertySelectBullet:hover {"
-            "  border-color: #8FAE00;"
-            "}"
-            "QLabel#multiPropertyTitleLabel {"
-            "  background: transparent;"
-            "  color: #102a52;"
-            "  font-size: 18px;"
-            "  font-weight: 700;"
-            "}"
-            "QPushButton#multiPropertyTitleEditButton {"
-            "  background: #ffffff;"
-            "  border: 1px solid #c7d2e2;"
-            "  border-radius: 4px;"
-            "  padding: 0px;"
-            "  margin: 0px;"
-            "  color: #536579;"
-            "  font-size: 14px;"
-            "}"
-            "QPushButton#multiPropertyTitleEditButton:hover {"
-            "  background: #eef4ff;"
-            "  border-color: #9fb5d6;"
-            "  color: #c50623;"
-            "}"
-            "QPushButton#multiPropertyIconButton {"
-            "  background: transparent;"
-            "  border: 0px;"
-            "  border-radius: 0px;"
-            "  padding: 0px;"
-            "  margin: 0px;"
-            "}"
-            "QPushButton#multiPropertyIconButton:hover {"
-            "  background: #edf2f8;"
-            "}"
+            themed(
+                "MultiPropertyCell { background: #ffffff; } "
+                "QWidget#multiPropertyControls { background: #ffffff; } "
+                "QWidget#multiPropertyTitleRow {"
+                "  background: #ffffff;"
+                "  border: 1px solid #d6dee9;"
+                "  border-radius: 4px;"
+                "}"
+                "QPushButton#multiPropertySelectBullet {"
+                "  background: #ffffff;"
+                "  border: 2px solid #b8c3d2;"
+                "  border-radius: 9px;"
+                "  padding: 0px;"
+                "  margin: 0px;"
+                "}"
+                "QPushButton#multiPropertySelectBullet:checked {"
+                "  background: #8FAE00;"
+                "  border-color: #8FAE00;"
+                "}"
+                "QPushButton#multiPropertySelectBullet:hover {"
+                "  border-color: #8FAE00;"
+                "}"
+                "QLabel#multiPropertyTitleLabel {"
+                "  background: transparent;"
+                "  color: #102a52;"
+                "  font-size: 18px;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#multiPropertyTitleEditButton {"
+                "  background: #ffffff;"
+                "  border: 1px solid #c7d2e2;"
+                "  border-radius: 4px;"
+                "  padding: 0px;"
+                "  margin: 0px;"
+                "  color: #536579;"
+                "  font-size: 14px;"
+                "}"
+                "QPushButton#multiPropertyTitleEditButton:hover {"
+                "  background: #eef4ff;"
+                "  border-color: #9fb5d6;"
+                "  color: #c50623;"
+                "}"
+                "QPushButton#multiPropertyIconButton {"
+                "  background: transparent;"
+                "  border: 0px;"
+                "  border-radius: 0px;"
+                "  padding: 0px;"
+                "  margin: 0px;"
+                "}"
+                "QPushButton#multiPropertyIconButton:hover {"
+                "  background: #edf2f8;"
+                "}"
+            )
         )
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         debug_print("MultiPropertyCell size policy fixed")
@@ -295,37 +298,39 @@ class MultiPropertyCell(QWidget):
         debug_print("MultiPropertyCell property rename symbol picker attached")
         dialog.setMinimumWidth(360)
         dialog.setStyleSheet(
-            """
-QInputDialog#multiPropertyRenameDialog {
-    background: #f7f9fc;
-    color: #102a52;
-}
-QInputDialog#multiPropertyRenameDialog QLabel {
-    color: #102a52;
-    background: transparent;
-}
-QInputDialog#multiPropertyRenameDialog QLineEdit {
-    background: #ffffff;
-    color: #102a52;
-    border: 1px solid #ccd7e8;
-    border-radius: 8px;
-    padding: 6px 8px;
-    selection-background-color: #d9e7ff;
-    selection-color: #102a52;
-}
-QInputDialog#multiPropertyRenameDialog QPushButton {
-    background: #ffffff;
-    color: #102a52;
-    border: 1px solid #d2dbea;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-weight: 700;
-}
-QInputDialog#multiPropertyRenameDialog QPushButton:hover {
-    background: #eef4ff;
-    border-color: #9fb5d6;
-}
-"""
+            themed(
+                """
+                QInputDialog#multiPropertyRenameDialog {
+                background: #f7f9fc;
+                color: #102a52;
+                }
+                QInputDialog#multiPropertyRenameDialog QLabel {
+                color: #102a52;
+                background: transparent;
+                }
+                QInputDialog#multiPropertyRenameDialog QLineEdit {
+                background: #ffffff;
+                color: #102a52;
+                border: 1px solid #ccd7e8;
+                border-radius: 8px;
+                padding: 6px 8px;
+                selection-background-color: #d9e7ff;
+                selection-color: #102a52;
+                }
+                QInputDialog#multiPropertyRenameDialog QPushButton {
+                background: #ffffff;
+                color: #102a52;
+                border: 1px solid #d2dbea;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 700;
+                }
+                QInputDialog#multiPropertyRenameDialog QPushButton:hover {
+                background: #eef4ff;
+                border-color: #9fb5d6;
+                }
+                """
+            )
         )
         debug_print("MultiPropertyCell rename dialog styled")
         return dialog

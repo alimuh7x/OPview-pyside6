@@ -60,7 +60,7 @@ class PlotStyleTests(unittest.TestCase):
 
     def test_series_color_uses_shared_palette_and_cycles(self):
         self.assertEqual(PlotStyle.series_color(0), "#111111")
-        self.assertEqual(PlotStyle.series_color(1), "#d62728")
+        self.assertEqual(PlotStyle.series_color(1), "#c90d23")
         self.assertEqual(PlotStyle.series_color(len(PlotStyle.SERIES_COLORS)), "#111111")
 
     def test_marker_sample_indices_keep_at_most_20_points_including_ends(self):

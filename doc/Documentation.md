@@ -38,6 +38,7 @@ opview.bat [project_or_projects_folder]
 | `--version` | Prints the OPView version. |
 | `OPVIEW_NO_GPU=1` | Forces software rendering. Use on VMs or machines without a usable GPU. On Windows use `OPview-No-GPU.bat`. |
 | `OPVIEW_DEBUG=1` | Prints `[DEBUG]` tracing to the console. Off by default. |
+| `OPVIEW_THEME=light` / `dark` | Light or dark mode. Without it, OPView follows OPStudio's **File > Settings > DarkMode** (light if OPStudio is not set up). Plots and exported images stay white in both modes. |
 
 ## Getting Started
 1. In the **PROJECTS** sidebar, select one or more project entries to load data into the app context.

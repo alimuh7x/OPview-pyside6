@@ -48,11 +48,11 @@ class TitleBarTests(unittest.TestCase):
             self.assertFalse(title_bar.apply_dark_title_bar(QWidget()))
 
     def test_colour_scheme_request_returns_a_bool_and_keeps_the_light_widget_palette(self):
-        from app.application_bootstrap import _build_light_palette
+        from app.theme import build_palette
 
-        self.assertIsInstance(title_bar.request_dark_color_scheme(self.app), bool)
-        self.app.setPalette(_build_light_palette())
-        self.assertEqual(self.app.palette().window().color().name(), "#f7f9fc")
+        self.assertIsInstance(title_bar.request_color_scheme(self.app), bool)
+        self.app.setPalette(build_palette())
+        self.assertEqual(self.app.palette().window().color().name(), "#f3f3f3")
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from app.application_bootstrap import _configure_no_gpu_environment, _is_support
 
 class AppResourcesTests(unittest.TestCase):
     def test_app_logo_uses_main_logo_asset(self):
-        self.assertEqual(APP_LOGO_PATH.name, "OP_Logo.png")
+        self.assertEqual(APP_LOGO_PATH.name, "OP_Logo_main.png")
         self.assertTrue(APP_LOGO_PATH.exists())
 
     def test_heatmap_logo_uses_existing_logo_asset(self):

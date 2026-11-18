@@ -224,12 +224,12 @@ class FormulaDialogTests(unittest.TestCase):
         labels = [w.text() for w in d.findChildren(QLabel)]
         self.assertFalse(any("insert column" in t.lower() for t in labels))
 
-    def test_header_is_charcoal_and_apply_is_navy(self):
+    def test_header_and_apply_are_opstudio_blue(self):
         sheet = self.make().styleSheet().lower()
         header = sheet[sheet.index("qframe#fdheader {"):]
-        self.assertIn("background: #252526", header[: header.index("}")])
+        self.assertIn("background: #082b63", header[: header.index("}")])
         primary = sheet[sheet.index("qpushbutton#fdprimary {"):]
-        self.assertIn("background: #0f2d61", primary[: primary.index("}")])
+        self.assertIn("background: #082b63", primary[: primary.index("}")])
 
     def test_unit_field_uses_the_full_width_of_its_panel(self):
         d = self.make()
@@ -263,14 +263,13 @@ class FormulaDialogTests(unittest.TestCase):
         for button in d.findChildren(QPushButton):
             self.assertTrue(button.testAttribute(Qt.WidgetAttribute.WA_Hover), button.text())
 
-    def test_body_is_light_and_only_the_header_is_charcoal(self):
+    def test_body_is_light_in_opstudio_colours(self):
         sheet = FormulaDialog(None, current_column="Sigma", column_data=_DATA).styleSheet().lower()
         self.assertIn("background: #ffffff", sheet)
-        self.assertIn("#f5f7fa", sheet)
-        self.assertIn("#0f2d61", sheet)
-        for dark in ("#1e1e1e", "#2d2d30"):
+        self.assertIn("#f3f3f3", sheet)
+        self.assertIn("#082b63", sheet)
+        for dark in ("#1e1e1e", "#2d2d30", "#252526"):
             self.assertNotIn(dark, sheet)
-        self.assertEqual(sheet.count("background: #252526"), 1)  # the header only
 
     def test_window_is_frameless_translucent_and_rounded(self):
         d = self.make()

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed
 from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS, PALETTES
@@ -205,40 +206,42 @@ class MultiPropertyPanel(QWidget):
     def _build_ui(self) -> None:
         debug_print("MultiPropertyPanel._build_ui called")
         self.setStyleSheet(
-            "QPushButton#multiPropertyTopRangeReset {"
-            "  background: #ffffff;"
-            "  border: 1px solid #c7d2e2;"
-            "  border-radius: 4px;"
-            "  color: #102a52;"
-            "  padding: 0px;"
-            "}"
-            "QPushButton#multiPropertyTopRangeReset:hover {"
-            "  background: #eef4ff;"
-            "  border-color: #8FAE00;"
-            "}"
-            "QPushButton#multiPropertyTopRangeReset:disabled {"
-            "  background: #ffffff;"
-            "  border-color: #c7d2e2;"
-            "  color: #102a52;"
-            "}"
-            "QPushButton#multiPropertyTopRangeResetAll {"
-            "  background: #ffffff;"
-            "  border: 1px solid #c7d2e2;"
-            "  border-radius: 4px;"
-            "  color: #102a52;"
-            "  font-size: 12px;"
-            "  font-weight: 700;"
-            "  padding: 0px 8px;"
-            "}"
-            "QPushButton#multiPropertyTopRangeResetAll:hover {"
-            "  background: #eef4ff;"
-            "  border-color: #8FAE00;"
-            "}"
-            "QPushButton#multiPropertyTopRangeResetAll:disabled {"
-            "  background: #ffffff;"
-            "  border-color: #c7d2e2;"
-            "  color: #102a52;"
-            "}"
+            themed(
+                "QPushButton#multiPropertyTopRangeReset {"
+                "  background: #ffffff;"
+                "  border: 1px solid #c7d2e2;"
+                "  border-radius: 4px;"
+                "  color: #102a52;"
+                "  padding: 0px;"
+                "}"
+                "QPushButton#multiPropertyTopRangeReset:hover {"
+                "  background: #eef4ff;"
+                "  border-color: #8FAE00;"
+                "}"
+                "QPushButton#multiPropertyTopRangeReset:disabled {"
+                "  background: #ffffff;"
+                "  border-color: #c7d2e2;"
+                "  color: #102a52;"
+                "}"
+                "QPushButton#multiPropertyTopRangeResetAll {"
+                "  background: #ffffff;"
+                "  border: 1px solid #c7d2e2;"
+                "  border-radius: 4px;"
+                "  color: #102a52;"
+                "  font-size: 12px;"
+                "  font-weight: 700;"
+                "  padding: 0px 8px;"
+                "}"
+                "QPushButton#multiPropertyTopRangeResetAll:hover {"
+                "  background: #eef4ff;"
+                "  border-color: #8FAE00;"
+                "}"
+                "QPushButton#multiPropertyTopRangeResetAll:disabled {"
+                "  background: #ffffff;"
+                "  border-color: #c7d2e2;"
+                "  color: #102a52;"
+                "}"
+            )
         )
         debug_print("MultiPropertyPanel stylesheet applied")
         root = QVBoxLayout(self)

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed
 from config import formula as formula_engine
 from graphs import formula_dialog_style as style
 from graphs.formula_highlighter import FormulaHighlighter
@@ -94,7 +95,7 @@ class FormulaDialog(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self.setWindowTitle("Formula Editor")
-        self.setStyleSheet(style.build_dialog_stylesheet())
+        self.setStyleSheet(themed(style.build_dialog_stylesheet()))
         self._current_column = current_column
         self._column_data = dict(column_data)
         self._column_names = tuple(self._column_data)

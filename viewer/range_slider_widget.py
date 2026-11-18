@@ -7,6 +7,7 @@ from PySide6.QtGui import QColor, QMouseEvent, QPaintEvent, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from app.debug import debug_print
+from app.theme import color
 
 
 class RangeSliderWidget(QWidget):
@@ -76,17 +77,17 @@ class RangeSliderWidget(QWidget):
         right = max(left + 1, self.width() - self._track_margin)
         track_rect = QRectF(left, center_y - 3, right - left, 6)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#d8dde6"))
+        painter.setBrush(QColor(color("element")))
         painter.drawRoundedRect(track_rect, 3, 3)
 
         lower_x = self._value_to_pos(self._lower_value)
         upper_x = self._value_to_pos(self._upper_value)
         selection_rect = QRectF(lower_x, center_y - 4, max(2.0, upper_x - lower_x), 8)
-        painter.setBrush(QColor("#8FAE00"))
+        painter.setBrush(QColor(color("primary")))
         painter.drawRoundedRect(selection_rect, 4, 4)
 
-        painter.setPen(QPen(QColor("#8FAE00"), 2))
-        painter.setBrush(QColor("#ffffff"))
+        painter.setPen(QPen(QColor(color("primary")), 2))
+        painter.setBrush(QColor(color("surface")))
         painter.drawEllipse(QPoint(int(lower_x), int(center_y)), self._handle_radius, self._handle_radius)
         painter.drawEllipse(QPoint(int(upper_x), int(center_y)), self._handle_radius, self._handle_radius)
         painter.end()

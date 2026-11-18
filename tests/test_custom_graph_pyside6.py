@@ -1727,7 +1727,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
 
         self.assertIn("QComboBox#graphCombo QAbstractItemView::item:hover", stylesheet)
         self.assertIn("QComboBox#graphCombo QAbstractItemView::item:selected", stylesheet)
-        self.assertIn("background: #1e4a8a;\n    color: #ffffff;", stylesheet)
+        self.assertIn("background: #123978;\n    color: #ffffff;", stylesheet)
 
     def test_graph_canvas_uses_publication_quality_axis_styling(self):
         canvas = GraphCanvas()
@@ -1776,7 +1776,7 @@ class CustomGraphPySide6Tests(unittest.TestCase):
         self.assertIn("background: transparent;\n    border: none;\n    padding: 0px;", stylesheet)
         self.assertNotIn("QGroupBox#graphSettingsSection QCheckBox::indicator:checked {\n    background: #c50623", stylesheet)
         self.assertNotIn("QGroupBox#graphSettingsSection QCheckBox::indicator,\nQFrame#graphFileSection QCheckBox::indicator {\n    width: 18px;\n    height: 18px;\n    background: #ffffff;\n    border: 2px solid #c50623", stylesheet)
-        self.assertIn("border: 2px solid #ccd7e8", stylesheet)
+        self.assertIn("border: 2px solid #c7c7c7", stylesheet)
 
     def test_main_window_uses_real_custom_graph_tab(self):
         from app.main_window import MainWindow

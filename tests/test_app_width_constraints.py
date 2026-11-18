@@ -220,8 +220,8 @@ class AppWidthConstraintTests(unittest.TestCase):
         stylesheet = dialog.styleSheet()
 
         self.assertIn("QInputDialog#phaseRenameDialog", stylesheet)
-        self.assertIn("background: #f7f9fc", stylesheet)
-        self.assertIn("color: #102a52", stylesheet)
+        self.assertIn("background: #f3f3f3", stylesheet)
+        self.assertIn("color: #082b63", stylesheet)
 
     def test_phase_fraction_traces_leave_the_legend_to_the_qt_widget_and_hide_colorbar(self):
         canvas = HeatmapCanvas.__new__(HeatmapCanvas)

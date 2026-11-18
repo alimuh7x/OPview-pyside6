@@ -4,6 +4,8 @@ from PySide6.QtCore import QEasingCurve, QRect, QVariantAnimation, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPaintEvent, QPainter
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from app.theme import FONT_FAMILY, color
+
 
 class ToggleSwitchWidget(QWidget):
     """Pill-shaped animated toggle switch with ON/OFF labels."""
@@ -15,8 +17,6 @@ class ToggleSwitchWidget(QWidget):
     _THUMB_SZ = 12
     _OFFSET   = 3
     _GAP      = 6       # gap between track and label text
-    _COLOR_OFF = QColor("#9aabbf")
-    _COLOR_ON  = QColor("#cc0c24")
     _COLOR_THUMB = QColor("#ffffff")
 
     def __init__(self, text: str = "", checked: bool = False, parent: QWidget | None = None) -> None:
@@ -35,7 +35,7 @@ class ToggleSwitchWidget(QWidget):
         self._update_size()
 
     def _update_size(self) -> None:
-        fm = QFontMetrics(QFont("Roboto Condensed", 10))
+        fm = QFontMetrics(QFont(FONT_FAMILY, 10))
         text_w = (fm.horizontalAdvance(self._text) + self._GAP) if self._text else 0
         self.setFixedSize(self._TRACK_W + text_w, max(self._TRACK_H, 24))
 
@@ -78,10 +78,11 @@ class ToggleSwitchWidget(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         t = self._pos
 
-        # Interpolate track color OFF → ON
-        r = int(self._COLOR_OFF.red()   + t * (self._COLOR_ON.red()   - self._COLOR_OFF.red()))
-        g = int(self._COLOR_OFF.green() + t * (self._COLOR_ON.green() - self._COLOR_OFF.green()))
-        b = int(self._COLOR_OFF.blue()  + t * (self._COLOR_ON.blue()  - self._COLOR_OFF.blue()))
+        # Interpolate track color OFF → ON (OPStudio colours of the current mode)
+        color_off, color_on = QColor(color("element_dark")), QColor(color("accent"))
+        r = int(color_off.red()   + t * (color_on.red()   - color_off.red()))
+        g = int(color_off.green() + t * (color_on.green() - color_off.green()))
+        b = int(color_off.blue()  + t * (color_on.blue()  - color_off.blue()))
 
         track_y = (self.height() - self._TRACK_H) // 2
         radius  = self._TRACK_H // 2
@@ -102,9 +103,9 @@ class ToggleSwitchWidget(QWidget):
 
         # Label text to the right of the track
         if self._text:
-            txt_font = QFont("Roboto Condensed", 10)
+            txt_font = QFont(FONT_FAMILY, 10)
             p.setFont(txt_font)
-            p.setPen(QColor("#102a52"))
+            p.setPen(QColor(color("primary_text")))
             p.drawText(
                 QRect(self._TRACK_W + self._GAP, 0, self.width() - self._TRACK_W - self._GAP, self.height()),
                 Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,

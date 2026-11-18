@@ -4,13 +4,14 @@ import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from app.debug import debug_print
 from app.main_window import MainWindow
 from app.styles import build_app_stylesheet
-from app.title_bar import request_dark_color_scheme
+from app.theme import FONT_FAMILY, build_palette, dark_mode_requested, set_dark
+from app.title_bar import request_color_scheme
 
 _FONTS_DIR = Path(__file__).parent.parent / "assets" / "fonts"
 _NO_GPU_CHROMIUM_FLAGS = (
@@ -24,32 +25,6 @@ _NO_GPU_CHROMIUM_FLAGS = (
     "--disable-features=VizDisplayCompositor "
     "--ignore-gpu-blocklist"
 )
-
-
-def _build_light_palette() -> QPalette:
-    """Fixed light palette so widgets without explicit styling never follow a dark OS theme.
-
-    The native title bar is made dark separately (app/title_bar.py), so only widgets are fixed light here.
-    """
-    palette = QPalette()
-    text = QColor("#102a52")
-    roles = {
-        QPalette.ColorRole.Window: "#f7f9fc",
-        QPalette.ColorRole.WindowText: "#102a52",
-        QPalette.ColorRole.Base: "#ffffff",
-        QPalette.ColorRole.AlternateBase: "#eef4ff",
-        QPalette.ColorRole.Text: "#102a52",
-        QPalette.ColorRole.Button: "#ffffff",
-        QPalette.ColorRole.ButtonText: "#102a52",
-        QPalette.ColorRole.ToolTipBase: "#ffffff",
-        QPalette.ColorRole.ToolTipText: "#102a52",
-        QPalette.ColorRole.Highlight: "#cc0c24",
-        QPalette.ColorRole.HighlightedText: "#ffffff",
-    }
-    for role, color in roles.items():
-        palette.setColor(role, QColor(color))
-    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(text.red(), text.green(), text.blue(), 128))
-    return palette
 
 
 def _configure_no_gpu_environment() -> None:
@@ -106,9 +81,11 @@ class ApplicationBootstrap:
             application = QApplication([])
         debug_print(f"Applying {self._style_name} application style")
         application.setStyle(self._style_name)
-        # Before setPalette: changing the scheme resets the palette, and the app keeps its light one.
-        request_dark_color_scheme(application)
-        application.setPalette(_build_light_palette())
+        # OPStudio's light or dark mode. Order as in OPStudio's ColorScheme::apply: colour scheme
+        # (it resets the palette), then palette, then style sheet.
+        set_dark(dark_mode_requested())
+        request_color_scheme(application)
+        application.setPalette(build_palette())
         self._load_fonts(application)
         application.setStyleSheet(build_app_stylesheet())
         self._application = application
@@ -130,7 +107,7 @@ class ApplicationBootstrap:
             families = QFontDatabase.applicationFontFamilies(fid)
             loaded_families.extend(families)
             debug_print(f"Loaded font {font_file.name}: {families}")
-        family = "Roboto Condensed" if "Roboto Condensed" in loaded_families else application.font().family()
+        family = FONT_FAMILY if FONT_FAMILY in loaded_families else application.font().family()
         debug_print(f"ApplicationBootstrap selected font family={family}")
         font = QFont(family, 13)
         font.setStyleHint(QFont.StyleHint.SansSerif)

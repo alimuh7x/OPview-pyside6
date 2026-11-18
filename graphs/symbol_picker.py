@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QGuiApplication, QIcon, QPaint
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout
 
 from app.debug import debug_print
+from app.theme import themed
 
 SYMBOL_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Greek", tuple("αβγδεζηθικλμνξοπρστυφχψω")),
@@ -53,11 +54,13 @@ class SymbolPicker(QFrame):
         super().__init__(parent, Qt.WindowType.Popup)
         self.setObjectName("symbolPicker")
         self.setStyleSheet(
-            "#symbolPicker{background:white;border:1px solid #94a3b8;border-radius:6px;}"
-            "#symbolPicker QLabel{color:#475569;font-weight:600;padding-top:4px;}"
-            "#symbolPicker QPushButton{min-width:34px;min-height:28px;padding:0 6px;border:1px solid #cbd5e1;"
-            "border-radius:4px;background:#f8fafc;font-size:15px;}"
-            "#symbolPicker QPushButton:hover{background:#e0e7ff;border-color:#6366f1;}"
+            themed(
+                "#symbolPicker{background:white;border:1px solid #94a3b8;border-radius:6px;}"
+                "#symbolPicker QLabel{color:#475569;font-weight:600;padding-top:4px;}"
+                "#symbolPicker QPushButton{min-width:34px;min-height:28px;padding:0 6px;border:1px solid #cbd5e1;"
+                "border-radius:4px;background:#f8fafc;font-size:15px;}"
+                "#symbolPicker QPushButton:hover{background:#e0e7ff;border-color:#6366f1;}"
+            )
         )
         outer = QVBoxLayout(self)
         outer.setContentsMargins(8, 4, 8, 8)

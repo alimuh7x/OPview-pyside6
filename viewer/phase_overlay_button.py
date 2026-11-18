@@ -7,12 +7,12 @@ from PySide6.QtGui import QColor, QPen, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QComboBox, QSizePolicy, QStyle, QStyledItemDelegate
 
 from app.debug import debug_print
+from app.theme import color
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
 
 _INTERFACES_KEY = "__interfaces__"
 _POPUP_MIN_WIDTH = 280
 _CLOSED_TEXT_SAMPLE = "Overlays (99)"
-_CONTROL_COLOR = QColor("#102a52")
 _HOVER_CONTROL_COLOR = QColor("#ffffff")
 _VALUE_W = 36  # wide enough for '+10' / '-10'
 _SLOT_W = 26  # width of each clickable icon slot at the right edge of a row
@@ -47,7 +47,7 @@ class _OverlayRowDelegate(QStyledItemDelegate):
         painter.save()
         # The popup's hover row is dark blue (#1e4a8a) with white text; otherwise the row is light.
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
-        painter.setPen(QPen(_HOVER_CONTROL_COLOR if hovered else _CONTROL_COLOR))
+        painter.setPen(QPen(_HOVER_CONTROL_COLOR if hovered else QColor(color("primary_text"))))
         if key == _INTERFACES_KEY:
             minus, value, plus = _stepper_rects(option.rect)
             width = self._owner.interface_width()

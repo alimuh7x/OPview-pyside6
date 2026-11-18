@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QDoubleSpinBox, QGridLayout, QLabel, QVBoxLayout
 
 from app.debug import debug_print
+from app.theme import themed
 
 
 class ManualPointDialog(QDialog):
@@ -106,53 +107,55 @@ class ManualPointDialog(QDialog):
         """Use explicit dialog colors so native dark themes stay readable."""
         debug_print("ManualPointDialog._apply_readable_styles called")
         self.setStyleSheet(
-            """
-QDialog#manualPointDialog {
-    background: #f7f9fc;
-}
-QDialog#manualPointDialog QLabel {
-    color: #102a52;
-    background: transparent;
-}
-QDialog#manualPointDialog QLabel#sectionTitle {
-    color: #102a52;
-    font-size: 15px;
-    font-weight: 700;
-}
-QDialog#manualPointDialog QLabel#manualPointLabel {
-    color: #102a52;
-    font-size: 14px;
-}
-QDialog#manualPointDialog QDoubleSpinBox#manualPointXInput,
-QDialog#manualPointDialog QDoubleSpinBox#manualPointYInput {
-    background: #ffffff;
-    color: #102a52;
-    border: 1px solid #ccd7e8;
-    border-radius: 8px;
-    padding: 4px 8px;
-    selection-background-color: #d9e7ff;
-    selection-color: #102a52;
-}
-QDialog#manualPointDialog QDoubleSpinBox#manualPointXInput:focus,
-QDialog#manualPointDialog QDoubleSpinBox#manualPointYInput:focus {
-    border-color: #a652b8;
-}
-QDialog#manualPointDialog QPushButton {
-    background: #ffffff;
-    color: #102a52;
-    border: 1px solid #ccd7e8;
-    border-radius: 8px;
-    min-width: 82px;
-    min-height: 28px;
-    padding: 2px 12px;
-}
-QDialog#manualPointDialog QPushButton:hover {
-    background: #eef4ff;
-    border-color: #9fb5d6;
-}
-QDialog#manualPointDialog QPushButton:pressed {
-    background: #dbe8fb;
-}
-"""
+            themed(
+                """
+                QDialog#manualPointDialog {
+                background: #f7f9fc;
+                }
+                QDialog#manualPointDialog QLabel {
+                color: #102a52;
+                background: transparent;
+                }
+                QDialog#manualPointDialog QLabel#sectionTitle {
+                color: #102a52;
+                font-size: 15px;
+                font-weight: 700;
+                }
+                QDialog#manualPointDialog QLabel#manualPointLabel {
+                color: #102a52;
+                font-size: 14px;
+                }
+                QDialog#manualPointDialog QDoubleSpinBox#manualPointXInput,
+                QDialog#manualPointDialog QDoubleSpinBox#manualPointYInput {
+                background: #ffffff;
+                color: #102a52;
+                border: 1px solid #ccd7e8;
+                border-radius: 8px;
+                padding: 4px 8px;
+                selection-background-color: #d9e7ff;
+                selection-color: #102a52;
+                }
+                QDialog#manualPointDialog QDoubleSpinBox#manualPointXInput:focus,
+                QDialog#manualPointDialog QDoubleSpinBox#manualPointYInput:focus {
+                border-color: #a652b8;
+                }
+                QDialog#manualPointDialog QPushButton {
+                background: #ffffff;
+                color: #102a52;
+                border: 1px solid #ccd7e8;
+                border-radius: 8px;
+                min-width: 82px;
+                min-height: 28px;
+                padding: 2px 12px;
+                }
+                QDialog#manualPointDialog QPushButton:hover {
+                background: #eef4ff;
+                border-color: #9fb5d6;
+                }
+                QDialog#manualPointDialog QPushButton:pressed {
+                background: #dbe8fb;
+                }
+                """
+            )
         )
         debug_print("ManualPointDialog stylesheet set")

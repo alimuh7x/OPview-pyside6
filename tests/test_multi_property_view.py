@@ -307,7 +307,7 @@ class MultiPropertyViewTests(unittest.TestCase):
         self.assertNotEqual(cell.title_label.sizePolicy().horizontalPolicy(), QSizePolicy.Policy.Expanding)
         self.assertGreaterEqual(cell.title_label.font().pointSize(), 16)
         self.assertIn("QWidget#multiPropertyTitleRow", cell.styleSheet())
-        self.assertIn("border: 1px solid #d6dee9", cell.styleSheet())
+        self.assertIn("border: 1px solid #c7c7c7", cell.styleSheet())
 
     def test_property_cell_selection_bullet_is_visible_when_selected(self):
         cell = MultiPropertyCell("phase", "Phase", bottom_row=False)
@@ -317,7 +317,7 @@ class MultiPropertyViewTests(unittest.TestCase):
         self.assertEqual(cell.select_button.text(), "")
         self.assertTrue(cell.select_button.isChecked())
         self.assertIn("QPushButton#multiPropertySelectBullet:checked", cell.styleSheet())
-        self.assertIn("background: #8FAE00", cell.styleSheet())
+        self.assertIn("background: #082b63", cell.styleSheet())
         self.assertIn("border-radius: 9px", cell.styleSheet())
 
     def test_property_cell_rename_updates_title_and_colorbar_label(self):
@@ -442,8 +442,8 @@ class MultiPropertyViewTests(unittest.TestCase):
 
         self.assertEqual(dialog.objectName(), "multiPropertyRenameDialog")
         self.assertIn("QInputDialog#multiPropertyRenameDialog", stylesheet)
-        self.assertIn("background: #f7f9fc", stylesheet)
-        self.assertIn("color: #102a52", stylesheet)
+        self.assertIn("background: #f3f3f3", stylesheet)
+        self.assertIn("color: #082b63", stylesheet)
         self.assertIn("QLineEdit", stylesheet)
 
     def test_property_cell_uses_multiview_cell_width(self):

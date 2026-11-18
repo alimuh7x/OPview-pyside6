@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from viewer.animation_player import AnimationPlayer
 
 from app.debug import debug_print
+from app.theme import themed
 from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from utils.combo_box_utils import update_combo_popup_width
@@ -214,7 +215,9 @@ class PanelWidget(QWidget):
         # be requested through a widget-level stylesheet (CSS min-width excludes 18px of padding/border).
         self.colorbar_label_edit.setMinimumWidth(_LABEL_EDIT_MIN_WIDTH)
         self.colorbar_label_edit.setStyleSheet(
-            f"QLineEdit#viewerLineEdit {{ min-width: {_LABEL_EDIT_MIN_WIDTH - 18}px; }}"
+            themed(
+                f"QLineEdit#viewerLineEdit {{ min-width: {_LABEL_EDIT_MIN_WIDTH - 18}px; }}"
+            )
         )
         debug_print("PanelWidget colorbar label min width set to 300")
 

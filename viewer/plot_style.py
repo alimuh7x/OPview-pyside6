@@ -38,9 +38,9 @@ class PlotStyle:
     )
     SERIES_COLORS           = (
         "#111111",
-        "#d62728",
+        "#c90d23",                   # OPStudio red
         "#2ca02c",
-        "#1f77b4",
+        "#082b63",                   # OPStudio blue
         "#9467bd",
         "#ff7f0e",
         "#17becf",

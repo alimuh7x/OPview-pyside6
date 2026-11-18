@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed
 from app.readable_dialogs import readable_information, readable_question, readable_warning
 from app.resources import ASSETS_DIR, HEATMAP_LOGO_PATH
 from viewer.colorscale import palette_to_cmap
@@ -534,7 +535,7 @@ class AnimationPlayer(QDialog):
     # ------------------------------------------------------------------
 
     def _apply_dialog_styles(self):
-        self.setStyleSheet("""
+        self.setStyleSheet(themed("""
 QDialog#animationPlayer {
     background: #ffffff;
     color: #102a52;
@@ -636,7 +637,7 @@ QDialog#animationPlayer QProgressBar::chunk {
     background: #4f8dcc;
     border-radius: 3px;
 }
-""")
+"""))
 
     def _build_ui(self):
         self._apply_dialog_styles()

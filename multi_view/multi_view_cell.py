@@ -26,6 +26,7 @@ from viewer.colorscale import cmap_to_plotly_scale
 from viewer.heatmap_canvas import HeatmapCanvas, _CANVAS_HEIGHT, _CANVAS_WIDTH
 from viewer.heatmap_orientation import Heatmap2DOrientation
 from app.debug import debug_print
+from app.theme import themed
 from graphs.symbol_picker import attach_symbol_picker
 from utils.time_series import compact_timestep_label
 
@@ -89,19 +90,21 @@ class MultiViewHeader(QWidget):
         self._name_edit.setFont(name_font)
         self._name_edit.setToolTip(f"Edit legend label — file: {file_path}")
         self._name_edit.setStyleSheet(
-            "QLineEdit {"
-            "  background: #f0f4fa;"
-            "  color: #0d2b55;"
-            "  font-size: 13px;"
-            "  font-weight: 600;"
-            "  border: 1px solid #c2d0e8;"
-            "  border-radius: 4px;"
-            "  padding: 4px 7px;"
-            "}"
-            "QLineEdit:focus {"
-            "  border: 1.5px solid #1e4a8a;"
-            "  background: #ffffff;"
-            "}"
+            themed(
+                "QLineEdit {"
+                "  background: #f0f4fa;"
+                "  color: #0d2b55;"
+                "  font-size: 13px;"
+                "  font-weight: 600;"
+                "  border: 1px solid #c2d0e8;"
+                "  border-radius: 4px;"
+                "  padding: 4px 7px;"
+                "}"
+                "QLineEdit:focus {"
+                "  border: 1.5px solid #1e4a8a;"
+                "  background: #ffffff;"
+                "}"
+            )
         )
         debug_print("MultiViewHeader legend edit fixed height=30")
         debug_print("MultiViewHeader legend edit font-size=13")
