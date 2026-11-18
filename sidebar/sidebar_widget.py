@@ -2,7 +2,6 @@
 
 from pathlib import Path
 from PySide6.QtCore import Qt, QSize, Signal, QEvent, QEventLoop, QRect, QTimer
-from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -35,6 +34,7 @@ _PROJECT_REMOVE_BUTTON_WIDTH = 24
 _PROJECT_REMOVE_BUTTON_GAP = 8
 
 from app.debug import debug_print
+from app.theme import themed_icon
 from config.constants import ALLOWED_TEXTDATA_EXTENSIONS
 from config.tabs import TAB_CONFIGS
 from config.dataset_registry import DatasetRegistry
@@ -155,7 +155,7 @@ class SidebarWidget(QWidget):
         projects_layout.addWidget(self.project_list)
 
         btn_row = QHBoxLayout()
-        self.add_folder_button = QPushButton(QIcon(str(_ASSETS / "folder.png")), "Add Folder")
+        self.add_folder_button = QPushButton(themed_icon(_ASSETS / "folder.png"), "Add Folder")
         self.add_folder_button.setIconSize(QSize(22, 22))
         self.add_folder_button.setProperty("accent", True)
         btn_row.addWidget(self.add_folder_button)
@@ -186,7 +186,7 @@ class SidebarWidget(QWidget):
         update_combo_popup_width(self.dataset_combo)
         self.dataset_combo.hide()
         self.add_panel_button = QPushButton(
-            QIcon(str(_ASSETS / "plus.png")), "Add Panel"
+            themed_icon(_ASSETS / "plus.png"), "Add Panel"
         )
         self.add_panel_button.setIconSize(QSize(16, 16))
         self.add_panel_button.setProperty("accent", True)

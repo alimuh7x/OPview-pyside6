@@ -16,10 +16,13 @@ import colorsys
 import os
 import re
 import sys
+import tempfile
+from functools import lru_cache
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QImage, QPalette, QPixmap
 
 from app.debug import debug_print
 
@@ -44,7 +47,7 @@ TOKENS = {
     "accent_line":   ("#e8a0aa", "#6b2e38"),
 }
 
-FONT_FAMILY = "Montserrat"
+FONT_FAMILY = "Montserrat"     # OPStudio: body text in Medium, labels and titles in SemiBold
 _SETTINGS_FILE = "ProgramSettings.ini"
 _DARK_MODE_KEY = "DarkMode"
 
@@ -184,9 +187,28 @@ def _swap(match: re.Match, kind: str) -> str:
     return color(_role(rgb, kind))
 
 
+_RADIUS = re.compile(r"border(-[a-z]+)*-radius", re.I)
+_PIXELS = re.compile(r"\s*(\d+(?:\.\d+)?)px\s*", re.I)
+_ROUND_MIN = 9      # radii from 9 px are circles (slider handles, bullets) and stay round
+
+
+def _squared(value: str) -> str:
+    """OPStudio has square corners: rounded-corner radii become 0."""
+    match = _PIXELS.fullmatch(value)
+    if match is None or float(match.group(1)) >= _ROUND_MIN:
+        return value
+    return value[:match.start(1)] + "0" + value[match.end(1):]
+
+
 def themed(sheet: str) -> str:
-    """`sheet` with every text, background and border colour replaced by its OPStudio colour."""
+    """`sheet` with every text, background and border colour replaced by its OPStudio colour,
+    square corners, and bold text in OPStudio's SemiBold."""
     def declaration(match: re.Match) -> str:
+        if match.group("prop").lower() == "font-weight" and match.group("value").strip().lower() in {"700", "bold"}:
+            value = re.sub(r"700|bold", "600", match.group("value"), flags=re.I)        # OPStudio's SemiBold
+            return match.group("prop") + match.group("sep") + value + match.group("end")
+        if _RADIUS.fullmatch(match.group("prop")):
+            return match.group("prop") + match.group("sep") + _squared(match.group("value")) + match.group("end")
         kind = _kind(match.group("prop").lower())
         if kind is None:
             return match.group(0)
@@ -194,3 +216,65 @@ def themed(sheet: str) -> str:
         return match.group("prop") + match.group("sep") + value + match.group("end")
 
     return _DECLARATION.sub(declaration, sheet)
+
+
+# --- Icons -------------------------------------------------------------------------------
+# OPView's icons are drawn black/grey (some with navy) for the light mode. In the dark mode
+# their grey levels are turned around, black -> text, light grey fills -> element, and navy
+# -> the blue text colour, so the same files stay readable. Coloured pixels (red, the bar
+# chart) are kept.
+
+def _rgb(role: str) -> np.ndarray:
+    c = QColor(color(role))
+    return np.array([c.red(), c.green(), c.blue()], dtype=np.float32)
+
+
+@lru_cache(maxsize=None)
+def _dark_icon_image(path: str) -> QImage:
+    image = QImage(path).convertToFormat(QImage.Format.Format_ARGB32)
+    if image.isNull():
+        return image
+    width, height = image.width(), image.height()
+    buffer = np.frombuffer(image.constBits(), dtype=np.uint8, count=image.sizeInBytes())
+    bgra = buffer.reshape(height, image.bytesPerLine() // 4, 4)[:, :width].astype(np.float32)
+    rgb = bgra[..., 2::-1] / 255.0                          # ARGB32 is B, G, R, A in memory
+    high, low = rgb.max(axis=-1), rgb.min(axis=-1)
+    lightness, chroma = (high + low) / 2.0, high - low
+    neutral = chroma < 0.12
+    navy = ~neutral & (rgb[..., 2] >= rgb[..., 0] + 0.1) & (lightness < 0.5)
+    out = rgb * 255.0
+    t = np.clip(lightness / 0.9, 0.0, 1.0)[..., None]      # black -> text, #e6e6e6 -> element
+    grey = _rgb("text") * (1.0 - t) + _rgb("element") * t
+    out = np.where(neutral[..., None], grey, out)
+    out = np.where(navy[..., None], _rgb("primary_text"), out)
+    result = np.empty((height, width, 4), dtype=np.uint8)
+    result[..., 2::-1] = np.clip(out, 0, 255).astype(np.uint8)
+    result[..., 3] = bgra[..., 3].astype(np.uint8)
+    themed_image = QImage(result.tobytes(), width, height, width * 4, QImage.Format.Format_ARGB32)
+    return themed_image.copy()                              # own the pixels, not the bytes object
+
+
+def themed_pixmap(path) -> QPixmap:
+    """The icon at `path` for the current mode (recoloured for the dark mode)."""
+    if not _dark:
+        return QPixmap(str(path))
+    return QPixmap.fromImage(_dark_icon_image(str(path)))
+
+
+def themed_icon(path) -> QIcon:
+    """QIcon of the icon at `path` for the current mode."""
+    return QIcon(themed_pixmap(path))
+
+
+def themed_asset_url(path) -> str:
+    """Path of the icon at `path` for a style sheet url(): a recoloured copy in the dark mode."""
+    path = Path(path)
+    if _dark and path.suffix.lower() == ".png":
+        folder = Path(tempfile.gettempdir()) / "opview-dark-icons"
+        folder.mkdir(exist_ok=True)
+        target = folder / path.name
+        if _dark_icon_image(str(path)).save(str(target)):
+            path = target
+        else:
+            debug_print(f"theme could not write the dark icon {target}; using {path}")
+    return str(path).replace("\\", "/")

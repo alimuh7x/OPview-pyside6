@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed_icon
 from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS, PALETTES
@@ -208,7 +209,7 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel range slider created")
         self.reset_button = QPushButton()
         debug_print("MultiViewPanel reset button created")
-        self.reset_button.setIcon(QIcon(str(_ASSETS / "refresh.png")))
+        self.reset_button.setIcon(themed_icon(_ASSETS / "refresh.png"))
         debug_print("MultiViewPanel reset button icon set")
         self.reset_button.setIconSize(QSize(16, 16))
         debug_print("MultiViewPanel reset button icon size set")
@@ -248,7 +249,7 @@ class MultiViewPanel(QWidget):
         debug_print("MultiViewPanel rotation buttons initialized")
         # ------------------------------------------------------------------------------------------------
 
-        self.export_btn = QPushButton(QIcon(str(_ASSETS / "download.png")), "Export PNG")
+        self.export_btn = QPushButton(themed_icon(_ASSETS / "download.png"), "Export PNG")
         self.export_btn.setProperty("subtle", True)
         self.status_label = QLabel("")
         self.status_label.setObjectName("mutedInfo")
@@ -452,7 +453,7 @@ class MultiViewPanel(QWidget):
         button.setCheckable(True)
         button.setProperty("subtle", True)
         button.setFixedSize(32, 32)
-        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIcon(themed_icon(_ASSETS / icon_name))
         button.setIconSize(QSize(24, 24))
         button.setToolTip(f"Rotate {degrees} degrees")
         debug_print(f"MultiViewPanel rotation button configured degrees={degrees}")
@@ -479,7 +480,7 @@ class MultiViewPanel(QWidget):
         button.setCheckable(True)
         button.setProperty("subtle", True)
         button.setFixedSize(32, 32)
-        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIcon(themed_icon(_ASSETS / icon_name))
         button.setIconSize(QSize(22, 22))
         button.setToolTip(tooltip)
         debug_print(f"MultiViewPanel line direction button configured direction={direction}")

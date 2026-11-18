@@ -271,11 +271,11 @@ class FormulaDialogTests(unittest.TestCase):
         for dark in ("#1e1e1e", "#2d2d30", "#252526"):
             self.assertNotIn(dark, sheet)
 
-    def test_window_is_frameless_translucent_and_rounded(self):
+    def test_window_is_frameless_translucent_and_square(self):
         d = self.make()
         self.assertTrue(d.windowFlags() & Qt.WindowType.FramelessWindowHint)
         self.assertTrue(d.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground))
-        self.assertIn("border-radius: 14px", d.styleSheet())
+        self.assertIn("border-radius: 0px", d.styleSheet())
 
     def test_resize_edges_are_detected_on_the_transparent_border(self):
         from PySide6.QtCore import QPoint

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QEvent, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QBoxLayout,
     QComboBox,
@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
-from app.theme import themed
+from app.theme import themed, themed_icon
 from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from config.constants import DEFAULTS, PALETTES
@@ -325,7 +325,7 @@ class MultiPropertyPanel(QWidget):
         self.reset_button.setObjectName("multiPropertyTopRangeReset")
         self.reset_button.setFlat(False)
         self.reset_button.setFixedSize(32, 28)
-        self.reset_button.setIcon(QIcon(str(_ASSETS / "refresh.png")))
+        self.reset_button.setIcon(themed_icon(_ASSETS / "refresh.png"))
         self.reset_button.setIconSize(QSize(16, 16))
         self.reset_button.setToolTip("Reset selected property range")
         debug_print(f"MultiPropertyPanel reset button icon null={self.reset_button.icon().isNull()}")
@@ -584,7 +584,7 @@ class MultiPropertyPanel(QWidget):
         button.setCheckable(True)
         button.setProperty("subtle", True)
         button.setFixedSize(32, 32)
-        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIcon(themed_icon(_ASSETS / icon_name))
         button.setIconSize(QSize(24, 24))
         button.setToolTip(f"Rotate {degrees} degrees")
         debug_print(f"MultiPropertyPanel rotation button configured degrees={degrees}")
@@ -604,7 +604,7 @@ class MultiPropertyPanel(QWidget):
         button.setCheckable(True)
         button.setProperty("subtle", True)
         button.setFixedSize(32, 32)
-        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIcon(themed_icon(_ASSETS / icon_name))
         button.setIconSize(QSize(22, 22))
         button.setToolTip(tooltip)
         debug_print(f"MultiPropertyPanel line direction button configured direction={direction}")

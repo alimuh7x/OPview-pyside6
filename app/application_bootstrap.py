@@ -111,6 +111,8 @@ class ApplicationBootstrap:
         debug_print(f"ApplicationBootstrap selected font family={family}")
         font = QFont(family, 13)
         font.setStyleHint(QFont.StyleHint.SansSerif)
+        if family == FONT_FAMILY:
+            font.setWeight(QFont.Weight.Medium)     # OPStudio's body text weight
         application.setFont(font)
         debug_print(f"App font set to {family}")
 

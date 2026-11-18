@@ -11,7 +11,7 @@ from pathlib import Path
 import plotly
 import plotly.graph_objects as go
 from PySide6.QtCore import QEventLoop, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QIcon, QImage
+from PySide6.QtGui import QImage
 from PySide6.QtWebEngineCore import QWebEnginePage
 from PySide6.QtWidgets import (
     QComboBox,
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
-from app.theme import themed
+from app.theme import themed, themed_icon
 from app.readable_dialogs import readable_information, readable_warning
 from app.resources import ASSETS_DIR
 from graphs.graph_canvas import GraphCanvas
@@ -467,7 +467,7 @@ class GraphAnimationPlayer(QDialog):
             self._fps_combo.addItem(label, fps)
         self._fps_combo.setCurrentIndex(self._fps_combo.findData(_DEFAULT_FPS))
         controls.addWidget(self._fps_combo)
-        self._export_btn = QPushButton(QIcon(str(ASSETS_DIR / "download.png")), "MP4")
+        self._export_btn = QPushButton(themed_icon(ASSETS_DIR / "download.png"), "MP4")
         self._export_btn.setFixedHeight(34)
         self._export_btn.setIconSize(QSize(18, 18))
         self._export_btn.setToolTip("Export reveal animation as MP4")
@@ -529,7 +529,7 @@ class GraphAnimationPlayer(QDialog):
         debug_print(f"GraphAnimationPlayer._button icon={icon_name}")
         button = QPushButton()
         button.setFixedSize(width, 34)
-        button.setIcon(QIcon(str(ASSETS_DIR / icon_name)))
+        button.setIcon(themed_icon(ASSETS_DIR / icon_name))
         button.setIconSize(_TRANSPORT_ICON_SIZE)
         return button
 
@@ -671,7 +671,7 @@ try {{
             debug_print("GraphAnimationPlayer restarting from final frame")
             self._show_frame(0)
         self._playing = True
-        self._play_btn.setIcon(QIcon(str(ASSETS_DIR / "pause.png")))
+        self._play_btn.setIcon(themed_icon(ASSETS_DIR / "pause.png"))
         self._timer.start(max(1, int(1000 / self._fps)))
         debug_print(f"GraphAnimationPlayer timer started fps={self._fps}")
 
@@ -679,7 +679,7 @@ try {{
         debug_print("GraphAnimationPlayer._pause called")
         self._playing = False
         self._timer.stop()
-        self._play_btn.setIcon(QIcon(str(ASSETS_DIR / "play.png")))
+        self._play_btn.setIcon(themed_icon(ASSETS_DIR / "play.png"))
 
     def _stop(self) -> None:
         debug_print("GraphAnimationPlayer._stop called")

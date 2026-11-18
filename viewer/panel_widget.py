@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPaintEvent, QPainter, QPen, QPixmap, QResizeEvent
+from PySide6.QtGui import QColor, QMouseEvent, QPaintEvent, QPainter, QPen, QPixmap, QResizeEvent
 from PySide6.QtCore import QEvent, QObject, Qt, QSize, Signal
 from PySide6.QtWidgets import (
     QComboBox,
@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from viewer.animation_player import AnimationPlayer
 
 from app.debug import debug_print
-from app.theme import themed
+from app.theme import themed, themed_icon
 from graphs.symbol_picker import attach_symbol_picker
 from app.resources import HEATMAP_LOGO_PATH
 from utils.combo_box_utils import update_combo_popup_width
@@ -272,7 +272,7 @@ class PanelWidget(QWidget):
         self.unit_scale_combo = UnitConversionControl()
         debug_print("PanelWidget unit conversion control initialized (from -> to)")
         self.export_button = QPushButton(
-            QIcon(str(self._ASSETS / "download.png")), "Export"
+            themed_icon(self._ASSETS / "download.png"), "Export"
         )
         self.export_button.setIconSize(QSize(16, 16))
         self.export_button.setProperty("subtle", True)
@@ -394,7 +394,7 @@ class PanelWidget(QWidget):
         button.setObjectName("playbackTransportButton")
         button.setToolTip(tooltip)
         button.setFixedSize(34, 30)
-        button.setIcon(QIcon(str(self._ASSETS / icon_name)))
+        button.setIcon(themed_icon(self._ASSETS / icon_name))
         button.setIconSize(QSize(20, 20))
         return button
 
@@ -405,7 +405,7 @@ class PanelWidget(QWidget):
         button.setCheckable(True)
         button.setProperty("subtle", True)
         button.setFixedSize(32, 32)
-        button.setIcon(QIcon(str(self._ASSETS / icon_name)))
+        button.setIcon(themed_icon(self._ASSETS / icon_name))
         button.setIconSize(QSize(22, 22))
         button.setToolTip(tooltip)
         button.clicked.connect(lambda _checked=False, value=direction: self._set_line_scan_direction(value))

@@ -22,9 +22,9 @@ ERROR = "#DC3545"
 
 MONO_FAMILY = '"Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Menlo", monospace'
 
-WINDOW_RADIUS = 14
-EDITOR_RADIUS = 11
-CONTROL_RADIUS = 9
+WINDOW_RADIUS = 0     # square corners, as in OPStudio
+EDITOR_RADIUS = 0
+CONTROL_RADIUS = 0
 
 # Formula syntax colours (readable on white)
 SYNTAX_FUNCTION = "#1E4A8A"
@@ -51,8 +51,8 @@ QDialog#formulaDialog {{
 #formulaDialog QFrame#fdHeader {{
     background: {HEADER};
     border: none;
-    border-top-left-radius: {WINDOW_RADIUS - 1}px;
-    border-top-right-radius: {WINDOW_RADIUS - 1}px;
+    border-top-left-radius: {max(WINDOW_RADIUS - 1, 0)}px;
+    border-top-right-radius: {max(WINDOW_RADIUS - 1, 0)}px;
 }}
 #formulaDialog QFrame#fdHeader QLabel#fdTitle {{
     color: {HEADER_TEXT};

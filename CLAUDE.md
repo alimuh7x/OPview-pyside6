@@ -127,5 +127,5 @@ One dataset panel = `viewer/panel_widget.py` (`PanelWidget`), composed of `Heatm
 
 - Nearly every method traces its execution with `app.debug.debug_print()` (`[DEBUG] ...` to stdout). Follow this convention in new code.
 - Modules that must work without a running QApplication (arg parsing, scanners, data sources, configs) intentionally avoid Qt imports — keep it that way.
-- The look follows OPStudio's corporate design (`app/theme.py`): write style-sheet colours in the light design and pass widget-level sheets through `themed()`, which maps every text, background and border colour to the OPStudio colour of its role in the current mode. Plot and export areas stay white on purpose.
+- The look follows OPStudio's corporate design (`app/theme.py`): write style-sheet colours in the light design and pass widget-level sheets through `themed()`, which maps every text, background and border colour to the OPStudio colour of its role in the current mode (and squares corners, bold -> SemiBold). Load asset icons with `themed_icon()` / `themed_pixmap()` (`themed_asset_url()` inside style sheets) so black icons turn light in the dark mode. Plot and export areas stay white on purpose.
 - User-facing documentation lives in `doc/Documentation.md` and is shown in-app via Help > Documentation; update it when changing user-visible behavior.

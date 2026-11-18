@@ -11,6 +11,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Light and dark mode follow OPStudio's **DarkMode** setting; `OPVIEW_THEME=light|dark` overrides it.
 - The window title is `OPView - <project folder>`, as OPStudio's is `OPStudio - <input file>`; the window icon is the blue and red OP mark.
 - Custom Graph default series colours 2 and 4 are the OPStudio red and blue.
+- Text uses OPStudio's Montserrat weights: Medium for body text, SemiBold for labels and titles. The bundled Medium and SemiBold files carry the standard typographic family name "Montserrat", so Qt finds them as weights of one family.
+- In the dark mode the black and grey icons are drawn light, so they stay readable; the formula editor and the other dialogs have square corners too.
 
 ## [2.0.0] - 2026-10-20
 

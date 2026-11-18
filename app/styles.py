@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from app.debug import debug_print
-from app.theme import FONT_FAMILY, is_dark, themed
+from app.theme import FONT_FAMILY, is_dark, themed, themed_asset_url
 
 
 def build_app_stylesheet() -> str:
@@ -15,9 +15,9 @@ def build_app_stylesheet() -> str:
     debug_print("build_app_stylesheet called")
     debug_print(f"build_app_stylesheet dark={is_dark()}")
     _assets = Path(__file__).parent.parent / "assets"
-    _arrow     = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
-    _arrow_up  = str(_assets / "dropUp_icon_2.png").replace("\\", "/")
-    _arrow_dn  = str(_assets / "dropdown_icon_2.png").replace("\\", "/")
+    _arrow     = themed_asset_url(_assets / "dropdown_icon_2.png")
+    _arrow_up  = themed_asset_url(_assets / "dropUp_icon_2.png")
+    _arrow_dn  = themed_asset_url(_assets / "dropdown_icon_2.png")
     _checkbox_tick = str(_assets / "checkbox-tick.svg").replace("\\", "/")
     return themed(f"""
 QMainWindow, QWidget#appShell {{
@@ -27,6 +27,7 @@ QWidget {{
     color: #1c1c1c;
     font-family: '{FONT_FAMILY}', sans-serif;
     font-size: 13px;
+    font-weight: 500;
 }}
 QLabel {{
     background: transparent;

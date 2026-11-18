@@ -12,7 +12,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 from PySide6.QtCore import QObject, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
-from app.theme import themed
+from app.theme import themed, themed_icon
 from app.readable_dialogs import readable_information, readable_question, readable_warning
 from app.resources import ASSETS_DIR, HEATMAP_LOGO_PATH
 from viewer.colorscale import palette_to_cmap
@@ -687,7 +687,7 @@ QDialog#animationPlayer QProgressBar::chunk {
         def _btn(icon_name, w=38):
             b = QPushButton()
             b.setFixedSize(w, 34)
-            b.setIcon(QIcon(str(ASSETS_DIR / icon_name)))
+            b.setIcon(themed_icon(ASSETS_DIR / icon_name))
             b.setIconSize(_TRANSPORT_ICON_SIZE)
             return b
 
@@ -719,7 +719,7 @@ QDialog#animationPlayer QProgressBar::chunk {
         self._fps_combo.setCurrentIndex(3)
         ctrl.addWidget(self._fps_combo)
 
-        self._export_btn = QPushButton(QIcon(str(ASSETS_DIR / "download.png")), "MP4")
+        self._export_btn = QPushButton(themed_icon(ASSETS_DIR / "download.png"), "MP4")
         self._export_btn.setFixedHeight(34)
         self._export_btn.setIconSize(QSize(18, 18))
         self._export_btn.setToolTip("Export loaded animation as MP4")
@@ -749,7 +749,7 @@ QDialog#animationPlayer QProgressBar::chunk {
         return self._mpl_canvas
 
     def _set_play_icon(self, icon_name):
-        self._play_btn.setIcon(QIcon(str(ASSETS_DIR / icon_name)))
+        self._play_btn.setIcon(themed_icon(ASSETS_DIR / icon_name))
         self._play_btn.setIconSize(_TRANSPORT_ICON_SIZE)
 
     # ------------------------------------------------------------------

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
+from app.theme import themed_icon
 from config import units
 from config.constants import ALLOWED_TEXTDATA_EXTENSIONS, SKIP_FOLDERS
 from data.text_sources import GenericTextDataSource
@@ -214,13 +215,13 @@ class GraphPanelWidget(QWidget):
         self.external_file_button.setProperty("accent", True)
         self.external_file_button.clicked.connect(self._open_file_dialog)
         toolbar.addWidget(self.external_file_button)
-        self.download_png_button = QPushButton(QIcon(str(_ASSETS / "grey_download.png")), "PNG")
+        self.download_png_button = QPushButton(themed_icon(_ASSETS / "grey_download.png"), "PNG")
         self.download_png_button.setIconSize(QSize(16, 16))
         self.download_png_button.setProperty("accent", True)
         self.download_png_button.setToolTip("Download graph as PNG")
         self.download_png_button.clicked.connect(self._download_png)
         toolbar.addWidget(self.download_png_button)
-        self.download_animation_button = QPushButton(QIcon(str(_ASSETS / "play.png")), "Animate")
+        self.download_animation_button = QPushButton(themed_icon(_ASSETS / "play.png"), "Animate")
         self.download_animation_button.setIconSize(QSize(16, 16))
         self.download_animation_button.setProperty("accent", True)
         self.download_animation_button.setToolTip("Open reveal animation")
@@ -375,7 +376,7 @@ class GraphPanelWidget(QWidget):
 
     def _update_settings_toggle_button(self, settings_visible: bool) -> None:
         asset_name = "show_sidebar.png" if settings_visible else "hide_sidebar.png"
-        icon = QIcon(str(_ASSETS / asset_name))
+        icon = themed_icon(_ASSETS / asset_name)
         self.settings_toggle_button.setIcon(icon)
         self.settings_collapsed_toggle_button.setIcon(icon)
         self.settings_toggle_button.setProperty("icon_asset", asset_name)

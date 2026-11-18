@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, QSize, QRect, Signal
-from PySide6.QtGui import QIcon, QPen
+from PySide6.QtGui import QPen
 from PySide6.QtWidgets import (
     QDialog,
     QComboBox,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.debug import debug_print
-from app.theme import themed
+from app.theme import themed, themed_icon
 from graphs.symbol_picker import attach_symbol_picker
 from config.constants import PALETTES
 from utils.combo_box_utils import fit_combo_to_longest_item, update_combo_popup_width
@@ -193,7 +193,7 @@ class PanelControlsWidget(QWidget):
         debug_print("PanelControlsWidget range_max_spin min width set to 120")
 
         self.reset_button = QPushButton()
-        self.reset_button.setIcon(QIcon(str(_ASSETS / "refresh.png")))
+        self.reset_button.setIcon(themed_icon(_ASSETS / "refresh.png"))
         self.reset_button.setIconSize(QSize(16, 16))
         self.reset_button.setProperty("subtle", True)
         self.reset_button.setFixedSize(32, 32)
@@ -381,7 +381,7 @@ class PanelControlsWidget(QWidget):
         button.setCheckable(True)
         button.setProperty("subtle", True)
         button.setFixedSize(32, 32)
-        button.setIcon(QIcon(str(_ASSETS / icon_name)))
+        button.setIcon(themed_icon(_ASSETS / icon_name))
         button.setIconSize(QSize(24, 24))
         button.setToolTip(f"Rotate {degrees} degrees")
         debug_print(f"PanelControlsWidget rotation button configured degrees={degrees}")

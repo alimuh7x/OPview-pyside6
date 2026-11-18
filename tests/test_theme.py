@@ -58,6 +58,33 @@ class ThemedStyleSheetTests(unittest.TestCase):
     def test_rgba_keeps_its_alpha(self):
         self.assertIn("rgba(8, 43, 99, 0.12)", theme.themed("QWidget { background: rgba(16, 42, 82, 0.12); }"))
 
+    def test_corners_are_square_but_circles_stay_round(self):
+        sheet = theme.themed("QFrame { border-radius: 6px; border-top-left-radius: 13px } "
+                             "QSlider::handle { border-radius: 9px; }")
+        self.assertIn("border-radius: 0px;", sheet)
+        self.assertIn("border-top-left-radius: 13px", sheet)
+        self.assertIn("border-radius: 9px;", sheet)
+
+    def test_dark_icons_keep_colours_and_turn_black_light(self):
+        from PySide6.QtGui import QColor
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance() or QApplication([])
+        assets = Path(__file__).resolve().parent.parent / "assets"
+        theme.set_dark(True)
+        black = theme.themed_pixmap(assets / "download.png").toImage()
+        red = theme.themed_pixmap(assets / "remove.png").toImage()
+        opaque = [QColor.fromRgba(black.pixel(x, y)) for x in range(0, 512, 8) for y in range(0, 512, 8)]
+        opaque = [c for c in opaque if c.alpha() == 255]
+        self.assertTrue(opaque)
+        self.assertTrue(all(c.lightness() > 200 for c in opaque))
+        self.assertEqual(QColor.fromRgba(red.pixel(256, 40)).name(), "#f44336")
+        self.assertTrue(Path(theme.themed_asset_url(assets / "dropdown_icon_2.png")).is_file())
+
+    def test_bold_becomes_semibold(self):
+        self.assertIn("font-weight: 600;", theme.themed("QLabel { font-weight: 700; }"))
+        self.assertIn("font-weight: 600 }", theme.themed("QLabel { font-weight: bold }"))
+
     def test_non_colour_properties_are_untouched(self):
         sheet = "QComboBox::down-arrow { image: url(C:/a/#123456.png); width: 10px; }"
         self.assertEqual(theme.themed(sheet), sheet)

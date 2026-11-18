@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from app.debug import debug_print
 from app.menu_bar import AppMenuBar
 from app.resources import APP_LOGO_PATH, DOCUMENTATION_PATH
-from app.theme import color, is_dark
+from app.theme import color, is_dark, themed_icon
 from app.title_bar import apply_dark_title_bar
 from graphs.tab_widget import CustomGraphTab
 from multi_property.multi_property_tab import MultiPropertyTab
@@ -308,7 +308,7 @@ class MainWindow(QMainWindow):
         debug_print(f"MainWindow sidebar toggle asset name={asset_name}")
         asset_path = Path(__file__).parent.parent / "assets" / asset_name
         debug_print(f"MainWindow sidebar toggle asset path={asset_path}")
-        icon = QIcon(str(asset_path))
+        icon = themed_icon(asset_path)
         debug_print(f"MainWindow sidebar toggle icon isNull={icon.isNull()}")
         self.sidebar_toggle_button.setIcon(icon)
         debug_print("MainWindow sidebar toggle icon applied")
